@@ -371,6 +371,9 @@ class GitRepository {
         ]),
       );
       if (file.index !== "?") continue;
+      // Untracked sizes let the client keep a bulk stage inside the byte budget
+      // below instead of failing the whole selection.
+      file.size = info.size;
       if (info.isSymbolicLink()) {
         hash.update(await readlink(path));
         continue;

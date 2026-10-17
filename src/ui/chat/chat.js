@@ -4812,8 +4812,10 @@ document.addEventListener("keydown", (event) => {
 });
 // Kept in the existing served browser module so older hosts can still load the page.
 // This logical module owns Git view state; callers provide transport and shared UI.
-// The server's prepare() accepts at most this many paths per confirmation.
+// The server's prepare() accepts at most this many paths per confirmation and
+// fingerprints selected untracked inputs within one byte budget.
 const MAX_GIT_STAGE_PATHS = 100;
+const MAX_GIT_STAGE_BYTES = 16 * 1024 * 1024;
 function createGitPane({ request, snapshot, confirm, reveal }) {
   let owner,
     data,
@@ -4865,6 +4867,30 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
       '<span class="git-added">+—</span><span class="git-removed">−—</span>';
     output();
   }
+  function bulkStagePaths(action) {
+    const unstage = action === "unstage";
+    const paths = [];
+    let skipped = 0,
+      budget = MAX_GIT_STAGE_BYTES;
+    for (const file of data?.files ?? []) {
+      if (unstage ? !file.staged : !file.unstaged) continue;
+      if (paths.length >= MAX_GIT_STAGE_PATHS) {
+        skipped++;
+        continue;
+      }
+      // Only selected untracked inputs consume the confirmation byte budget.
+      // Hosts that do not report sizes are left to the server's own check.
+      if (!unstage && file.index === "?" && file.size != null) {
+        if (file.size > budget) {
+          skipped++;
+          continue;
+        }
+        budget -= file.size;
+      }
+      paths.push(file.path);
+    }
+    return { paths, skipped };
+  }
   function controls() {
     const state = snapshot();
     const supported = state.live && state.gitManagement;
@@ -4892,14 +4918,8 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
     // Bulk staging mirrors the single-file actions; prepare() accepts at most
     // MAX_GIT_STAGE_PATHS paths per confirmation.
     const bulk = {
-      "stage-all": {
-        action: "stage",
-        count: data?.files.filter((file) => file.unstaged).length ?? 0,
-      },
-      "unstage-all": {
-        action: "unstage",
-        count: data?.files.filter((file) => file.staged).length ?? 0,
-      },
+      "stage-all": { action: "stage", ...bulkStagePaths("stage") },
+      "unstage-all": { action: "unstage", ...bulkStagePaths("unstage") },
     };
     const notice = !state.sessionId
       ? "请先连接 Pi"
@@ -4936,8 +4956,7 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
             : bulk[action]
               ? !writable ||
                 !allowed(bulk[action].action) ||
-                !bulk[action].count ||
-                bulk[action].count > MAX_GIT_STAGE_PATHS
+                !bulk[action].paths.length
               : [
                     "diff",
                     "log",
@@ -4965,14 +4984,12 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
                         (!data.head || !data.branches.includes(data.branch))) ||
                       (action === "pull" && data.files.length > 0)));
       button.title = button.disabled
-        ? bulk[action] && bulk[action].count > MAX_GIT_STAGE_PATHS
-          ? `一次最多操作 ${MAX_GIT_STAGE_PATHS} 个文件；请分批暂存或在终端处理`
-          : notice ||
-            (action === "analyze"
-              ? "仅 JS/TS 与 JSON；宿主须支持 LSP，分析当前工作树，不分析已暂存快照"
-              : "当前没有可执行的文件／分支／远端或提交说明")
+        ? notice ||
+          (action === "analyze"
+            ? "仅 JS/TS 与 JSON；宿主须支持 LSP，分析当前工作树，不分析已暂存快照"
+            : "当前没有可执行的文件／分支／远端或提交说明")
         : bulk[action]
-          ? `对 ${bulk[action].count} 个文件执行 git ${bulk[action].action}`
+          ? `对 ${bulk[action].paths.length} 个文件执行 git ${bulk[action].action}${bulk[action].skipped ? `；另有 ${bulk[action].skipped} 个超出单次额度` : ""}`
           : "";
     }
     $("#git-manage-notice").textContent = state.gitExtended
@@ -5215,30 +5232,34 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
       }
     }
   }
-  async function mutation(input) {
+  async function mutation(input, note = "") {
     if (pending) throw new Error("Git 操作正在运行");
     const target = owner;
     if (!validOwner()) throw new Error("当前会话已变化，请重新预览");
     const plan = await request("/api/git", input);
     if (target !== owner || !validOwner())
       throw new Error("当前会话已变化，请重新预览");
-    confirm(plan, async () => {
-      if (target !== owner || !validOwner())
-        throw new Error("当前会话已变化，请重新预览");
-      pending = true;
-      controls();
-      $("#git-status").textContent = "Git 操作执行中…";
-      try {
-        const result = await request("/api/git", { token: plan.token });
-        if (target !== owner || !validOwner()) return;
-        await refresh();
-        output(result.output || "Git 操作已完成");
-        if (result.conflict) $("#git-status").textContent = result.output;
-      } finally {
-        pending = false;
+    confirm(
+      plan,
+      async () => {
+        if (target !== owner || !validOwner())
+          throw new Error("当前会话已变化，请重新预览");
+        pending = true;
         controls();
-      }
-    });
+        $("#git-status").textContent = "Git 操作执行中…";
+        try {
+          const result = await request("/api/git", { token: plan.token });
+          if (target !== owner || !validOwner()) return;
+          await refresh();
+          output(result.output || "Git 操作已完成");
+          if (result.conflict) $("#git-status").textContent = result.output;
+        } finally {
+          pending = false;
+          controls();
+        }
+      },
+      note,
+    );
   }
   async function analyze() {
     if (!expanded || analyzing || !snapshot().gitAnalysis) return;
@@ -5496,15 +5517,16 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
       }
       if (action === "stage-all" || action === "unstage-all") {
         const unstage = action === "unstage-all";
-        const paths = (data?.files ?? [])
-          .filter((file) => (unstage ? file.staged : file.unstaged))
-          .map((file) => file.path);
+        const { paths, skipped } = bulkStagePaths(
+          unstage ? "unstage" : "stage",
+        );
         if (!paths.length) return;
-        if (paths.length > MAX_GIT_STAGE_PATHS)
-          throw new Error(
-            `一次最多操作 ${MAX_GIT_STAGE_PATHS} 个文件；请分批暂存或在终端处理`,
-          );
-        await mutation({ action: unstage ? "unstage" : "stage", paths });
+        await mutation(
+          { action: unstage ? "unstage" : "stage", paths },
+          skipped
+            ? `另有 ${skipped} 个文件未包含：一次最多 ${MAX_GIT_STAGE_PATHS} 个，且所选未跟踪文件须在 16 MiB 内；可分批暂存。`
+            : "",
+        );
         return;
       }
       const menu = button.closest("details");
@@ -5606,15 +5628,15 @@ const gitPane = createGitPane({
   request: api,
   snapshot: () => ({ ...state, live, connected }),
   reveal: revealRight,
-  confirm: (plan, execute) => {
+  confirm: (plan, execute, note = "") => {
     const gitRequest = plan.request ?? {};
     const staging =
       gitRequest.action === "stage" || gitRequest.action === "unstage";
     // Staging only names the selected paths; the full change list belongs to
     // operations that can touch the whole worktree.
     const body = staging
-      ? `<p>${esc(plan.root)}</p><p>${gitRequest.action === "stage" ? "将暂存" : "将取消暂存"} ${gitRequest.paths.length} 个文件：</p><pre>${esc(gitRequest.paths.join("\n"))}</pre><p class="dialog-note">${esc(plan.warning)}</p>`
-      : `<p>${esc(plan.root)}</p><pre>${esc(JSON.stringify(gitRequest, null, 2))}</pre><p>当前已暂存（提交时全部包含）：</p><pre>${esc(plan.staged.join("\n") || "无")}</pre><p>当前工作区变更：</p><pre>${esc((plan.affected ?? []).join("\n") || "无")}</pre><p class="dialog-note">${esc(plan.warning)}</p>`;
+      ? `<p>${esc(plan.root)}</p><p>${gitRequest.action === "stage" ? "将暂存" : "将取消暂存"} ${gitRequest.paths.length} 个文件：</p><pre>${esc(gitRequest.paths.join("\n"))}</pre>${note ? `<p class="dialog-note">${esc(note)}</p>` : ""}<p class="dialog-note">${esc(plan.warning)}</p>`
+      : `<p>${esc(plan.root)}</p><pre>${esc(JSON.stringify(gitRequest, null, 2))}</pre>${note ? `<p class="dialog-note">${esc(note)}</p>` : ""}<p>当前已暂存（提交时全部包含）：</p><pre>${esc(plan.staged.join("\n") || "无")}</pre><p>当前工作区变更：</p><pre>${esc((plan.affected ?? []).join("\n") || "无")}</pre><p class="dialog-note">${esc(plan.warning)}</p>`;
     openDialog(
       staging
         ? gitRequest.action === "stage"

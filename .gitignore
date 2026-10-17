@@ -8,3 +8,7 @@ screenshots/
 .env.*
 !.env.example
 *.log
+
+# Local goal state and stray pack output must never be published.
+/.pi/
+/*.tgz

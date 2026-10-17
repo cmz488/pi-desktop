@@ -803,6 +803,30 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
   );
   if (await evaluate(`document.querySelector('#dialog').open`))
     await evaluate(`document.querySelector('#dialog').close()`);
+  assert(
+    await evaluate(
+      `document.querySelector('.git-file-stage[data-git-action="stage"]')?.disabled===false&&document.querySelector('[data-git-action="unstage-all"]').disabled===true`,
+    ),
+    "Each change row stages with git add, and bulk unstaging stays disabled while nothing is staged",
+  );
+  await evaluate(
+    `document.querySelector('[data-git-action="stage-all"]').click()`,
+  );
+  await wait(`document.querySelector('#dialog').open`);
+  assert(
+    await evaluate(
+      `document.querySelector('#dialog-title').textContent.includes('git add')&&document.querySelector('#dialog-body').textContent.includes('将暂存')&&document.querySelector('#dialog-body').textContent.includes('review-error.ts')`,
+    ),
+    "Bulk staging must confirm the exact git add paths",
+  );
+  // The 17 MiB untracked fixture stays out of the selection instead of failing it.
+  assert(
+    await evaluate(
+      `!document.querySelector('#dialog-body').textContent.includes('unrelated-large.bin')&&document.querySelector('[data-git-action="stage-all"]').title.includes('超出单次额度')`,
+    ),
+    "Bulk staging skips files outside the confirmation byte budget and says so",
+  );
+  await evaluate(`document.querySelector('#dialog').close()`);
   assert.equal(
     await evaluate(`window.analysisRequests`),
     0,
