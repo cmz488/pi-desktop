@@ -9,6 +9,9 @@ export function projectExtensionPages(registry, rows, { sessionId } = {}) {
     .filter((row) => {
       const key = row.extensionView?.disclosureKey;
       if (row.display === false || !key || seen.has(key)) return false;
+      // Adapters that own an operations panel are rendered there instead of
+      // becoming a pile of per-card pages.
+      if (registry.panelForView?.(row.extensionView)) return false;
       seen.add(key);
       return true;
     })
@@ -18,6 +21,18 @@ export function projectExtensionPages(registry, rows, { sessionId } = {}) {
       state: !!row.extensionState,
       view: row.extensionView,
     }));
+}
+
+export function projectExtensionPanels(registry, rows, { sessionId } = {}) {
+  return (registry.panels?.(rows, { sessionId }) ?? []).map((panel) => ({
+    key: panel.key,
+    panel,
+    view: {
+      label: panel.panel.label ?? "面板",
+      title: panel.panel.title ?? "操作面板",
+      status: "",
+    },
+  }));
 }
 
 const element = (tag, className, text) => {
@@ -36,6 +51,7 @@ export function createExtensionWorkbench({
   loadDetails,
   onError,
   onCount,
+  onPanelAction,
 }) {
   const list = root.querySelector(".extension-page-list");
   const detail = root.querySelector(".extension-page-detail");
@@ -66,7 +82,10 @@ export function createExtensionWorkbench({
         element(
           "span",
           "",
-          [page.state ? "实时状态" : "会话记录", page.view.status]
+          [
+            page.panel ? "操作面板" : page.state ? "实时状态" : "会话记录",
+            page.view.status,
+          ]
             .filter(Boolean)
             .join(" · "),
         ),
@@ -130,11 +149,33 @@ export function createExtensionWorkbench({
       element(
         "span",
         "extension-page-kind",
-        page.state ? "实时状态" : "会话记录",
+        page.panel ? "操作面板" : page.state ? "实时状态" : "会话记录",
       ),
-      element("span", "", page.state ? "跟随当前会话更新" : "保留在原会话中"),
+      element(
+        "span",
+        "",
+        page.panel
+          ? "目标、任务与验收集中在这里"
+          : page.state
+            ? "跟随当前会话更新"
+            : "保留在原会话中",
+      ),
     );
     detail.append(meta);
+    if (page.panel) {
+      const content = element(
+        "div",
+        "extension-page-content goal-panel-content",
+      );
+      content.innerHTML = sanitize(
+        registry.renderPanel(page.panel, { disclosures }),
+      );
+      if (!content.innerHTML.trim())
+        content.textContent = "目标面板暂时无法渲染。";
+      detail.append(content);
+      detail.scrollTop = changed ? 0 : previousScroll;
+      return;
+    }
     if (page.view.lazyMessageId) {
       const load = element("button", "outline-button", "加载完整内容");
       load.type = "button";
@@ -166,6 +207,31 @@ export function createExtensionWorkbench({
       });
     detail.scrollTop = changed ? 0 : previousScroll;
   }
+
+  // Panel actions are declarative data attributes rendered by the adapter; the
+  // host only validates and forwards them, it never executes extension code.
+  detail.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-panel-action]");
+    if (!button || !detail.contains(button)) return;
+    const page = pages.find((row) => row.key === selected);
+    if (!page?.panel) return;
+    const action = String(button.dataset.panelAction ?? "");
+    const value = String(button.dataset.panelValue ?? "");
+    if (!/^[a-z][a-z0-9-]{0,40}$/.test(action) || value.length > 4000) return;
+    event.preventDefault();
+    try {
+      void Promise.resolve(
+        onPanelAction?.({
+          adapterId: page.panel.adapterId,
+          panelId: page.panel.panelId,
+          action,
+          value,
+        }),
+      ).catch((error) => onError(error.message));
+    } catch (error) {
+      onError(error.message);
+    }
+  });
 
   // Native disclosures remain keyboard accessible, and lazy details use the
   // same message-detail endpoint as the transcript. No parallel data protocol.
@@ -203,7 +269,10 @@ export function createExtensionWorkbench({
         loadAttempts.clear();
         detail.replaceChildren();
       }
-      const next = projectExtensionPages(registry, rows, { sessionId });
+      const next = [
+        ...projectExtensionPanels(registry, rows, { sessionId }),
+        ...projectExtensionPages(registry, rows, { sessionId }),
+      ];
       const nextSignature = JSON.stringify(next);
       if (nextSignature === signature) return;
       signature = nextSignature;

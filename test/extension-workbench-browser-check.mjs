@@ -26,15 +26,15 @@ root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 document.body.classList.add('desktop-embedded');
 let rows=[],owner='A',details=new Map(),gate,failNext=false;
 const registry=createExtensionAdapterRegistry();
-const loaded=[],errors=[];
-const controller=createExtensionWorkbench({root,registry,sanitize:html=>DOMPurify.sanitize(html),onCount:count=>root.dataset.count=count,onError:error=>errors.push(error),
+const loaded=[],errors=[],panelActions=[];
+const controller=createExtensionWorkbench({root,registry,sanitize:html=>DOMPurify.sanitize(html),onCount:count=>root.dataset.count=count,onError:error=>errors.push(error),onPanelAction:action=>panelActions.push(action),
 async loadDetails(ids){const session=owner;loaded.push(...ids);if(failNext){failNext=false;throw new Error('fixture detail failed');}if(gate)await gate;
 if(session!==owner)return;rows=rows.map(row=>ids.includes(String(row.id))?details.get(String(row.id))??row:row);controller.update(rows,{sessionId:owner});}});
 window.workbenchFixture={
 render(next,session='A',full=[]){rows=next;owner=session;details=new Map(full);registry.setSession(session);controller.update(rows,{sessionId:owner});},
 delay(){gate=new Promise(resolve=>window.releaseDetail=()=>{gate=undefined;resolve();});},
 failNext(){failNext=true;},
-get loaded(){return loaded;},get errors(){return errors;},registry};
+get loaded(){return loaded;},get errors(){return errors;},get panelActions(){return panelActions;},registry};
 controller.update([],{sessionId:owner});
 </script>`,
 );
@@ -333,6 +333,60 @@ try {
       "document.querySelector('.extension-page-content').textContent.includes('暂时无法渲染')",
     ),
   );
+  // All pi-goal-x tools collapse into one operations panel with host actions.
+  await evaluate(`(() => {
+    const registry=workbenchFixture.registry;
+    const view=registry.project({role:'toolResult',toolName:'update_goal',details:{version:3,goal:{id:'g1',objective:'目标面板浏览器夹具',status:'active',autoContinue:true,usage:{activeSeconds:120,tokensUsed:999},taskList:{tasks:[{id:'t1',title:'任务甲',status:'pending'}]}}}});
+    workbenchFixture.render([{id:'goal-1',role:'toolResult',toolName:'update_goal',extensionView:view}],'goal');
+  })()`);
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.extension-page-choice').length",
+    ),
+    1,
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('.extension-page-choice').innerText.includes('目标') && document.querySelector('.goal-panel')?.innerText.includes('目标面板浏览器夹具')",
+    ),
+  );
+  assert.equal(
+    await evaluate("document.querySelectorAll('.goal-task').length"),
+    1,
+  );
+  await evaluate(
+    "document.querySelector('.goal-action[data-panel-value=\"/goal-pause\"]').click()",
+  );
+  await evaluate(
+    "document.querySelector('.goal-action[data-panel-value=\"/goal-tweak\"]').click()",
+  );
+  await until("workbenchFixture.panelActions.length===2");
+  assert.deepEqual(await evaluate("workbenchFixture.panelActions"), [
+    {
+      adapterId: "pi-goal-x",
+      panelId: "goal",
+      action: "command",
+      value: "/goal-pause",
+    },
+    {
+      adapterId: "pi-goal-x",
+      panelId: "goal",
+      action: "prefill",
+      value: "/goal-tweak",
+    },
+  ]);
+  assert.equal(
+    await evaluate("document.querySelector('[data-goal-panel]')===null"),
+    false,
+  );
+  await writeFile(
+    "/tmp/pi-desktop-goal-panel.png",
+    Buffer.from(
+      (await call("Page.captureScreenshot", { format: "png" })).data,
+      "base64",
+    ),
+  );
+
   // Narrow desktop/mobile, long labels, both themes and reduced motion.
   await evaluate(
     `workbenchFixture.render(${JSON.stringify([card("很长的页面标题".repeat(30), { presentation: state }), ordinary])},'narrow')`,

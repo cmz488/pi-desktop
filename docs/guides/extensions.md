@@ -31,9 +31,25 @@ Pi 继续负责扩展加载、工具执行、权限和会话 JSONL。Desktop 的
 
 选中页面与展开状态在同会话更新时保留，切换会话即隔离重置。完整内容按需通过原来的消息详情接口读取；失败可重试。既有受信任 renderer 接收 `context.placement === "page"` 和独立的 `disclosures` Map，不应把它当成新的执行生命周期。页面 HTML 经过 DOMPurify，通用声明仍为纯文本。
 
+## 目标操作面板（pi-goal-x）
+
+内置 `pi-goal-x` 适配器声明一个 `panel`（id、label、title、tools、aggregate、render），扩展工作台把它固定在页面列表顶部，并过滤掉该 adapter 的逐卡片页面。目标工具结果、事件、验收和起草不再作为散落卡片出现在会话栏或工作台列表中；会话消息流中被该面板声明的工具调用也不再重复展开。
+
+面板集中呈现：
+
+- 目标标题、状态、任务进度、用时和 token；
+- 操作：新建目标／有序目标、暂停／恢复（直接发送已有 `/goal-*` 命令）、完成并验收、调整计划、清除目标（后三者填入输入框，由用户确认发送）；
+- 任务树；每个任务可生成一条“标记完成／重开”的 Agent 请求；
+- 最近一次独立验收的状态、审计模型与报告；
+- 最近目标状态事件。
+
+五个工具的分工在面板中落地为：`create_goal` → 新建操作；`get_goal` → 面板读取当前快照并刷新；`update_goal` → 暂停／恢复／完成验收；`set_goal_tasks`／`update_goal_task` → 任务树与逐任务请求。实现仍走既有 `/api/prompt` 和 composer，不新增插件运行时、调度器或旁路数据接口。
+
+面板 HTML 经同一 DOMPurify 边界；按钮只暴露受限的 `data-panel-action`／`data-panel-value`，工作台校验后转交宿主处理，适配器不直接执行脚本。面板按 goal id 关联验收与事件，切换目标或会话后不会把旧目标的验收报告混到新目标上。
+
 ## 受信任的本地适配器
 
-复杂展示继续兼容 `register({ id, version, project, render })`。`project(message)` 返回视图；`render(view, context)` 返回 HTML，原有单参数 renderer 可继续使用。module 的 `summary(view)` 负责工具摘要，`layout(messages, {sessionId})` 负责普通消息与状态卡片分流；页面只消费结果。通用卡片和 Goal 共用同一 renderer，新增插件优先使用上述 schema。
+复杂展示继续兼容 `register({ id, version, project, render })`。`project(message)` 返回视图；`render(view, context)` 返回 HTML，原有单参数 renderer 可继续使用。适配器可选声明 `panel: { id, label, title, tools, aggregate(views), render(view, context) }`：`tools` 列出由面板接管的工具名，`aggregate` 把同一 adapter 的视图合并成一页；声明后工作台不再为该 adapter 生成逐卡片页面。module 的 `summary(view)` 负责工具摘要，`layout(messages, {sessionId})` 负责普通消息与状态卡片分流；页面只消费结果。通用卡片和 Goal 共用同一 renderer，新增插件优先使用上述 schema。
 
 注册返回幂等 disposer；可选 `onRegister()` 返回清理函数、`onSessionChanged(next, previous)` 接收会话变化，注销或 `dispose()` 时调用 `onDispose()`。清理绑定每次注册的独立身份，同 ID 重注册后旧 disposer 无效；清理抛错不阻止其他注册释放。当前内置 adapter 都是纯投影，会话通知不会停止其他 Agent；本轮不引入命令调度或动态插件代码加载。
 

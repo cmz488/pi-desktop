@@ -67,6 +67,8 @@
 
 ## 扩展工作台的边界
 
+适配器可声明一个操作面板（`panel`）。工作台把面板固定为一页并隐藏该 adapter 的逐卡片页面；`pi-goal-x` 由此把五个工具、任务、验收和操作收进一个目标面板，消息流与扩展栏不再重复目标卡片，面板按钮通过宿主转交既有命令/输入框。实现仍调用 `layout` 与 `render(view, ...)`，不引入插件 ID 分支或执行层。
+
 `src/ui/shared/extension-workbench.js` 调用 `extensionAdapterRegistry.layout` 和 `render(view, { placement: "page", disclosures })`，不识别插件 ID。当前已加载分支的普通卡片保留各自记录，state 卡片每个 scoped identity 只显示最新一条，包括工具结果中的状态。最多列出 80 页，状态优先、各类内部由新到旧。
 
 选择、滚动与 disclosure 在同会话更新中保持，切换会话时清空；未支持版本不产生伪页面。懒加载使用聊天已有 message-detail 路径及会话所有权检查。注册的 renderer 仍是受信任的本地代码，但页面边界再次使用 DOMPurify；通用声明文本不解释为 HTML。没有新命令、远程插件 HTML、TUI 嵌入或独立调度器。

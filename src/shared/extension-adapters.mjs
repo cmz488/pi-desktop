@@ -41,6 +41,12 @@ function goalTasks(tasks, depth = 0, output = []) {
       id: typeof task.id === "string" ? task.id.slice(0, 40) : "",
       title: String(task.title ?? "").slice(0, 240),
       status: taskStatuses[task.status] ?? "未知",
+      rawStatus:
+        typeof task.status === "string" ? task.status.slice(0, 24) : "pending",
+      detail: String(task.detail ?? task.verificationContract ?? "").slice(
+        0,
+        400,
+      ),
       depth,
     });
     goalTasks(task.subtasks, depth + 1, output);
@@ -85,6 +91,7 @@ function goalView(message) {
       version: 1,
       label: "目标进度",
       kind: "goal",
+      empty: true,
       title: "当前没有活动目标",
       status: "无活动目标",
       mode: "目标",
@@ -106,6 +113,7 @@ function goalView(message) {
     label: "目标进度",
     kind: "goal",
     title: String(goal.objective ?? "目标").slice(0, 600),
+    goalId: String(goal.id ?? "").slice(0, 80),
     status,
     mode: goal.sisyphus ? "有序目标" : "目标",
     done,
@@ -117,6 +125,10 @@ function goalView(message) {
     tokens: Number.isFinite(usage?.tokensUsed)
       ? Math.max(0, Math.floor(usage.tokensUsed))
       : null,
+    autoContinue: goal.autoContinue === true,
+    pauseReason: String(goal.pauseReason ?? "").slice(0, 600),
+    revision: Number.isFinite(goal.revision) ? goal.revision : null,
+    rawStatus: String(goal.status ?? ""),
     tasks,
   };
 }
@@ -137,6 +149,8 @@ function goalEventView(message) {
     ),
     status,
     focus: details.focus === "sisyphus" ? "有序目标" : "目标",
+    goalId: String(details.goalId ?? "").slice(0, 80),
+    at: message.timestamp ?? undefined,
   };
 }
 
@@ -155,9 +169,13 @@ function goalAuditView(message) {
     version: 1,
     label: "目标验收",
     kind: "audit",
-    title: String(message.content ?? `目标验收：${status}`).slice(0, 1200),
+    title: String(message.content ?? `目标验收：${status}`).slice(0, 2000),
     status,
     tone,
+    phase: String(details.phase ?? ""),
+    goalId: String(details.goalId ?? "").slice(0, 80),
+    auditor: String(details.auditor ?? "").slice(0, 120),
+    at: message.timestamp ?? undefined,
   };
 }
 
@@ -244,6 +262,7 @@ function goalAdapterView(message) {
       label: "目标",
       title: String(message.details.seed || "正在与你确认目标和计划"),
       status: "起草中",
+      draft: true,
       presentation: { mode: "state", key: "current" },
     };
   if (
@@ -260,6 +279,7 @@ function goalAdapterView(message) {
       title: String(message.details.lines[0] ?? "目标概览"),
       body: message.details.lines.slice(1).join("\n"),
       detailsLabel: "查看目标详情",
+      widget: true,
       presentation: { mode: "state", key: "current" },
     };
   return goalView(message) ?? goalAuditView(message) ?? goalEventView(message);
@@ -296,6 +316,227 @@ function normalizeGoalCard(view) {
     presentation: { mode: "state", key: "current" },
   });
 }
+
+/* ── Goal operations panel ────────────────────────────────────────────
+ * pi-goal-x exposes five tools and several event types. They all land in one
+ * bounded panel instead of separate conversation cards and workbench pages. */
+const goalTone = {
+  active: "running",
+  paused: "muted",
+  complete: "success",
+  blocked: "warning",
+  budget_limited: "warning",
+  aborted: "muted",
+};
+const goalAction = (label, action, value, extra = "") =>
+  `<button type="button" class="goal-action ${extra}" data-panel-action="${escapeHtml(action)}" data-panel-value="${escapeHtml(value)}">${escapeHtml(label)}</button>`;
+const goalTaskPrompt = (task, reopen) =>
+  `请更新目标任务「${task.title}」${task.id ? `（${task.id}）` : ""}：${reopen ? "标记为待办并说明原因" : "标记为已完成并记录证据"}。`;
+
+function normalizeGoalView(view) {
+  // Layout re-resolves an already normalized view; keep the rich goal payload.
+  if (view.panelKind) return view;
+  const card = normalizeGoalCard(view);
+  if (!card) return null;
+  if (view.kind === "goal")
+    return {
+      ...card,
+      panelKind: "goal",
+      goal: view.empty
+        ? null
+        : {
+            objective: view.title,
+            goalId: view.goalId,
+            status: view.status,
+            rawStatus: view.rawStatus,
+            mode: view.mode,
+            done: view.done,
+            total: view.total,
+            tasks: view.tasks ?? [],
+            elapsedSeconds: view.elapsedSeconds,
+            tokens: view.tokens,
+            autoContinue: view.autoContinue,
+            pauseReason: view.pauseReason,
+            revision: view.revision,
+          },
+    };
+  if (view.kind === "audit")
+    return {
+      ...card,
+      panelKind: "audit",
+      audit: {
+        phase: view.phase,
+        goalId: view.goalId,
+        status: view.status,
+        tone: view.tone,
+        report: view.title,
+        auditor: view.auditor,
+        at: view.at,
+      },
+    };
+  if (view.kind === "event")
+    return {
+      ...card,
+      panelKind: "event",
+      event: {
+        status: view.status,
+        title: view.title,
+        at: view.at,
+        goalId: view.goalId,
+      },
+    };
+  return {
+    ...card,
+    panelKind:
+      view.draft === true ? "draft" : view.widget === true ? "widget" : "card",
+    draft: view.draft === true,
+    widget: view.widget === true,
+  };
+}
+
+function aggregateGoalPanel(views) {
+  const latest = (kind) =>
+    [...views].reverse().find((view) => view.panelKind === kind);
+  const goal = latest("goal");
+  const goalId = goal?.goal?.goalId ?? "";
+  const sameGoal = (view) => !goalId || !view.goalId || view.goalId === goalId;
+  const audit = [...views]
+    .reverse()
+    .find((view) => view.panelKind === "audit" && sameGoal(view));
+  const draft = latest("draft");
+  const events = views
+    .filter((view) => view.panelKind === "event" && sameGoal(view))
+    .slice(-8)
+    .reverse();
+  if (!goal && !draft && !audit) return null;
+  return {
+    kind: "panel",
+    goal: goal?.goal ?? null,
+    audit: audit?.audit ?? null,
+    draft: draft?.draft ? { title: draft.title, status: draft.status } : null,
+    events: events.map((view) => view.event),
+  };
+}
+
+function renderGoalPanel(view) {
+  const goal = view.goal;
+  const tasks = goal?.tasks ?? [];
+  const done =
+    goal?.done ??
+    tasks.filter((task) => ["complete", "skipped"].includes(task.rawStatus))
+      .length;
+  const total = goal?.total ?? tasks.length;
+  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const raw = goal?.rawStatus ?? "";
+  const status = goal?.status ?? view.draft?.status ?? "无活动目标";
+  const tone = goalTone[raw] ?? (view.draft ? "running" : "neutral");
+  const title = goal?.objective ?? view.draft?.title ?? "还没有活动目标";
+  const minutes = Number.isFinite(goal?.elapsedSeconds)
+    ? Math.max(0, Math.floor(goal.elapsedSeconds / 60))
+    : null;
+  const metrics = [
+    total ? `${done} / ${total} 项任务` : "无任务清单",
+    minutes == null ? null : `${minutes} 分钟`,
+    Number.isFinite(goal?.tokens)
+      ? `${goal.tokens.toLocaleString("en-US")} tokens`
+      : null,
+    goal?.autoContinue === true ? "自动续跑" : goal ? "手动继续" : null,
+  ].filter(Boolean);
+  const actions = [];
+  if (!goal) {
+    actions.push(goalAction("新建目标", "prefill", "/goal "));
+    actions.push(goalAction("有序目标", "prefill", "/sisyphus "));
+    if (view.draft) {
+      actions.push(
+        goalAction("继续起草", "focus-composer", "", "goal-action--primary"),
+      );
+      actions.push(
+        goalAction("取消草稿", "prefill", "/goal-cancel", "goal-action--quiet"),
+      );
+    }
+  } else if (raw === "complete") {
+    actions.push(goalAction("新建目标", "prefill", "/goal "));
+    actions.push(goalAction("有序目标", "prefill", "/sisyphus "));
+  } else {
+    actions.push(
+      goalAction(
+        raw === "paused" || raw === "blocked" ? "恢复目标" : "暂停目标",
+        "command",
+        raw === "paused" || raw === "blocked" ? "/goal-resume" : "/goal-pause",
+        "goal-action--primary",
+      ),
+    );
+    actions.push(
+      goalAction(
+        "完成并验收",
+        "prefill",
+        '请核对目标是否已满足全部要求；若满足，请调用 update_goal({status: "complete"}) 提交独立验收。',
+      ),
+    );
+    actions.push(goalAction("调整计划", "prefill", "/goal-tweak"));
+    actions.push(
+      goalAction("清除目标", "prefill", "/goal-clear", "goal-action--quiet"),
+    );
+  }
+  actions.push(goalAction("刷新", "refresh", "", "goal-action--quiet"));
+  const taskMarkup = tasks.length
+    ? `<ul class="goal-task-list">${tasks
+        .map((task) => {
+          const reopen = ["complete", "skipped"].includes(task.rawStatus);
+          const action = task.id
+            ? `<button type="button" class="goal-task-action" data-panel-action="prefill" data-panel-value="${escapeHtml(goalTaskPrompt(task, reopen))}">${reopen ? "重开" : "完成"}</button>`
+            : "";
+          return `<li class="goal-task tone-${escapeHtml(task.rawStatus)}" style="--goal-depth:${task.depth}"><span class="goal-task-status">${escapeHtml(task.status)}</span><span class="goal-task-title">${escapeHtml(task.title)}${task.detail ? `<small>${escapeHtml(task.detail)}</small>` : ""}</span>${action}</li>`;
+        })
+        .join("")}</ul>`
+    : '<p class="goal-empty-line">暂无任务清单。可在“调整计划”中让 Agent 规划任务。</p>';
+  const audit = view.audit;
+  const auditMarkup = audit
+    ? `<div class="goal-audit-head"><span class="goal-status tone-${escapeHtml(audit.tone ?? "muted")}">${escapeHtml(audit.status)}</span>${audit.auditor ? `<small>${escapeHtml(audit.auditor)}</small>` : ""}</div><pre class="goal-audit-report">${escapeHtml(audit.report)}</pre>`
+    : '<p class="goal-empty-line">尚未提交验收。调用 update_goal 完成时会启动独立审计。</p>';
+  const eventMarkup = view.events.length
+    ? `<ul class="goal-history">${view.events
+        .map(
+          (event) =>
+            `<li><span class="goal-history-status">${escapeHtml(event.status)}</span><span>${escapeHtml(event.title)}</span>${event.at ? `<small>${escapeHtml(String(event.at).slice(11, 19))}</small>` : ""}</li>`,
+        )
+        .join("")}</ul>`
+    : "";
+  return `<section class="goal-panel" data-goal-panel>
+<header class="goal-panel-head">
+  <div class="goal-panel-heading">
+    <span class="goal-eyebrow">pi-goal-x · 目标操作</span>
+    <h2>${escapeHtml(title)}</h2>
+    <p class="goal-panel-mode">${escapeHtml(goal?.mode ?? "目标")}${raw ? ` · ${escapeHtml(status)}` : ""}</p>
+  </div>
+  <span class="goal-status tone-${escapeHtml(tone)}">${escapeHtml(status)}</span>
+</header>
+<div class="goal-progress" role="progressbar" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"><span style="width:${percent}%"></span></div>
+<div class="goal-metrics">${metrics.map((metric) => `<span>${escapeHtml(metric)}</span>`).join("")}</div>
+<section class="goal-section">
+  <div class="goal-section-head"><h3>操作</h3><small>命令由 Pi 执行；需要确认的操作会填入输入框</small></div>
+  <div class="goal-action-grid">${actions.join("")}</div>
+</section>
+${goal ? `<section class="goal-section"><div class="goal-section-head"><h3>任务</h3><small>${done} / ${total}</small></div>${taskMarkup}</section>` : ""}
+<section class="goal-section goal-audit"><div class="goal-section-head"><h3>验收</h3><button type="button" class="goal-task-action" data-panel-action="prefill" data-panel-value="请基于当前证据重新验收目标；如未通过，请列出具体缺口并继续修复。">重新验收</button></div>${auditMarkup}</section>
+${eventMarkup ? `<section class="goal-section"><div class="goal-section-head"><h3>最近状态</h3></div>${eventMarkup}</section>` : ""}
+</section>`;
+}
+
+const goalPanel = {
+  id: "goal",
+  label: "目标",
+  title: "目标操作面板",
+  tools: [
+    "create_goal",
+    "get_goal",
+    "update_goal",
+    "set_goal_tasks",
+    "update_goal_task",
+  ],
+  aggregate: aggregateGoalPanel,
+  render: renderGoalPanel,
+};
 
 /** Extensions can emit details.piDesktop v1 without registering UI code. */
 function genericCardView(message) {
@@ -341,8 +582,9 @@ const builtins = [
     id: "pi-goal-x",
     version: 1,
     project: goalAdapterView,
-    normalize: normalizeGoalCard,
+    normalize: normalizeGoalView,
     render: renderCard,
+    panel: goalPanel,
   },
 ];
 
@@ -420,6 +662,26 @@ export function createExtensionAdapterRegistry(adapters = builtins) {
         );
       if (registered.has(adapter.id))
         throw new Error(`扩展适配器已注册：${adapter.id}`);
+      if (adapter.panel !== undefined) {
+        const panel = adapter.panel;
+        if (
+          !asRecord(panel) ||
+          typeof panel.id !== "string" ||
+          !panel.id.trim() ||
+          typeof panel.title !== "string" ||
+          typeof panel.render !== "function" ||
+          (panel.aggregate !== undefined &&
+            typeof panel.aggregate !== "function") ||
+          (panel.tools !== undefined &&
+            (!Array.isArray(panel.tools) ||
+              panel.tools.some(
+                (name) => typeof name !== "string" || name.length > 80,
+              )))
+        )
+          throw new TypeError(
+            "扩展面板必须提供 id、title、render，以及可选的 aggregate 和 tools",
+          );
+      }
       const entry = {
         id: adapter.id,
         version: adapter.version,
@@ -519,6 +781,72 @@ export function createExtensionAdapterRegistry(adapters = builtins) {
         messages.push(message);
       }
       return { messages, states: [...states.values()] };
+    },
+    panelForView(source) {
+      const result = resolve(source);
+      const panel = result?.entry.adapter.panel;
+      return panel
+        ? { adapterId: result.entry.id, panelId: panel.id, panel }
+        : undefined;
+    },
+    panelForTool(name) {
+      if (typeof name !== "string" || !name) return undefined;
+      for (const entry of registered.values()) {
+        const panel = entry.active && entry.adapter.panel;
+        if (panel?.tools?.includes(name))
+          return { adapterId: entry.id, panelId: panel.id, panel };
+      }
+      return undefined;
+    },
+    panels(rows, { sessionId: owner = "" } = {}) {
+      const { messages, states } = registry.layout(rows, { sessionId: owner });
+      const grouped = new Map();
+      for (const row of [...messages, ...states]) {
+        const view = row.extensionView;
+        const entry = view && registered.get(view.adapterId);
+        const panel = entry?.active && entry.adapter.panel;
+        if (!panel) continue;
+        const list = grouped.get(entry.id) ?? [];
+        list.push(view);
+        grouped.set(entry.id, list);
+      }
+      const output = [];
+      for (const [adapterId, views] of grouped) {
+        const entry = registered.get(adapterId);
+        const panel = entry?.active && entry.adapter.panel;
+        if (!panel) continue;
+        let view;
+        try {
+          view = panel.aggregate ? panel.aggregate(views) : views.at(-1);
+        } catch (error) {
+          report(entry.adapter, "panel", error);
+          continue;
+        }
+        if (!view) continue;
+        output.push({
+          adapterId,
+          panelId: panel.id,
+          key: `panel:${adapterId}:${panel.id}`,
+          panel,
+          view,
+          views,
+        });
+      }
+      return output;
+    },
+    renderPanel(page, options = {}) {
+      const panel = page?.panel;
+      if (!panel) return "";
+      try {
+        return panel.render(page.view, {
+          ...options,
+          placement: "panel",
+          views: page.views,
+        });
+      } catch (error) {
+        report({ id: page.adapterId ?? "panel" }, "panel-render", error);
+        return "";
+      }
     },
     setSession(nextSessionId) {
       const next = nextSessionId == null ? "" : String(nextSessionId);

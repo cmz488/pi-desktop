@@ -1044,7 +1044,14 @@ function toolMarkup(block) {
   return `<details class="tool-card ${status}" ${lazy} data-disclosure="${esc(key)}" ${disclosures.get(key) ? "open" : ""}><summary><span class="tool-state ${status}">${status === "running" ? '<span class="activity-spinner"></span>' : error ? "!" : status === "complete" ? "✓" : "·"}</span><strong>${esc(block.name)}</strong><small>${esc(toolSummary(argumentsText))}</small>${extensionStatus ? `<span class="extension-inline-status">${esc(extensionStatus)}</span>` : ""}<span class="tool-outcome">${labels[status]}</span>${result ? `<button type="button" data-preview="${messageRows.indexOf(result)}">查看 ↗</button>` : ""}</summary><div class="tool-details">${extensionView}<label>参数</label><pre data-scroll-key="${esc(key + ":arguments")}">${esc(argumentsText)}</pre>${output !== undefined ? `<label>输出</label><pre data-scroll-key="${esc(key + ":output")}">${esc(output || "无文本输出")}</pre>` : '<p class="muted">等待工具结果…</p>'}</div></details>`;
 }
 function activityMarkup(message, block) {
-  const entries = block.entries;
+  // Records owned by an operations panel are not repeated as transcript cards.
+  const entries = block.entries.filter(
+    (entry) =>
+      !(entry.block.type === "toolCall" && goalPanelTool(entry.block.name)),
+  );
+  // An originally empty activity block is the live "waiting" fold, not a
+  // goal-only group; only hide a group that became empty by filtering.
+  if (!entries.length && block.entries.length) return "";
   const runningTool = entries.findLast(
     (entry) =>
       entry.block.type === "toolCall" &&
@@ -1168,15 +1175,19 @@ function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
       segment.innerHTML = renderMarkdown(block.text);
       output = segment;
     } else if (block.type === "activity") {
-      segment.innerHTML = activityMarkup(message, block);
+      const markup = activityMarkup(message, block);
+      if (!markup) continue;
+      segment.innerHTML = markup;
     } else if (block.type === "extension") {
       segment.classList.add("extension-message");
       segment.innerHTML =
         extensionAdapterRegistry.render(block.view ?? message.extensionView, {
           disclosures,
         }) || renderMarkdown(block.text ?? message.text ?? "");
-    } else if (block.type === "toolCall") segment.innerHTML = toolMarkup(block);
-    else {
+    } else if (block.type === "toolCall") {
+      if (goalPanelTool(block.name)) continue;
+      segment.innerHTML = toolMarkup(block);
+    } else {
       segment.classList.add("muted");
       segment.textContent = block.text ?? "";
     }
@@ -1291,6 +1302,11 @@ function animateConversationEnter(node) {
     });
 }
 let railSignature = "";
+function goalPanelTool(name) {
+  return (
+    !!extensionWorkbench && !!extensionAdapterRegistry.panelForTool?.(name)
+  );
+}
 function renderExtensionRail(cards) {
   const rail = $("#extension-rail");
   const list = $("#extension-rail-list");
@@ -1300,6 +1316,12 @@ function renderExtensionRail(cards) {
     for (const card of cards) appendMessage(card);
     return;
   }
+  // Panel-owned records live in the workbench panel, not as rail cards. The
+  // isolated renderer harness has no workbench and keeps the legacy placement.
+  if (extensionWorkbench)
+    cards = cards.filter(
+      (card) => !extensionAdapterRegistry.panelForView?.(card.extensionView),
+    );
   rail.hidden = !cards.length;
   document.body.classList.toggle("has-extension-rail", !!cards.length);
   const count = $("#extension-rail-count");
@@ -5771,12 +5793,49 @@ document.body.classList.toggle(
 );
 syncRightSidebar();
 window.addEventListener("resize", syncRightSidebar);
+async function prefillGoalPrompt(value) {
+  await showView("workspace");
+  if (/^\/goal-tweak\b/.test(value) && !value.endsWith(" ")) value += " ";
+  const prompt = $("#prompt");
+  prompt.value = value;
+  prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  prompt.focus();
+  toast("已填入输入框，按 Enter 发送");
+}
+async function handleGoalPanelAction({ action, value }) {
+  if (action === "refresh") {
+    await refresh();
+    return;
+  }
+  if (action === "focus-composer") {
+    await showView("workspace");
+    $("#prompt").focus();
+    return;
+  }
+  if (action === "prefill") {
+    await prefillGoalPrompt(value);
+    return;
+  }
+  if (action === "command") {
+    // Only pause/resume run immediately; confirmation-bearing commands are
+    // prefilled by the panel and sent through the normal composer path.
+    if (!/^\/goal-(?:pause|resume)\s*$/.test(value)) return;
+    try {
+      await api("/api/prompt", { message: value });
+      await refresh();
+      toast(value.includes("pause") ? "已暂停目标" : "已恢复目标");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+}
 extensionWorkbench = createExtensionWorkbench({
   root: $("#view-extensions"),
   registry: extensionAdapterRegistry,
   sanitize: (html) => DOMPurify.sanitize(html),
   loadDetails: loadMessageDetails,
   onError: toast,
+  onPanelAction: handleGoalPanelAction,
   onCount(count) {
     const badge = $("#extension-page-count");
     badge.hidden = !count;
