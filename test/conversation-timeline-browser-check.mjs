@@ -258,6 +258,68 @@ try {
       "document.querySelector('.tool-card[open]').innerText.includes('README.md')",
     ),
   );
+  // Fold bodies carry their own scroll position. A live redraw rebuilds the
+  // expanded tool row, so a long output the reader scrolled through must keep
+  // its offset instead of snapping back to the top of the fold.
+  const longOutput = Array.from(
+    { length: 120 },
+    (_, index) => `output line ${index}`,
+  ).join("\n");
+  const scrollingRows = [
+    { role: "user", id: "scroll-user", text: "run the long command" },
+    {
+      role: "assistant",
+      id: "scroll-assistant",
+      blocks: [
+        {
+          type: "toolCall",
+          id: "scroll-call",
+          name: "bash",
+          arguments: JSON.stringify({ command: "make" }),
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      id: "scroll-result",
+      toolCallId: "scroll-call",
+      toolName: "bash",
+      text: longOutput,
+    },
+  ];
+  await evaluate(
+    `conversationFixture.render(${JSON.stringify(scrollingRows)},{idle:false,phase:'output'})`,
+  );
+  await evaluate(
+    "document.querySelector('.context-activity').open=true;document.querySelector('.tool-card').open=true",
+  );
+  await until(
+    "document.querySelector('.tool-card[open] .tool-details pre:last-of-type')?.scrollHeight>document.querySelector('.tool-card[open] .tool-details pre:last-of-type')?.clientHeight",
+  );
+  await evaluate(
+    "document.querySelector('.tool-card[open] .tool-details pre:last-of-type').scrollTop=180",
+  );
+  await evaluate(
+    `conversationFixture.render(${JSON.stringify(
+      scrollingRows.map((row) =>
+        row.id === "scroll-result"
+          ? { ...row, text: `${longOutput}\noutput line 120` }
+          : row,
+      ),
+    )},{idle:false,phase:'output'})`,
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.tool-card[open] .tool-details pre:last-of-type').scrollTop",
+    ),
+    180,
+    "A rebuilt tool fold must keep the reader's scroll position in its output",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('.tool-card[open]').open"),
+    true,
+    "Preserving fold scroll must not collapse the fold",
+  );
 
   await evaluate(
     `conversationFixture.render([{role:'user',id:'live-user',text:'live question'},{role:'assistant',id:'persisted',blocks:[{type:'thinking',text:'persisted thought'}]}]);conversationFixture.stream({id:'streaming',role:'assistant',blocks:[{type:'thinking',text:'live thought'}]})`,

@@ -57,6 +57,14 @@
 
 其余交互决定：切换会话期间只显示骨架屏与状态标签，不再闪出演示内容或空会话主视觉；对话阅读区放宽到 1120px 流宽（气泡上限 860px），输入区 1180px。文件查看器按用户提供的参考图增加文件树：内容与树分列、树内可筛选、文件夹按需展开，点击文件切换到已有标签页而不重复开页；树只复用现有的有界 `/api/files` 读取。
 
+## 界面可用性修复（第三轮）
+
+- **非活跃 Agent 的载入面**：切换 Agent 不再回落到项目主视觉。父页面新增 `#agent-boot` 玻璃载入卡（启动中显示进度，停止／失败时给出启动按钮），`#empty` 只在没有选中 Agent 时出现。`workspace.html` 与 `chat/index.html` 都在首帧前读取 `pi-web-theme`，深色偏好下 iframe 不会先闪一帧浅色，因此切换过程既没有浅色预览页，也没有主题闪烁。
+- **动画**：补齐共享缓动 token `--ease-jelly`（此前缺失，使相关 transition／animation 实际失效）。页面切换、会话行错开入场、侧栏网格收起、Agent 载入、扩展栏与下拉菜单共用同一条轻位移＋淡入曲线；拖拽调整侧栏时禁用过渡，键盘步进即时生效，`prefers-reduced-motion` 全部关闭。
+- **下拉列表**：三处 composer 选择器保留原生 `<select>` 作为值／change 契约（隐藏且不参与 Tab），但增加整颗胶囊可点的触发按钮与玻璃 listbox：正确的 `aria-expanded`／`aria-selected`、方向键／Home／End／Enter／Escape、点击外部关闭；项目、提示词模式、权限等级统一。
+- **附件上下位**：本机 Desktop 仍只发送文件索引（绝对路径），Agent 自行读取；远程上传的文件由 Host 以 0600 写入 0700 缓存目录，消息只携带缓存路径（24 小时清理），图片继续作为模型图片输入。
+- **网页链接**：消息内的 http(s) 链接不再导航聊天 iframe（被 frame 拒绝时即白屏），统一转到右侧工作区浏览器；共享 Chromium 返回的新标签会成为当前页签。远程禁用浏览器时退回系统新标签。
+
 ## 扩展工作台的边界
 
 `src/ui/shared/extension-workbench.js` 调用 `extensionAdapterRegistry.layout` 和 `render(view, { placement: "page", disclosures })`，不识别插件 ID。当前已加载分支的普通卡片保留各自记录，state 卡片每个 scoped identity 只显示最新一条，包括工具结果中的状态。最多列出 80 页，状态优先、各类内部由新到旧。
@@ -67,7 +75,8 @@
 
 - `test/desktop-workspace-check.mjs` 检查父子窗口连续背景、默认浅色、深色根节点同步、输入框上方选择器的胶囊样式、文件树与文档分列、点击树内文件切换标签，以及原有工作区交互与大字号／窄屏。
 - `test/conversation-timeline-browser-check.mjs` 用真实渲染器检查扩展卡片只进扩展栏、懒详情与展开保持、未支持版本的内联回退，以及切换会话时的骨架屏。
-- `test/browser-check.mjs` 检查页面切换动画确实触发、放宽后的对话流宽、单行读数标签与窄屏堆叠。
+- `test/browser-check.mjs` 检查页面切换动画确实触发、放宽后的对话流宽、单行读数标签与窄屏堆叠；远程上传的附件在模型请求中只出现缓存路径。
+- 桌面回归还覆盖 `#agent-boot` 载入面（切换／创建 Agent 不闪项目主视觉）、shell 过渡与 `--ease-jelly`、整颗胶囊打开的自定义下拉、消息链接转到右侧浏览器且聊天 iframe URL 不变；`npm test` 的 Durable／context 用例验证本机只传路径、远程缓存路径与重启后仍可读取。
 - `test/extension-workbench-browser-check.mjs` 检查宽／窄屏横向页面架、玻璃详情结构、选择与焦点／滚动保持、懒加载、重试、会话竞态和安全渲染。
 - `test/surface-contrast.mjs` 对静态渐变底光取保守色域边界，并逐层合成透明表面；不把半透明白色当成纯白背景计算对比度。另用黑底上 50% 白色的已知低对比样例检查该算法。
 

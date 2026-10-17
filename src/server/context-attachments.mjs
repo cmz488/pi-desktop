@@ -1,5 +1,13 @@
-import { mkdtemp, writeFile, rm, realpath, stat } from "node:fs/promises";
-import { join, basename, isAbsolute } from "node:path";
+import {
+  mkdtemp,
+  writeFile,
+  rm,
+  realpath,
+  stat,
+  readdir,
+  mkdir,
+} from "node:fs/promises";
+import { join, basename, isAbsolute, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { DeskError } from "../config/config-store.mjs";
 import { piSdk } from "../agent/pi-sdk.mjs";
@@ -19,6 +27,26 @@ export const attachmentLimits = Object.freeze({
   ],
 });
 export const ATTACHMENT_BODY_LIMIT = 6 * 1024 * 1024;
+// Remote uploads are cached for the Agent to read by path. The directory is
+// per-request (0600 files, 0700 dir) and pruned after a day, so a prompt that
+// references it stays valid for the turn without unbounded /tmp growth.
+const attachmentCacheRoot = join(tmpdir(), "pi-desk-context-cache");
+const ATTACHMENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+async function pruneAttachmentCache() {
+  try {
+    const entries = await readdir(attachmentCacheRoot, {
+      withFileTypes: true,
+    });
+    const now = Date.now();
+    for (const entry of entries.slice(0, 200)) {
+      if (!entry.isDirectory()) continue;
+      const path = join(attachmentCacheRoot, entry.name);
+      const info = await stat(path).catch(() => undefined);
+      if (info && now - info.mtimeMs > ATTACHMENT_CACHE_TTL_MS)
+        await rm(path, { recursive: true, force: true });
+    }
+  } catch {}
+}
 const unsupportedDocument =
   /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|pages|zip|7z|rar)$/i;
 const imageExtension = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff?)$/i;
@@ -110,10 +138,14 @@ export async function prepareAttachments(input = [], settings = {}) {
   /** @type {import("@earendil-works/pi-ai").ImageContent[]} */
   const images = [];
   if (!files.length) return { text: "", images, names };
-  const directory = files.some((file) => file.kind !== "reference")
-    ? await mkdtemp(join(tmpdir(), "pi-desk-context-"))
-    : undefined;
-  try {
+  const uploads = files.filter((file) => file.kind !== "reference");
+  let directory;
+  if (uploads.length) {
+    await mkdir(attachmentCacheRoot, { recursive: true, mode: 0o700 });
+    await pruneAttachmentCache();
+    directory = await mkdtemp(join(attachmentCacheRoot, "session-"));
+  }
+  {
     for (const [index, file] of files.entries()) {
       if (file.kind === "reference") {
         text.push(
@@ -131,7 +163,10 @@ export async function prepareAttachments(input = [], settings = {}) {
           422,
           `Pi 当前不支持解析此附件格式：${file.name}；请先转为 UTF-8 文本或受支持的图片`,
         );
-      const path = join(directory, String(index));
+      const extension = extname(file.name)
+        .slice(0, 16)
+        .replace(/[^.\w]/g, "");
+      const path = join(directory, `${index}${extension}`);
       await writeFile(path, file.bytes, { mode: 0o600 });
       const mime = await piSdk.detectSupportedImageMimeTypeFromFile(path);
       if (mime) {
@@ -190,7 +225,7 @@ export async function prepareAttachments(input = [], settings = {}) {
         }
         images.push({ type: "image", data, mimeType });
         text.push(
-          `<file name="${xmlName(file.name)}">${hints.join("\n")}</file>`,
+          `<file name="${xmlName(file.name)}" path="${xmlName(path)}">${hints.join("\n")}远程连接已缓存此图片；如需按路径读取请使用文件工具。</file>`,
         );
       } else {
         if (
@@ -210,12 +245,15 @@ export async function prepareAttachments(input = [], settings = {}) {
         }
         if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content))
           throw new DeskError(422, `不支持二进制附件：${file.name}`);
-        text.push(`<file name="${xmlName(file.name)}">\n${content}\n</file>`);
+        // Cache the decoded text (BOM stripped, same bytes the Agent would have
+        // received inline before) rather than the raw upload.
+        await writeFile(path, content, { mode: 0o600 });
+        text.push(
+          `<file name="${xmlName(file.name)}" path="${xmlName(path)}">远程连接已缓存此文件，请使用文件读取工具按需读取，不要假设原始路径可用。</file>`,
+        );
       }
       names.push(file.name);
     }
     return { text: text.join("\n"), images, names };
-  } finally {
-    if (directory) await rm(directory, { recursive: true, force: true });
   }
 }

@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { mkdtemp, writeFile, rm, open } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
@@ -156,7 +156,10 @@ test("local HTTP chooses metadata references while remote requests upload and ca
     ).status,
     200,
   );
-  assert(received[1].text.includes("phone upload"));
+  const cached = /path="([^"]+)"/.exec(received[1].text)?.[1];
+  assert(cached?.includes("pi-desk-context-cache"));
+  assert.equal(await readFile(cached, "utf8"), "phone upload");
+  assert(!received[1].text.includes("phone upload"));
 });
 
 test("context uploads preserve UTF-8/code bytes and use Pi's real image decode/resize", async () => {
@@ -165,8 +168,10 @@ test("context uploads preserve UTF-8/code bytes and use Pi's real image decode/r
     upload("code.svg", "<svg></svg>", "image/svg+xml"),
   ]);
   assert(text.text.includes('name="notes &amp; &quot;draft&quot;.md"'));
-  assert(text.text.includes("# 中文\n<untrusted>"));
-  assert(!text.text.includes("\ufeff"));
+  const cachedPath = /path="([^"]+)"/.exec(text.text)?.[1];
+  assert(cachedPath?.includes("pi-desk-context-cache"));
+  assert.equal(await readFile(cachedPath, "utf8"), "# 中文\n<untrusted>");
+  assert(!text.text.includes("# 中文\n<untrusted>"));
   const png = await QRCode.toBuffer("context fixture");
   const image = await prepareAttachments(
     [upload("image.png", png, "image/png")],
@@ -295,14 +300,13 @@ test("real SDK prompt receives text and image content, and attachment-only promp
   const user = app.runtime.session.messages.find(
     (message) => message.role === "user",
   );
-  assert(
-    user.content.some(
-      (block) =>
-        block.type === "text" &&
-        block.text.includes("context text") &&
-        block.text.includes('name="image.png"'),
-    ),
-  );
+  const userText =
+    user.content.find((block) => block.type === "text")?.text ?? "";
+  const cachedPath = /path="([^"]+)"/.exec(userText)?.[1];
+  assert(cachedPath?.includes("pi-desk-context-cache"));
+  assert.equal(await readFile(cachedPath, "utf8"), "context text");
+  assert(!userText.includes("context text"));
+  assert(userText.includes('name="image.png"'));
   assert(
     user.content.some(
       (block) => block.type === "image" && block.mimeType === "image/png",

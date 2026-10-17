@@ -32,6 +32,7 @@
   --radius-control: 14px;
   --radius-panel: 26px;
   --motion-fast: 180ms;
+  --ease-jelly: cubic-bezier(0.2, 0.85, 0.2, 1);
   --frost-filter: blur(22px) saturate(130%);
 }
 :root,

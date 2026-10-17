@@ -428,9 +428,6 @@ iframe {
   min-width: 120px;
   justify-content: center;
 }
-#empty-start {
-  margin-top: 10px;
-}
 #offline-settings {
   padding: 40px;
 }
@@ -640,5 +637,143 @@ body.sidebar-collapsed:not(.runtime-active) .mobile-header {
   .agent-more,
   .workspace-actions button {
     min-width: 44px;
+  }
+}
+
+/* Agent boot / idle surface: replaces the project hero while an Agent process
+ * starts, so switching to an inactive Agent never flashes a light preview. */
+.agent-boot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  min-height: 0;
+}
+.agent-boot-card {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+  width: min(430px, 100%);
+  padding: 36px 32px;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-panel);
+  background: var(--glass-raised);
+  box-shadow: var(--shadow);
+  backdrop-filter: var(--frost-filter);
+  text-align: center;
+}
+.agent-boot-mark {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 22px;
+  background: var(--sidebar-glass);
+  box-shadow: var(--jelly-shadow);
+  color: var(--text);
+}
+.agent-boot-mark .pi-logo {
+  width: 28px;
+  height: 28px;
+}
+.agent-boot-card strong {
+  font-size: calc(19px * var(--ui-font-scale));
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.agent-boot-card p {
+  max-width: 320px;
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(13px * var(--ui-font-scale));
+  line-height: 1.7;
+}
+.agent-boot-progress {
+  position: relative;
+  width: 128px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--hairline);
+}
+.agent-boot-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+.agent-boot:not(.is-starting) .agent-boot-progress {
+  display: none;
+}
+.agent-boot-card .primary {
+  margin-top: 8px;
+  border-radius: 999px;
+  padding: 9px 20px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes agent-boot-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.99);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes agent-boot-sweep {
+    from {
+      transform: translateX(-110%);
+    }
+    to {
+      transform: translateX(260%);
+    }
+  }
+  @keyframes workspace-surface-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes workspace-nav-out {
+    to {
+      opacity: 0;
+      transform: translateX(-16px);
+    }
+  }
+  .agent-boot-card {
+    animation: agent-boot-in 320ms var(--ease-jelly);
+  }
+  .agent-boot.is-starting .agent-boot-progress::after {
+    animation: agent-boot-sweep 1.25s ease-in-out infinite;
+  }
+  /* Herta-style shell movement: the grid track, nav contents and the chat
+   * surface all animate as one gesture. */
+  body {
+    transition: grid-template-columns 240ms var(--ease-jelly);
+  }
+  #workspace-nav {
+    transition:
+      opacity 180ms ease,
+      transform 240ms var(--ease-jelly);
+  }
+  body.sidebar-collapsed #workspace-nav {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  #runtime,
+  #empty,
+  #agent-boot {
+    animation: workspace-surface-in 260ms var(--ease-jelly);
   }
 }

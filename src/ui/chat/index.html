@@ -15,6 +15,19 @@
     <link rel="stylesheet" href="chat-shell.css" />
   </head>
   <body class="chat-shell">
+    <script>
+      // The saved theme must be on the body before the first paint; otherwise a
+      // dark-preference user sees a light frame each time an Agent iframe loads.
+      try {
+        const preference = localStorage.getItem("pi-web-theme") || "light";
+        if (
+          preference === "dark" ||
+          (preference === "system" &&
+            matchMedia("(prefers-color-scheme: dark)").matches)
+        )
+          document.body.classList.add("dark");
+      } catch {}
+    </script>
     <div class="app">
       <div
         class="sidebar-resize"
@@ -206,19 +219,19 @@
                 class="composer-context"
                 hidden
               >
-                <label class="context-selector"
-                  ><span data-dsh-icon="folder"></span
-                  ><select id="composer-project" aria-label="选择项目"></select
-                  ><span data-dsh-icon="chevron"></span
-                ></label>
-                <label class="context-selector"
-                  ><span data-dsh-icon="branch"></span
-                  ><select
+                <div class="context-selector">
+                  <span data-dsh-icon="folder"></span>
+                  <select id="composer-project" aria-label="选择项目"></select>
+                  <span data-dsh-icon="chevron"></span>
+                </div>
+                <div class="context-selector">
+                  <span data-dsh-icon="branch"></span>
+                  <select
                     id="composer-system-prompt"
                     aria-label="系统提示词"
-                  ></select
-                  ><span data-dsh-icon="chevron"></span
-                ></label>
+                  ></select>
+                  <span data-dsh-icon="chevron"></span>
+                </div>
               </div>
               <form id="composer" class="composer">
                 <div id="command-menu" class="command-menu" hidden>
@@ -258,17 +271,15 @@
                   aria-expanded="false"
                 ></textarea>
                 <div class="composer-toolbar">
-                  <label
-                    id="composer-permission"
-                    class="context-selector"
-                    hidden
-                    ><span data-dsh-icon="shield"></span
-                    ><select id="composer-approval" aria-label="Agent 权限等级">
+                  <div id="composer-permission" class="context-selector" hidden>
+                    <span data-dsh-icon="shield"></span>
+                    <select id="composer-approval" aria-label="Agent 权限等级">
                       <option value="ask-all">全部请求确认</option>
                       <option value="ask-risky">高风险请求确认</option>
-                      <option value="yolo">YOLO</option></select
-                    ><span data-dsh-icon="chevron"></span
-                  ></label>
+                      <option value="yolo">YOLO</option>
+                    </select>
+                    <span data-dsh-icon="chevron"></span>
+                  </div>
                   <div id="model-controls" class="model-controls">
                     <button
                       type="button"
@@ -522,9 +533,29 @@
                 <select id="git-source" aria-label="变更来源">
                   <option value="unstaged">未暂存</option>
                   <option value="staged">已暂存</option></select
-                ><button class="text-button" data-git-action="refresh">
-                  ↻ 刷新
-                </button>
+                ><span class="git-review-actions">
+                  <button
+                    type="button"
+                    class="text-button"
+                    data-git-action="stage-all"
+                  >
+                    全部暂存
+                  </button>
+                  <button
+                    type="button"
+                    class="text-button"
+                    data-git-action="unstage-all"
+                  >
+                    全部取消暂存
+                  </button>
+                  <button
+                    type="button"
+                    class="text-button"
+                    data-git-action="refresh"
+                  >
+                    ↻ 刷新
+                  </button></span
+                >
               </div>
               <p id="git-review-notice" class="muted" role="status" hidden></p>
               <div id="git-files"></div>

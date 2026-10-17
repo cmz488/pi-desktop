@@ -2307,15 +2307,21 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     await wait(
       `document.querySelector('#context-attachments').hidden && document.querySelector('#prompt').value === ''`,
     );
-    assert(
-      a.messages
-        .slice(beforeContext)
-        .find((message) => message.role === "user")
-        .content.some(
-          (block) =>
-            block.type === "text" && block.text.includes("Context fixture"),
-        ),
+    const attachmentMessage = a.messages
+      .slice(beforeContext)
+      .find((message) => message.role === "user");
+    const attachmentText = attachmentMessage.content.find(
+      (block) => block.type === "text",
+    )?.text;
+    const cachedPath = /\/tmp\/pi-desk-context-cache\/[^\s"'\\]+\.md/.exec(
+      attachmentText ?? "",
+    )?.[0];
+    assert(cachedPath, "Remote attachments must hand the Agent a cached path");
+    assert.equal(
+      await readFile(cachedPath, "utf8"),
+      "# Context fixture\n<script>window.contextAttack=true</script>",
     );
+    assert(!attachmentText.includes("Context fixture"));
     await until(() => a.isIdle);
     console.log(
       "Context browser passed: real file picker, text/image preview, removal/error, isolated drafts, reconnect preservation, mobile toolbar and real SDK submission.",

@@ -205,6 +205,50 @@ class GitRepository {
       await handle.close();
     }
   }
+  /** One diff run supplies both raw blob ids (a content-sensitive revision
+   * stamp) and per-file numstat totals, without rendering any patch text.
+   * Raw records start with ":" and are followed by their path record(s);
+   * numstat records are "added<TAB>removed<TAB>path". */
+  async diffFacts(args) {
+    const records = (
+      await this.run([
+        "diff",
+        "--raw",
+        "--numstat",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+        ...args,
+      ])
+    ).split("\0");
+    const raw = [],
+      totals = new Map();
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      if (!record) continue;
+      if (record.startsWith(":")) {
+        raw.push(record);
+        const status = record.slice(record.lastIndexOf(" ") + 1);
+        const paths = status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+        for (let index = 0; index < paths; index++) raw.push(records[++i]);
+        continue;
+      }
+      const first = record.indexOf("\t"),
+        second = record.indexOf("\t", first + 1);
+      const added = record.slice(0, first),
+        removed = record.slice(first + 1, second);
+      let path = record.slice(second + 1);
+      if (!path) {
+        i++;
+        path = records[++i];
+      }
+      totals.set(path, {
+        added: added === "-" ? null : Number(added),
+        removed: removed === "-" ? null : Number(removed),
+      });
+    }
+    return { raw: raw.join("\0"), totals };
+  }
   async state({ readOnly = false, fingerprintPaths } = {}) {
     const status = await this.run([
       "status",
@@ -254,18 +298,6 @@ class GitRepository {
       upstreamFields[0] && upstreamFields[1]?.startsWith("refs/heads/")
         ? { remote: upstreamFields[0], ref: upstreamFields[1] }
         : null;
-    const diff = readOnly
-      ? ""
-      : await this.run(["diff", "--binary", "--no-ext-diff", "--no-textconv"]);
-    const staged = readOnly
-      ? ""
-      : await this.run([
-          "diff",
-          "--cached",
-          "--binary",
-          "--no-ext-diff",
-          "--no-textconv",
-        ]);
     const refs = await this.historyRefsRaw();
     const tags = refs
       .split("\n")
@@ -299,43 +331,20 @@ class GitRepository {
       .update(head)
       .update(branch)
       .update(await this.run(["config", "--null", "--list"]))
-      .update(status)
-      .update(diff)
-      .update(staged);
+      .update(status);
     const filesByPath = new Map(files.map((file) => [file.path, file]));
-    // Numstat gives review totals without transferring whole tracked patches.
+    // One diff run per side supplies raw blob ids for the revision hash and the
+    // review totals. Whole patches are never generated, so large binaries stay
+    // cheap and cannot overflow the output buffer.
     for (const [key, args] of [
       ["unstaged", []],
       ["staged", ["--cached"]],
     ]) {
-      const rows = (
-        await this.run([
-          "diff",
-          "--numstat",
-          "-z",
-          "--no-ext-diff",
-          "--no-textconv",
-          ...args,
-        ])
-      ).split("\0");
-      hash.update(rows.join("\0"));
-      for (let i = 0; i < rows.length; i++) {
-        if (!rows[i]) continue;
-        const first = rows[i].indexOf("\t"),
-          second = rows[i].indexOf("\t", first + 1);
-        const added = rows[i].slice(0, first),
-          removed = rows[i].slice(first + 1, second);
-        let path = rows[i].slice(second + 1);
-        if (!path) {
-          i++;
-          path = rows[++i];
-        }
+      const facts = await this.diffFacts(args);
+      hash.update(facts.raw);
+      for (const [path, stats] of facts.totals) {
         const file = filesByPath.get(path);
-        if (file)
-          (file.stats ??= {})[key] = {
-            added: added === "-" ? null : Number(added),
-            removed: removed === "-" ? null : Number(removed),
-          };
+        if (file) (file.stats ??= {})[key] = stats;
       }
     }
     let bytes = 0,
@@ -410,11 +419,22 @@ class GitRepository {
       hash.update(content);
     }
     const operations = [];
-    for (const name of GIT_OPERATION_FILES) {
-      const path = (await this.run(["rev-parse", "--git-path", name])).replace(
-        /\r?\n$/,
-        "",
-      );
+    // One spawn for all markers; --git-path keeps linked worktrees correct.
+    const operationPaths = (
+      await this.run([
+        "rev-parse",
+        ...GIT_OPERATION_FILES.flatMap((name) => ["--git-path", name]),
+      ])
+    )
+      .split("\n")
+      .map((line) => line.replace(/\r$/, ""));
+    while (operationPaths.at(-1) === "") operationPaths.pop();
+    for (const [index, name] of GIT_OPERATION_FILES.entries()) {
+      const path = operationPaths[index];
+      if (!path) {
+        hash.update(name + ":unknown");
+        continue;
+      }
       try {
         await access(resolve(this.root, path));
         operations.push(name);
@@ -457,16 +477,10 @@ class GitRepository {
       revision: hash.digest("hex"),
       busy: this.busy,
       remotes: (await this.run(["remote"])).trim().split("\n").filter(Boolean),
-      branches: (
-        await this.run([
-          "for-each-ref",
-          "--format=%(refname:short)",
-          "refs/heads",
-        ])
-      )
-        .trim()
-        .split("\n")
-        .filter(Boolean),
+      // Reuse the ref listing instead of asking for heads a second time.
+      branches: historyRefs
+        .filter((ref) => ref.type === "branch")
+        .map((ref) => ref.name),
     };
   }
   async historyRefsRaw() {

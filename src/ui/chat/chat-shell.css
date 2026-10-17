@@ -400,7 +400,7 @@ body.chat-shell.desktop-embedded {
 .chat-shell .context-selector > [data-dsh-icon]:first-child {
   color: var(--muted);
 }
-.chat-shell .context-selector > [data-dsh-icon]:last-child {
+.chat-shell .context-selector > span[data-dsh-icon]:last-of-type {
   transition: transform 180ms var(--ease-jelly);
 }
 .chat-shell .context-selector:focus-within > [data-dsh-icon]:last-child {
@@ -1381,5 +1381,164 @@ body.chat-shell.desktop-embedded {
   .chat-shell #attach-context {
     min-width: 44px;
     min-height: 44px;
+  }
+}
+
+/* Composer listboxes: the whole pill is the trigger and the menu is ours. */
+.chat-shell .context-selector {
+  cursor: pointer;
+}
+.chat-shell .context-trigger {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 224px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-ui-sm);
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-shell .context-trigger-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-shell .context-trigger:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.chat-shell .context-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-shell .context-selector.menu-open {
+  border-color: var(--control-border);
+  background: var(--glass-raised);
+}
+.chat-shell .context-selector.menu-open > span[data-dsh-icon]:last-of-type,
+.chat-shell .context-selector:focus-within > span[data-dsh-icon]:last-of-type {
+  transform: rotate(180deg);
+}
+.chat-shell .context-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -10px;
+  z-index: 70;
+  min-width: 200px;
+  max-width: min(320px, 72vw);
+  max-height: 300px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 16px;
+  background: var(--glass-raised);
+  box-shadow: var(--shadow);
+  backdrop-filter: var(--frost-filter);
+  animation: context-menu-in 160ms var(--ease-jelly);
+  overscroll-behavior: contain;
+}
+.chat-shell .composer-toolbar .context-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+.chat-shell .context-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-ui-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+.chat-shell .context-option:hover,
+.chat-shell .context-option.is-active {
+  background: var(--hover);
+}
+.chat-shell .context-option[aria-selected="true"] {
+  font-weight: 500;
+}
+.chat-shell .context-option[aria-selected="true"]::after {
+  content: "✓";
+  margin-left: auto;
+  color: var(--accent);
+}
+.chat-shell .context-option.is-action {
+  color: var(--muted);
+}
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes extension-rail-in {
+    from {
+      opacity: 0;
+      transform: translateX(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .extension-rail {
+    animation: extension-rail-in 280ms var(--ease-jelly);
+  }
+  /* Herta moves the shell tracks, not the painted cards. */
+  .chat-shell .app {
+    transition: grid-template-columns 240ms var(--ease-jelly);
+  }
+  .chat-shell .sidebar {
+    transition:
+      width 240ms var(--ease-jelly),
+      opacity 180ms ease;
+  }
+  .chat-shell .sidebar-resize {
+    transition: left 240ms var(--ease-jelly);
+  }
+  .chat-shell .workspace-right {
+    transition:
+      width 240ms var(--ease-jelly),
+      margin 240ms var(--ease-jelly),
+      opacity 200ms ease;
+  }
+  .chat-shell.resizing-sidebar .app,
+  .chat-shell.resizing-sidebar .sidebar,
+  .chat-shell.resizing-sidebar .sidebar-resize,
+  .chat-shell.resizing-sidebar .workspace-right {
+    transition: none;
+  }
+}
+
+/* Mobile panes are overlays/sheets; width must land instantly. */
+@media (max-width: 760px) {
+  .chat-shell .app,
+  .chat-shell .sidebar,
+  .chat-shell .sidebar-resize,
+  .chat-shell .workspace-right {
+    transition: none;
   }
 }

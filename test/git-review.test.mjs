@@ -70,3 +70,78 @@ test("Git review remains readable with large unrelated untracked files and limit
     { added: null, removed: null },
   );
 });
+
+test("Git staging accepts a bulk selection and refuses more paths than one confirmation", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-git-bulk-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "bulk@example.invalid"], {
+    cwd: root,
+  });
+  execFileSync("git", ["config", "user.name", "Bulk"], { cwd: root });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: root });
+  for (const name of ["a.txt", "b.txt", "c.txt"])
+    await writeFile(join(root, name), `${name}\n`);
+  const repo = await getGitRepository(root);
+  const view = await repo.read();
+  assert.deepEqual(
+    view.files.map((file) => file.path),
+    ["a.txt", "b.txt", "c.txt"],
+  );
+  const plan = await repo.prepare(
+    { action: "stage", paths: ["a.txt", "c.txt"] },
+    "target",
+  );
+  assert.deepEqual(plan.request.paths, ["a.txt", "c.txt"]);
+  await repo.confirm(plan.token, "target");
+  assert.equal(
+    execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .join(","),
+    "a.txt,c.txt",
+  );
+  await assert.rejects(
+    repo.prepare(
+      {
+        action: "stage",
+        paths: Array.from({ length: 101 }, (_, index) => `file${index}.txt`),
+      },
+      "target",
+    ),
+    (e) => e.status === 422,
+  );
+});
+
+test("Git previews use raw blob ids, so large modified binaries neither overflow nor need patches", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-git-raw-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "raw@example.invalid"], {
+    cwd: root,
+  });
+  execFileSync("git", ["config", "user.name", "Raw"], { cwd: root });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: root });
+  await writeFile(join(root, "big.bin"), randomBytes(5 * 1024 * 1024));
+  execFileSync("git", ["add", "--", "big.bin"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "binary"], { cwd: root });
+  await writeFile(join(root, "big.bin"), randomBytes(5 * 1024 * 1024));
+  const repo = await getGitRepository(root);
+  const before = await repo.read();
+  assert.deepEqual(
+    before.files.find((file) => file.path === "big.bin").stats.unstaged,
+    { added: null, removed: null },
+  );
+  // 5 MiB of binary diff used to exceed the 4 MiB output buffer here.
+  const plan = await repo.prepare({ action: "stage", paths: ["big.bin"] }, "A");
+  await repo.confirm(plan.token, "A");
+  const staged = await repo.read();
+  assert.deepEqual(
+    staged.files.find((file) => file.path === "big.bin").stats.staged,
+    { added: null, removed: null },
+  );
+  assert.notEqual(staged.revision, before.revision);
+});

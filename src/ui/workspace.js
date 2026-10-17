@@ -785,21 +785,32 @@ function render() {
     tab === "extensions" ? "扩展工作台" : "设置";
   $("#settings-start").disabled =
     !agent || pending || ["starting", "stopping"].includes(agent.status);
-  $("#empty").hidden = running || tab !== "workspace";
-  $("#empty-start").hidden = !agent;
-  $("#empty-start").disabled =
-    pending || ["starting", "stopping"].includes(agent?.status);
-  if (!running) {
-    $("#empty h1").textContent = agent
-      ? agent.status === "starting"
-        ? "正在启动 Pi…"
-        : agent.name
-      : "Make it yours.";
-    $("#empty p").textContent = agent
-      ? (agent.error ??
-        "启动此 Agent 后即可对话、管理插件、Skills 和模型。停止进程后，对话与未完成任务保存在 Pi Durable 中。")
-      : "添加本地项目，创建独立 Agent。会话、任务和配置持久保存，切换项目时后台工作继续。";
-    $("#empty-add").hidden = !!agent;
+  // A selected but inactive Agent shows an intentional boot surface; the
+  // project marketing hero belongs only to the no-Agent workspace.
+  const booting = !!agent && !running && tab === "workspace";
+  $("#empty").hidden = running || !!agent || tab !== "workspace";
+  $("#agent-boot").hidden = !booting;
+  if (!agent) {
+    $("#empty h1").textContent = "Make it yours.";
+    $("#empty p").textContent =
+      "添加本地项目，创建独立 Agent。会话、任务和配置持久保存，切换项目时后台工作继续。";
+    $("#empty-add").hidden = false;
+  }
+  if (booting) {
+    const transitioning = ["starting", "stopping"].includes(agent.status);
+    $("#agent-boot").classList.toggle("is-starting", transitioning);
+    $("#agent-boot-title").textContent = transitioning
+      ? agent.status === "stopping"
+        ? `正在停止 ${agent.name}`
+        : `正在启动 ${agent.name}`
+      : agent.name;
+    $("#agent-boot-note").textContent = transitioning
+      ? "正在连接 Pi 会话、工具与扩展…"
+      : (agent.error ??
+        `${statuses[agent.status] ?? "未运行"} · 启动后继续此 Agent 的会话与后台任务`);
+    $("#agent-boot-start").hidden =
+      transitioning || !["stopped", "failed"].includes(agent.status);
+    $("#agent-boot-start").disabled = pending;
   }
   const key = running ? `${agent.id}:${agent.pid ?? "history"}` : "";
   for (const [id, frame] of frames) {
@@ -1110,7 +1121,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () =>
   navigation(document.body.classList.contains("navigation-open")),
 );
-$("#empty-start").onclick = $("#settings-start").onclick = () =>
+$("#settings-start").onclick = $("#agent-boot-start").onclick = () =>
   action("agent.start");
 $("#settings").onclick = () => setView("general");
 $("#settings-back").onclick = () => setView("workspace");

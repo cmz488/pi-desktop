@@ -226,6 +226,7 @@ function renderComposerContext() {
   $("#composer-permission").title = state?.capabilities?.readOnly
     ? "无项目会话保持只读，权限等级控制可用工具的确认方式"
     : "通过 Pi tool_call 钩子确认工具，包括 Codemode/MCP 嵌套调用";
+  for (const item of contextSelects) item.sync();
 }
 $("#composer-project").onchange = (event) => {
   sessionDrafts.edit($("#prompt").value);
@@ -251,6 +252,164 @@ $("#composer-approval").onchange = (event) => {
   desktopMessage("policy", { mode: event.target.value });
   event.target.value = desktopConfiguration.agent.approvalMode ?? "ask-risky";
 };
+
+/* The three composer selects are rendered as designed listboxes. The native
+ * select stays in the DOM (value/change contract, tests and Desktop host), but
+ * is visually replaced by a full-pill trigger plus a themed menu. */
+const contextSelects = [];
+let openContextSelect;
+function enhanceContextSelect(select) {
+  const shell = select.closest(".context-selector");
+  if (!shell || shell.dataset.enhanced === "true") return;
+  shell.dataset.enhanced = "true";
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "context-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  const text = document.createElement("span");
+  text.className = "context-trigger-label";
+  trigger.append(text);
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.hidden = true;
+  menu.id = `${select.id}-options`;
+  menu.setAttribute("role", "listbox");
+  trigger.setAttribute("aria-controls", menu.id);
+  trigger.setAttribute("aria-label", select.getAttribute("aria-label") ?? "");
+  shell.insertBefore(trigger, select);
+  shell.append(menu);
+  select.classList.add("context-native");
+  select.tabIndex = -1;
+  select.setAttribute("aria-hidden", "true");
+  let activeIndex = 0;
+  const choices = () => [...select.options].filter((row) => !row.disabled);
+  function markActive() {
+    [...menu.children].forEach((row, index) =>
+      row.classList.toggle("is-active", index === activeIndex),
+    );
+  }
+  function renderMenu() {
+    menu.replaceChildren();
+    const rows = choices();
+    activeIndex = Math.max(
+      0,
+      rows.findIndex((row) => row.value === select.value),
+    );
+    for (const [index, option] of rows.entries()) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "context-option";
+      if (option.value.startsWith("__")) row.classList.add("is-action");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(option.value === select.value));
+      row.tabIndex = -1;
+      row.dataset.value = option.value;
+      row.textContent = option.textContent;
+      row.addEventListener("pointermove", () => {
+        activeIndex = index;
+        markActive();
+      });
+      row.addEventListener("click", () => choose(option.value));
+      menu.append(row);
+    }
+    markActive();
+  }
+  function sync() {
+    const current = select.selectedOptions[0];
+    text.textContent = current?.textContent ?? "";
+    trigger.disabled = select.disabled;
+    shell.classList.toggle("is-disabled", select.disabled);
+    if (!menu.hidden) renderMenu();
+  }
+  function open(up = false) {
+    if (trigger.disabled || !choices().length) return;
+    if (openContextSelect && openContextSelect !== api)
+      openContextSelect.close();
+    renderMenu();
+    menu.hidden = false;
+    shell.classList.add("menu-open");
+    trigger.setAttribute("aria-expanded", "true");
+    openContextSelect = api;
+    const rows = choices();
+    activeIndex = up ? rows.length - 1 : activeIndex;
+    markActive();
+    menu.children[activeIndex]?.focus({ preventScroll: true });
+    menu.children[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }
+  function close(restoreFocus = false) {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    shell.classList.remove("menu-open");
+    trigger.setAttribute("aria-expanded", "false");
+    if (openContextSelect === api) openContextSelect = undefined;
+    if (restoreFocus) trigger.focus({ preventScroll: true });
+  }
+  function choose(value) {
+    const changed = select.value !== value;
+    select.value = value;
+    close(true);
+    if (changed) select.dispatchEvent(new Event("change", { bubbles: true }));
+    sync();
+  }
+  // The whole pill is the hit area: icons, padding and the chevron all open the
+  // menu, not only the text inside the native select.
+  shell.addEventListener("click", (event) => {
+    if (event.target.closest(".context-menu")) return;
+    event.preventDefault();
+    if (menu.hidden) open();
+    else close(true);
+  });
+  trigger.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      open(event.key === "ArrowUp");
+    } else if (event.key === "Escape") close();
+  });
+  menu.addEventListener("keydown", (event) => {
+    const rows = choices();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close(true);
+      return;
+    }
+    if (event.key === "Tab") {
+      close();
+      return;
+    }
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      activeIndex =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? rows.length - 1
+            : (activeIndex + (event.key === "ArrowUp" ? -1 : 1) + rows.length) %
+              rows.length;
+      markActive();
+      menu.children[activeIndex]?.focus({ preventScroll: true });
+      menu.children[activeIndex]?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (["Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      menu.children[activeIndex]?.click();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!shell.contains(event.target)) close();
+  });
+  window.addEventListener("resize", () => close());
+  const api = { sync, close: () => close() };
+  contextSelects.push(api);
+  sync();
+}
+for (const select of [
+  $("#composer-project"),
+  $("#composer-system-prompt"),
+  $("#composer-approval"),
+])
+  enhanceContextSelect(select);
 function closeModelControls() {
   composerModelPicker?.close();
 }
@@ -761,6 +920,10 @@ function openDialog(title, html, save, submit = "保存") {
   $("#dialog").showModal();
 }
 const disclosures = new Map();
+// Fold bodies keep their own reading position (long tool arguments and output).
+// Live updates rebuild those nodes, so offsets are remembered per stable key.
+const foldScroll = new Map();
+const MAX_REMEMBERED_FOLD_SCROLL = 500;
 let extensionWorkbench;
 const activityAnimationStarts = new Map();
 function toolSummary(value) {
@@ -878,7 +1041,7 @@ function toolMarkup(block) {
     ? `data-lazy-messages="${esc(JSON.stringify(lazyIds))}"`
     : "";
 
-  return `<details class="tool-card ${status}" ${lazy} data-disclosure="${esc(key)}" ${disclosures.get(key) ? "open" : ""}><summary><span class="tool-state ${status}">${status === "running" ? '<span class="activity-spinner"></span>' : error ? "!" : status === "complete" ? "✓" : "·"}</span><strong>${esc(block.name)}</strong><small>${esc(toolSummary(argumentsText))}</small>${extensionStatus ? `<span class="extension-inline-status">${esc(extensionStatus)}</span>` : ""}<span class="tool-outcome">${labels[status]}</span>${result ? `<button type="button" data-preview="${messageRows.indexOf(result)}">查看 ↗</button>` : ""}</summary><div class="tool-details">${extensionView}<label>参数</label><pre>${esc(argumentsText)}</pre>${output !== undefined ? `<label>输出</label><pre>${esc(output || "无文本输出")}</pre>` : '<p class="muted">等待工具结果…</p>'}</div></details>`;
+  return `<details class="tool-card ${status}" ${lazy} data-disclosure="${esc(key)}" ${disclosures.get(key) ? "open" : ""}><summary><span class="tool-state ${status}">${status === "running" ? '<span class="activity-spinner"></span>' : error ? "!" : status === "complete" ? "✓" : "·"}</span><strong>${esc(block.name)}</strong><small>${esc(toolSummary(argumentsText))}</small>${extensionStatus ? `<span class="extension-inline-status">${esc(extensionStatus)}</span>` : ""}<span class="tool-outcome">${labels[status]}</span>${result ? `<button type="button" data-preview="${messageRows.indexOf(result)}">查看 ↗</button>` : ""}</summary><div class="tool-details">${extensionView}<label>参数</label><pre data-scroll-key="${esc(key + ":arguments")}">${esc(argumentsText)}</pre>${output !== undefined ? `<label>输出</label><pre data-scroll-key="${esc(key + ":output")}">${esc(output || "无文本输出")}</pre>` : '<p class="muted">等待工具结果…</p>'}</div></details>`;
 }
 function activityMarkup(message, block) {
   const entries = block.entries;
@@ -1052,6 +1215,22 @@ function rememberDisclosures() {
   while (disclosures.size > 500)
     disclosures.delete(disclosures.keys().next().value);
 }
+/* An expanded fold is read, not just opened: scrolling its long arguments or
+ * output must survive the redraw that streaming triggers. Collapsed folds are
+ * not measured, so their last visible offset stays available on reopen. */
+function rememberFoldScroll() {
+  for (const node of document.querySelectorAll("[data-scroll-key]"))
+    if (node.clientHeight)
+      foldScroll.set(node.dataset.scrollKey, node.scrollTop);
+  while (foldScroll.size > MAX_REMEMBERED_FOLD_SCROLL)
+    foldScroll.delete(foldScroll.keys().next().value);
+}
+function restoreFoldScroll() {
+  for (const node of document.querySelectorAll("[data-scroll-key]")) {
+    const top = foldScroll.get(node.dataset.scrollKey);
+    if (top) node.scrollTop = top;
+  }
+}
 /* Extension cards leave the transcript for their own rail (Herta's utility
  * rail), so a conversation is only speech, thinking and tool records. */
 const isExtensionCard = (row) =>
@@ -1160,6 +1339,7 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
     node.scrollHeight - node.scrollTop - node.clientHeight < 100;
   const previous = node.scrollTop;
   rememberDisclosures();
+  rememberFoldScroll();
   streaming = null;
   if (liveOnly) {
     // Streaming changes only the current assistant turn. Rebuild that turn so
@@ -1241,6 +1421,7 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
     });
   }
   if (enter) animateConversationEnter(node);
+  restoreFoldScroll();
   node.scrollTop = nearBottom ? node.scrollHeight : previous;
 }
 let liveFrame;
@@ -3083,6 +3264,26 @@ $("#thinking-menu").addEventListener("keydown", (event) => {
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".thinking-picker")) closeThinking();
 });
+// A link in a message must not navigate this iframe (framed sites often render
+// as a blank page). Route it to the workspace browser panel, or a real external
+// tab when the right-hand browser is unavailable.
+document.addEventListener(
+  "click",
+  (event) => {
+    const link = event.target.closest?.("a[href]");
+    if (!link || event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    const href = link.getAttribute("href") ?? "";
+    if (!/^https?:\/\//i.test(href)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (workspacePanel?.openWeb && !state?.capabilities?.browserRemoteDisabled)
+      void workspacePanel.openWeb(href);
+    else window.open(href, "_blank", "noopener,noreferrer");
+  },
+  true,
+);
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
@@ -4611,6 +4812,8 @@ document.addEventListener("keydown", (event) => {
 });
 // Kept in the existing served browser module so older hosts can still load the page.
 // This logical module owns Git view state; callers provide transport and shared UI.
+// The server's prepare() accepts at most this many paths per confirmation.
+const MAX_GIT_STAGE_PATHS = 100;
 function createGitPane({ request, snapshot, confirm, reveal }) {
   let owner,
     data,
@@ -4686,6 +4889,18 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
           (action === "commit" && !data.unmerged?.length)));
     const writable =
       readable && !data.busy && (state.gitWritable ?? state.idle);
+    // Bulk staging mirrors the single-file actions; prepare() accepts at most
+    // MAX_GIT_STAGE_PATHS paths per confirmation.
+    const bulk = {
+      "stage-all": {
+        action: "stage",
+        count: data?.files.filter((file) => file.unstaged).length ?? 0,
+      },
+      "unstage-all": {
+        action: "unstage",
+        count: data?.files.filter((file) => file.staged).length ?? 0,
+      },
+    };
     const notice = !state.sessionId
       ? "请先连接 Pi"
       : !supported
@@ -4718,38 +4933,47 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
               analyzing ||
               !state.gitAnalysis ||
               !/\.(?:[cm]?[jt]sx?|jsonc?)$/i.test(expanded.path)
-            : [
-                  "diff",
-                  "log",
-                  "show",
-                  "pick-tag",
-                  "history-prev",
-                  "history-next",
-                ].includes(action)
-              ? !readable ||
-                (action === "show" && !state.gitExtended) ||
-                (action === "history-prev" &&
-                  (!historyData || historyData.page <= 1)) ||
-                (action === "history-next" && !historyData?.nextPage)
-              : !writable ||
-                !allowed(action) ||
-                (action === "manage" && !state.gitExtended) ||
-                (action === "commit" &&
-                  (!data.files.some((file) => file.staged) ||
-                    !$("#git-message").value.trim())) ||
-                (action === "switch" &&
-                  (!data.branches.length || data.files.length > 0)) ||
-                (["fetch", "pull", "push"].includes(action) &&
-                  (!data.remotes.length ||
-                    (action !== "fetch" &&
-                      (!data.head || !data.branches.includes(data.branch))) ||
-                    (action === "pull" && data.files.length > 0)));
+            : bulk[action]
+              ? !writable ||
+                !allowed(bulk[action].action) ||
+                !bulk[action].count ||
+                bulk[action].count > MAX_GIT_STAGE_PATHS
+              : [
+                    "diff",
+                    "log",
+                    "show",
+                    "pick-tag",
+                    "history-prev",
+                    "history-next",
+                  ].includes(action)
+                ? !readable ||
+                  (action === "show" && !state.gitExtended) ||
+                  (action === "history-prev" &&
+                    (!historyData || historyData.page <= 1)) ||
+                  (action === "history-next" && !historyData?.nextPage)
+                : !writable ||
+                  !allowed(action) ||
+                  (action === "manage" && !state.gitExtended) ||
+                  (action === "commit" &&
+                    (!data.files.some((file) => file.staged) ||
+                      !$("#git-message").value.trim())) ||
+                  (action === "switch" &&
+                    (!data.branches.length || data.files.length > 0)) ||
+                  (["fetch", "pull", "push"].includes(action) &&
+                    (!data.remotes.length ||
+                      (action !== "fetch" &&
+                        (!data.head || !data.branches.includes(data.branch))) ||
+                      (action === "pull" && data.files.length > 0)));
       button.title = button.disabled
-        ? notice ||
-          (action === "analyze"
-            ? "仅 JS/TS 与 JSON；宿主须支持 LSP，分析当前工作树，不分析已暂存快照"
-            : "当前没有可执行的文件／分支／远端或提交说明")
-        : "";
+        ? bulk[action] && bulk[action].count > MAX_GIT_STAGE_PATHS
+          ? `一次最多操作 ${MAX_GIT_STAGE_PATHS} 个文件；请分批暂存或在终端处理`
+          : notice ||
+            (action === "analyze"
+              ? "仅 JS/TS 与 JSON；宿主须支持 LSP，分析当前工作树，不分析已暂存快照"
+              : "当前没有可执行的文件／分支／远端或提交说明")
+        : bulk[action]
+          ? `对 ${bulk[action].count} 个文件执行 git ${bulk[action].action}`
+          : "";
     }
     $("#git-manage-notice").textContent = state.gitExtended
       ? "目标解析成真实提交 SHA 后确认；不执行任意 shell 或修订表达式。" +
@@ -4873,7 +5097,7 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
                 : /\.(?:md|txt)$/i.test(name)
                   ? "text"
                   : "file";
-            return `<article class="git-change-card"><div class="git-file-head"><button class="git-file-name" type="button" data-git-action="diff" data-git-path="${esc(file.path)}" data-git-staged="${staged}" aria-expanded="${isOpen}"><span class="git-file-icon kind-${kind}">${kind === "code" ? "⌘" : kind === "json" ? "{}" : kind === "text" ? "▤" : "◇"}</span><span class="git-file-path"><strong>${esc(name)}</strong>${directory ? `<span class="git-file-directory">${esc(directory)}</span>` : ""}</span><span class="git-file-stats"><span class="git-added">${stats?.added == null ? "+—" : "+" + stats.added}</span><span class="git-removed">${stats?.removed == null ? "−—" : "−" + stats.removed}</span></span><span class="git-chevron">${isOpen ? "⌃" : "⌄"}</span></button></div>${isOpen ? `<div class="git-file-actions"><span>${esc(staged ? "已暂存差异" : "工作树差异")}</span><button type="button" class="text-button" data-git-action="${staged ? "unstage" : "stage"}" data-git-path="${esc(file.path)}">${staged ? "取消暂存" : "预览暂存"}</button></div><pre class="git-file-diff" tabindex="0" aria-label="${esc(file.path)} 差异"></pre>` : ""}</article>`;
+            return `<article class="git-change-card"><div class="git-file-head"><button class="git-file-name" type="button" data-git-action="diff" data-git-path="${esc(file.path)}" data-git-staged="${staged}" aria-expanded="${isOpen}"><span class="git-file-icon kind-${kind}">${kind === "code" ? "⌘" : kind === "json" ? "{}" : kind === "text" ? "▤" : "◇"}</span><span class="git-file-path"><strong>${esc(name)}</strong>${directory ? `<span class="git-file-directory">${esc(directory)}</span>` : ""}</span><span class="git-file-stats"><span class="git-added">${stats?.added == null ? "+—" : "+" + stats.added}</span><span class="git-removed">${stats?.removed == null ? "−—" : "−" + stats.removed}</span></span><span class="git-chevron">${isOpen ? "⌃" : "⌄"}</span></button><button class="git-file-stage" type="button" data-git-action="${staged ? "unstage" : "stage"}" data-git-path="${esc(file.path)}" title="${staged ? "git restore --staged" : "git add"} -- ${esc(file.path)}" aria-label="${staged ? "取消暂存" : "暂存"} ${esc(file.path)}">${staged ? "−" : "+"}</button></div>${isOpen ? `<div class="git-file-actions"><span>${esc(staged ? "已暂存差异" : "工作树差异")}</span></div><pre class="git-file-diff" tabindex="0" aria-label="${esc(file.path)} 差异"></pre>` : ""}</article>`;
           })
           .join("")
       : `<div class="git-review-empty"><strong>${staged ? "没有已暂存变更" : "没有未暂存变更"}</strong><p>${staged ? "从未暂存审查中选择文件暂存" : "工作树与索引一致"}</p></div>`;
@@ -5270,6 +5494,19 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
         await analyze();
         return;
       }
+      if (action === "stage-all" || action === "unstage-all") {
+        const unstage = action === "unstage-all";
+        const paths = (data?.files ?? [])
+          .filter((file) => (unstage ? file.staged : file.unstaged))
+          .map((file) => file.path);
+        if (!paths.length) return;
+        if (paths.length > MAX_GIT_STAGE_PATHS)
+          throw new Error(
+            `一次最多操作 ${MAX_GIT_STAGE_PATHS} 个文件；请分批暂存或在终端处理`,
+          );
+        await mutation({ action: unstage ? "unstage" : "stage", paths });
+        return;
+      }
       const menu = button.closest("details");
       if (menu) menu.open = false;
       if (action === "log") {
@@ -5369,13 +5606,26 @@ const gitPane = createGitPane({
   request: api,
   snapshot: () => ({ ...state, live, connected }),
   reveal: revealRight,
-  confirm: (plan, execute) =>
+  confirm: (plan, execute) => {
+    const gitRequest = plan.request ?? {};
+    const staging =
+      gitRequest.action === "stage" || gitRequest.action === "unstage";
+    // Staging only names the selected paths; the full change list belongs to
+    // operations that can touch the whole worktree.
+    const body = staging
+      ? `<p>${esc(plan.root)}</p><p>${gitRequest.action === "stage" ? "将暂存" : "将取消暂存"} ${gitRequest.paths.length} 个文件：</p><pre>${esc(gitRequest.paths.join("\n"))}</pre><p class="dialog-note">${esc(plan.warning)}</p>`
+      : `<p>${esc(plan.root)}</p><pre>${esc(JSON.stringify(gitRequest, null, 2))}</pre><p>当前已暂存（提交时全部包含）：</p><pre>${esc(plan.staged.join("\n") || "无")}</pre><p>当前工作区变更：</p><pre>${esc((plan.affected ?? []).join("\n") || "无")}</pre><p class="dialog-note">${esc(plan.warning)}</p>`;
     openDialog(
-      "确认 Git 操作",
-      `<p>${esc(plan.root)}</p><pre>${esc(JSON.stringify(plan.request, null, 2))}</pre><p>当前已暂存（提交时全部包含）：</p><pre>${esc(plan.staged.join("\n") || "无")}</pre><p>当前工作区变更：</p><pre>${esc((plan.affected ?? []).join("\n") || "无")}</pre><p class="dialog-note">${esc(plan.warning)}</p>`,
+      staging
+        ? gitRequest.action === "stage"
+          ? "确认暂存（git add）"
+          : "确认取消暂存"
+        : "确认 Git 操作",
+      body,
       execute,
       "确认执行",
-    ),
+    );
+  },
 });
 const openGit = (args = "") => gitPane.open(args);
 if (runtimePrefix) {
@@ -5466,11 +5716,17 @@ function bindSidebarResize(handle, side) {
   handle.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
+    // Keyboard steps land instantly; only pointer drags and pane toggles use
+    // the shell transition.
+    document.body.classList.add("resizing-sidebar");
     apply(
       pane.getBoundingClientRect().width +
         (event.key === "ArrowRight" ? 1 : -1) *
           (side === "left" ? 1 : -1) *
           RESIZE_STEP,
+    );
+    requestAnimationFrame(() =>
+      document.body.classList.remove("resizing-sidebar"),
     );
   });
   window.addEventListener("resize", () => {

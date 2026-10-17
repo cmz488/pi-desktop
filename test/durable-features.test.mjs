@@ -655,11 +655,15 @@ test("reused Desktop modules support nested tools, attachments, native settings 
       value.idle &&
       value.messages.some((row) => row.text === "attachment received"),
   );
-  assert(
-    state.messages.some(
-      (row) => row.role === "user" && row.text.includes("attached code"),
-    ),
-  );
+  const attachmentRow = state.messages
+    .filter((row) => row.role === "user")
+    .at(-1);
+  const cachedPath = /\/tmp\/pi-desk-context-cache\/[^\s"'\\]+/.exec(
+    attachmentRow?.text ?? "",
+  )?.[0];
+  assert(cachedPath, attachmentRow?.text);
+  assert.equal(await readFile(cachedPath, "utf8"), "attached code");
+  assert(!attachmentRow.text.includes("attached code"));
   const remote = await f.call("/api/remote");
   assert(remote.qr.startsWith("data:image/png;base64,"));
   await f.app.stop();
@@ -676,11 +680,14 @@ test("reused Desktop modules support nested tools, attachments, native settings 
     ).json();
     assert.equal(restored.active.id, f.id);
     assert.equal(restored.sessionId, String(f.id));
-    assert(
-      restored.messages.some(
-        (row) => row.role === "user" && row.text.includes("attached code"),
-      ),
-    );
+    const restoredRow = restored.messages
+      .filter((row) => row.role === "user")
+      .at(-1);
+    const restoredPath = /\/tmp\/pi-desk-context-cache\/[^\s"'\\]+/.exec(
+      restoredRow?.text ?? "",
+    )?.[0];
+    assert(restoredPath, restoredRow?.text);
+    assert.equal(await readFile(restoredPath, "utf8"), "attached code");
   } finally {
     await reopened.stop();
   }

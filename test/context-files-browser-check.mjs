@@ -123,8 +123,17 @@ try {
     () => f.requests,
     (rows) => rows.length === 2,
   );
-  assert(JSON.stringify(f.requests[1]).includes("REMOTE_FILE_CONTENT_MARKER"));
-  assert(!JSON.stringify(f.requests[1]).includes(remote));
+  const remoteRequest = JSON.stringify(f.requests[1]);
+  assert(!remoteRequest.includes("REMOTE_FILE_CONTENT_MARKER"));
+  assert(!remoteRequest.includes(remote));
+  const cachedPath = /\/tmp\/pi-desk-context-cache\/[^\s"'\\]+/.exec(
+    remoteRequest,
+  )?.[0];
+  assert(cachedPath, remoteRequest.slice(-1200));
+  assert.equal(
+    await readFile(cachedPath, "utf8"),
+    "REMOTE_FILE_CONTENT_MARKER",
+  );
   assert.equal(
     await evaluate(
       `fetch(${JSON.stringify(`/agents/${id}/api/context/files`)},{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.status)`,

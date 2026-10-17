@@ -322,11 +322,30 @@ export function createWorkspacePanels({
       }
       const url = panelAddress(value);
       if (agentBrowser) {
-        await browserView.execute(
-          active()?.kind === "web" ? "navigate" : "new",
-          { url, ...(active()?.kind === "web" ? { id: active().id } : {}) },
+        const current = active();
+        const state = await browserView.execute(
+          current?.kind === "web" ? "navigate" : "new",
+          { url, ...(current?.kind === "web" ? { id: current.id } : {}) },
         );
+        // The shared Chromium tab list is authoritative: when the panel was on a
+        // file/home tab, bring the freshly opened page into view instead of
+        // leaving an empty viewport behind.
+        const opened =
+          (state?.tabs ?? []).find((tab) => tab.active) ??
+          (state?.tabs ?? []).at(-1);
+        if (opened && current?.kind !== "web") {
+          tabs.set(opened.id, {
+            ...tabs.get(opened.id),
+            ...opened,
+            kind: "web",
+            back: true,
+            forward: true,
+          });
+          selected = opened.id;
+          render();
+        }
         show(true);
+        layout(true);
         return;
       }
       let tab = active();
@@ -886,6 +905,7 @@ export function createWorkspacePanels({
       return active()?.kind;
     },
     openBuiltin,
+    openWeb,
     layout,
     configure(value) {
       native =

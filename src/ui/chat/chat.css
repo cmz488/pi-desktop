@@ -3464,6 +3464,12 @@ body.dark {
   border-radius: 9px;
   background: var(--side);
 }
+.git-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
 .text-button {
   padding: 5px 8px;
   border-radius: 7px;
@@ -3634,18 +3640,41 @@ button.git-card-row:hover {
 .git-file-head {
   position: sticky;
   top: 49px;
+  display: flex;
+  align-items: center;
   background: var(--panel);
 }
 .git-file-name {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex: 1;
   min-width: 0;
-  width: 100%;
   padding: 8px 12px;
   font-size: calc(12px * var(--ui-font-scale));
   text-align: left;
   border-radius: 0;
+}
+/* Stage/unstage stays one click away instead of hiding behind the diff. */
+.git-file-stage {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: calc(14px * var(--ui-font-scale));
+  line-height: 1;
+}
+.git-file-stage:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.git-file-stage:disabled {
+  opacity: 0.45;
 }
 .git-file-name:hover,
 .git-file-name[aria-expanded="true"] {

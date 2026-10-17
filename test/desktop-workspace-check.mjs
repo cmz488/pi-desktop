@@ -378,7 +378,37 @@ try {
     ),
     "",
   );
+  await call("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+  });
+  assert(
+    await evaluate(`(() => {
+      const body=getComputedStyle(document.body), nav=getComputedStyle(document.querySelector('#workspace-nav'));
+      return body.transitionProperty.includes('grid-template-columns') && nav.transitionProperty.includes('transform');
+    })()`),
+    "Shell layout changes must animate instead of jumping: " +
+      JSON.stringify(
+        await evaluate(
+          "({b:getComputedStyle(document.body).transitionProperty,n:getComputedStyle(document.querySelector('#workspace-nav')).transitionProperty,match:matchMedia('(prefers-reduced-motion: no-preference)').matches})",
+        ),
+      ),
+  );
+  await evaluate(`(() => {
+    window.bootSeen=false; window.emptySeen=false;
+    new MutationObserver(()=>{
+      const boot=document.querySelector('#agent-boot');
+      if(boot&&!boot.hidden)window.bootSeen=true;
+      const empty=document.querySelector('#empty');
+      if(empty&&!empty.hidden)window.emptySeen=true;
+    }).observe(document.body,{subtree:true,attributes:true,attributeFilter:['hidden']});
+  })()`);
   await create("UI Agent A");
+  assert(
+    await evaluate(
+      "window.emptySeen===false && !!document.querySelector('#agent-boot') && document.querySelector('#agent-boot').hidden",
+    ),
+    "Switching or creating Agents must never flash the project hero",
+  );
   await until(
     "!!document.querySelector('#runtime').contentDocument.querySelector('#desktop-composer-context') && !document.querySelector('#runtime').contentDocument.querySelector('#desktop-composer-context').hidden",
   );
@@ -391,6 +421,22 @@ try {
         && select.backgroundColor==='rgba(0, 0, 0, 0)' && parseFloat(select.paddingLeft)===0;
     })()`),
     "Composer context selects must be designed glass pills, not unstyled native controls",
+  );
+  assert(
+    await evaluate(`(() => {
+      const doc=document.querySelector('#runtime').contentDocument, win=doc.defaultView;
+      const shell=doc.querySelector('#composer-permission');
+      const trigger=shell?.querySelector('.context-trigger');
+      if(!trigger) return false;
+      shell.querySelector('[data-dsh-icon]').click();
+      const menu=shell.querySelector('.context-menu');
+      const rows=menu?[...menu.querySelectorAll('.context-option')]:[];
+      const result=!!menu&&!menu.hidden&&parseFloat(win.getComputedStyle(menu).borderRadius)>=12
+        && rows.map(row=>row.textContent).includes('高风险请求确认');
+      doc.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+      return result;
+    })()`),
+    "The permission select must use the same themed, whole-pill listbox",
   );
   await evaluate(
     "(() => { const doc=document.querySelector('#runtime').contentDocument; doc.querySelector('#analysis-control').click(); })()",
@@ -507,11 +553,37 @@ try {
   await until(
     "document.querySelector('#runtime').contentDocument.querySelector('#composer-system-prompt').selectedOptions[0].textContent==='UI review'",
   );
-  await evaluate(
-    "(() => { const doc=document.querySelector('#runtime').contentDocument; const node=doc.querySelector('#composer-system-prompt'); node.value='standard'; node.dispatchEvent(new Event('change', {bubbles:true})); })()",
+  // The whole pill, not only its text, opens a themed menu.
+  await evaluate(`(() => {
+    const doc=document.querySelector('#runtime').contentDocument;
+    doc.querySelector('#composer-system-prompt').closest('.context-selector').querySelector('[data-dsh-icon]').click();
+  })()`);
+  await until(
+    "(() => {const doc=document.querySelector('#runtime').contentDocument;const m=doc.querySelector('#composer-system-prompt').closest('.context-selector').querySelector('.context-menu');return m&&!m.hidden;})()",
   );
+  assert(
+    await evaluate(`(() => {
+      const doc=document.querySelector('#runtime').contentDocument;
+      const m=doc.querySelector('#composer-system-prompt').closest('.context-selector').querySelector('.context-menu');
+      const s=doc.defaultView.getComputedStyle(m);
+      return parseFloat(s.borderRadius)>=12 && s.backgroundColor.startsWith('rgba(')
+        && [...m.querySelectorAll('.context-option')].some(row=>row.textContent==='标准模式');
+    })()`),
+    "The composer dropdown must be a themed listbox",
+  );
+  await evaluate(`(() => {
+    const doc=document.querySelector('#runtime').contentDocument;
+    const m=doc.querySelector('#composer-system-prompt').closest('.context-selector').querySelector('.context-menu');
+    [...m.querySelectorAll('.context-option')].find(row=>row.textContent==='标准模式').click();
+  })()`);
   await until(
     "document.querySelector('#runtime').contentDocument.querySelector('#composer-system-prompt').value==='standard'",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('#runtime').contentDocument.querySelector('#composer-system-prompt').closest('.context-selector').querySelector('.context-trigger').textContent==='标准模式'",
+    ),
+    "The trigger label must follow the chosen option",
   );
 
   assert(
@@ -635,6 +707,30 @@ try {
   await until(
     "document.querySelector('#runtime').contentDocument.querySelector('#panel-address-input').value.endsWith('/first')",
   );
+  {
+    const runtimeUrl = await evaluate(
+      "document.querySelector('#runtime').contentDocument.location.pathname",
+    );
+    await evaluate(`(() => {
+      const doc=document.querySelector('#runtime').contentDocument;
+      const a=doc.createElement('a');
+      a.href=${JSON.stringify(pageUrl.replace(/\/first$/, "/second"))};
+      a.textContent='chat link';
+      doc.querySelector('#messages').append(a);
+      a.click();
+    })()`);
+    await until(
+      "document.querySelector('#runtime').contentDocument.querySelector('#panel-address-input').value.endsWith('/second')",
+      { timeoutMs: 15000 },
+    );
+    assert.equal(
+      await evaluate(
+        "document.querySelector('#runtime').contentDocument.location.pathname",
+      ),
+      runtimeUrl,
+      "A chat link must open the workspace browser instead of navigating the chat",
+    );
+  }
   await evaluate("document.querySelector('#settings').click()");
   await until("document.querySelector('#workspace-nav').inert");
   await evaluate(

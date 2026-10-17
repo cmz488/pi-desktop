@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Pi Desktop</title>
+    <script>
+      // Apply the saved theme before the first paint so switching Agents never
+      // flashes a light preview of the shell.
+      try {
+        const preference = localStorage.getItem("pi-web-theme") ?? "light";
+        const dark =
+          preference === "dark" ||
+          (preference === "system" &&
+            matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        if (dark) document.documentElement.classList.add("boot-dark");
+      } catch {}
+    </script>
     <link rel="stylesheet" href="design-tokens.css" />
     <link rel="stylesheet" href="workspace.css" />
   </head>
@@ -132,8 +145,26 @@
           添加本地项目，创建独立
           Agent。会话、任务和配置持久保存，切换项目时后台工作继续。
         </p>
-        <button id="empty-add">添加项目</button
-        ><button id="empty-start" hidden>启动会话</button>
+        <button id="empty-add">添加项目</button>
+      </section>
+      <section id="agent-boot" class="agent-boot" hidden aria-live="polite">
+        <div class="agent-boot-card">
+          <span class="agent-boot-mark" aria-hidden="true">
+            <svg class="pi-logo" viewBox="165.29 165.29 469.43 469.43">
+              <path d="M165.29 165.29H517.36V400H400V282.65H165.29Z" />
+              <path
+                d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"
+              />
+              <path d="M517.36 400H634.72V634.72H517.36Z" />
+            </svg>
+          </span>
+          <strong id="agent-boot-title">正在启动 Agent</strong>
+          <p id="agent-boot-note">正在准备会话与扩展…</p>
+          <span class="agent-boot-progress" aria-hidden="true"></span>
+          <button type="button" id="agent-boot-start" class="primary" hidden>
+            启动会话
+          </button>
+        </div>
       </section>
       <iframe id="runtime" title="Pi Agent 工作空间" hidden></iframe>
     </main>
