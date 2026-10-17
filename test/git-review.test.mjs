@@ -145,3 +145,21 @@ test("Git previews use raw blob ids, so large modified binaries neither overflow
   );
   assert.notEqual(staged.revision, before.revision);
 });
+
+test("Git review publishes its confirmation limits and permitted actions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-git-affordance-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  await writeFile(join(root, "a.txt"), "a\n");
+  const repo = await getGitRepository(root);
+  const view = await repo.read();
+  assert.deepEqual(view.limits, {
+    stagePaths: 100,
+    stageBytes: 16 * 1024 * 1024,
+    commitMessage: 8192,
+  });
+  assert(view.permittedActions.includes("stage"));
+  assert(view.permittedActions.includes("unstage"));
+  assert(view.permittedActions.includes("commit"));
+  assert(view.permittedActions.includes("fetch"));
+});

@@ -20,6 +20,7 @@ test("Git write hints keep snapshots readable during native context handoff", as
       backend: { id: "stable" },
     }),
     canWrite: () => bound,
+    capabilities: { canWrite: true, projectTrusted: true },
     projectTrusted: () => {
       trustCalls++;
       if (!bound) throw new Error("Native context unavailable during handoff");

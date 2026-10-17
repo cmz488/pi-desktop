@@ -53,6 +53,7 @@ async function fixture(t, tls = false) {
     prompt: (message) => {
       messages.push({ role: "user", text: message });
     },
+    capabilities: { prompt: true, canWrite: true },
   });
   const local = new URL(await bridge.start());
   t.after(async () => {

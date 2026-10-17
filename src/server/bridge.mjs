@@ -46,6 +46,7 @@ import { getGitRepository, isGitBusy } from "../git/git-manager.mjs";
 import { createPackageCatalog } from "../resources/package-catalog.mjs";
 import { createPackageManagement } from "../resources/package-management.mjs";
 import { createDirectoryPicker } from "../desktop/directory-picker.mjs";
+import { createHostInterface } from "./host-interface.mjs";
 const BODY_LIMIT = 96 * 1024;
 const EVENT_LIMIT = 2000;
 const REPLAY_BYTE_LIMIT = 8 * 1024 * 1024;
@@ -71,8 +72,10 @@ async function body(request, limit = BODY_LIMIT) {
   }
 }
 
-export function createDeskBridge(options) {
-  const filePicker = options.filePicker ?? createDirectoryPicker();
+export function createDeskBridge(input) {
+  const host = createHostInterface(input);
+  const { transport, state, sessions, resources, models, prompt, hooks } = host;
+  const filePicker = transport.filePicker ?? createDirectoryPicker();
   const serveAsset = createStaticAssetHandler(assets, {
     transform: (body, type) =>
       type === "text/html"
@@ -89,15 +92,15 @@ export function createDeskBridge(options) {
   let server, listenUrl;
   const remoteAccess = createRemoteAccess({
     targetUrl: () => listenUrl,
-    funnel: options.funnel,
-    directory: options.agentDir
-      ? join(options.agentDir, "desktop", "tailscale")
+    funnel: transport.funnel,
+    directory: transport.agentDir
+      ? join(transport.agentDir, "desktop", "tailscale")
       : undefined,
     onChange: () => publish("remote_changed", {}),
   });
   let analysis = createLspDiagnostics();
-  let catalog = createPackageCatalog({ fetchPage: options.catalogFetch });
-  const localAddresses = () => options.lanAddresses?.() ?? lanAddresses();
+  let catalog = createPackageCatalog({ fetchPage: transport.catalogFetch });
+  const localAddresses = () => transport.lanAddresses?.() ?? lanAddresses();
   const epoch = randomUUID();
   let historyBytes = 0;
   let seq = 0,
@@ -105,19 +108,19 @@ export function createDeskBridge(options) {
   const history = [],
     clients = new Set(),
     changedPlugins = new Set();
-  const host = options.host ?? process.env.PI_DESK_HOST ?? "0.0.0.0";
-  const port = Number(options.port ?? process.env.PI_DESK_PORT ?? 4318);
-  const certPath = options.certPath ?? process.env.PI_DESK_TLS_CERT;
-  const keyPath = options.keyPath ?? process.env.PI_DESK_TLS_KEY;
+  const listenHost = transport.host ?? process.env.PI_DESK_HOST ?? "0.0.0.0";
+  const port = Number(transport.port ?? process.env.PI_DESK_PORT ?? 4318);
+  const certPath = transport.certPath ?? process.env.PI_DESK_TLS_CERT;
+  const keyPath = transport.keyPath ?? process.env.PI_DESK_TLS_KEY;
   const secure = Boolean(certPath && keyPath);
-  const settingsPath = join(options.agentDir, "settings.json");
+  const settingsPath = join(transport.agentDir, "settings.json");
   const modelsPath =
-    options.modelsPath ?? join(options.agentDir, "models.json");
+    transport.modelsPath ?? join(transport.agentDir, "models.json");
   function scopedSettings(scope) {
     if (!["global", "project"].includes(scope))
       throw new DeskError(422, "配置范围无效");
     if (scope === "project") {
-      const cwd = options.snapshot().cwd;
+      const cwd = host.snapshot().cwd;
       if (!cwd) throw new DeskError(422, "工作区尚未就绪");
       return join(cwd, ".pi", "settings.json");
     }
@@ -133,10 +136,10 @@ export function createDeskBridge(options) {
       groups: settingsGroups,
       values: settingsProjection(document.data),
       inherited: settingsProjection(global.data),
-      effective: options.effectiveSettings
-        ? settingsProjection(options.effectiveSettings())
+      effective: host.capabilities.settings
+        ? settingsProjection(state.effectiveSettings())
         : null,
-      trusted: options.projectTrusted?.() ?? true,
+      trusted: host.capabilities.projectTrusted ? trustedNow() : true,
       pending,
     };
   }
@@ -144,13 +147,13 @@ export function createDeskBridge(options) {
     return scopedSettings(scope).replace(/settings\.json$/, "mcp.json");
   }
   async function skills() {
-    const rows = (await options.skillInventory?.()) ?? [];
+    const rows = host.capabilities.skills ? await resources.skills() : [];
     const documents = new Map();
     for (const scope of ["global", "project"])
       documents.set(scope, await readDocument(scopedSettings(scope)));
     return {
       pending,
-      supported: !!options.skillInventory,
+      supported: host.capabilities.skills,
       rows: rows.map((row) => ({
         ...row,
         revision: documents.get(row.scope).revision,
@@ -162,7 +165,7 @@ export function createDeskBridge(options) {
       revisions = {},
       configured = new Set();
     const project = await readDocument(mcpPath("project"));
-    const trusted = options.projectTrusted?.() ?? true;
+    const trusted = host.capabilities.projectTrusted ? trustedNow() : true;
     for (const scope of ["global", "project"]) {
       const document =
         scope === "project" ? project : await readDocument(mcpPath("global"));
@@ -186,7 +189,9 @@ export function createDeskBridge(options) {
         });
       }
     }
-    for (const server of options.mcpRegistered?.() ?? []) {
+    for (const server of host.capabilities.mcp
+      ? (resources.mcpRegistered() ?? [])
+      : []) {
       if (!configured.has(server.name))
         rows.push({
           name: server.name,
@@ -196,7 +201,7 @@ export function createDeskBridge(options) {
           trusted: true,
         });
     }
-    const tools = options.mcpTools?.() ?? [];
+    const tools = host.capabilities.mcp ? (resources.mcpTools() ?? []) : [];
     return {
       pending,
       revisions,
@@ -206,7 +211,7 @@ export function createDeskBridge(options) {
           tool.name.startsWith(`mcp__${row.name.replaceAll("-", "_")}__`),
         ),
       })),
-      supported: !!options.mcpAction,
+      supported: host.capabilities.mcp,
     };
   }
   // Keep the original npm-only endpoint for already-open older frontends.
@@ -258,12 +263,36 @@ export function createDeskBridge(options) {
       response.write(`id: ${seq}\ndata: ${wire}\n\n`);
     }
   }
+  const canWriteNow = () =>
+    host.capabilities.canWrite ? state.canWrite() : false;
+  const canEditNow = () =>
+    host.capabilities.canEditShared ? state.canEditShared() : canWriteNow();
+  const trustedNow = () =>
+    host.capabilities.projectTrusted ? state.projectTrusted() : false;
   const editable = () => {
-    if (!(options.canEditShared?.() ?? options.canWrite()))
+    if (!canEditNow())
       throw new DeskError(409, "有会话运行中，请在任务完成后修改共享配置");
   };
   const packageManagement = createPackageManagement({
-    ...options,
+    agentDir: transport.agentDir,
+    snapshot: host.snapshot,
+    capabilities: {
+      packageUpdates: host.capabilities.packageUpdates,
+      packageAction: host.capabilities.packageManagement,
+      packageRoot: host.capabilities.packageRoot,
+      projectTrusted: host.capabilities.projectTrusted,
+    },
+    writable: canEditNow,
+    trusted: trustedNow,
+    packageRoot: host.capabilities.packageRoot
+      ? resources.packageRoot
+      : undefined,
+    packageUpdates: host.capabilities.packageUpdates
+      ? resources.packageUpdates
+      : undefined,
+    packageAction: host.capabilities.packageManagement
+      ? resources.packageAction
+      : undefined,
     hasChanged: (id) => changedPlugins.has(id),
     pending: () => pending,
     onWrite: () => {
@@ -277,17 +306,19 @@ export function createDeskBridge(options) {
       row &&
       (await discoverPluginConfig(
         row,
-        options.agentDir,
-        options.packageRoot?.(row.source, row.scope),
+        transport.agentDir,
+        host.capabilities.packageRoot
+          ? resources.packageRoot(row.source, row.scope)
+          : undefined,
       ));
     if (!adapter) throw new DeskError(422, "插件未声明 Web 配置表单");
     return { row, adapter };
   }
   async function providers() {
-    if (options.providerInventory) return options.providerInventory();
+    if (host.capabilities.providerInventory) return models.inventory();
     const document = await readDocument(modelsPath);
-    const state = options.snapshot();
-    const catalog = options.providerCatalog?.() ?? [];
+    const state = host.snapshot();
+    const catalog = host.capabilities.providerCatalog ? models.catalog() : [];
     const ids = new Set([
       ...Object.keys(document.data.providers ?? {}),
       ...catalog.map((row) => row.id),
@@ -362,12 +393,13 @@ export function createDeskBridge(options) {
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader(
       "Content-Security-Policy",
-      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; ${options.embeddedUI ? "frame-src 'self' http: https:;" : ""} frame-ancestors ${options.embeddedUI ? "'self'" : "'none'"}; base-uri 'none'; form-action 'self'`,
+      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; ${transport.embeddedUI ? "frame-src 'self' http: https:;" : ""} frame-ancestors ${transport.embeddedUI ? "'self'" : "'none'"}; base-uri 'none'; form-action 'self'`,
     );
     if (await serveAsset(request, response, url.pathname)) return;
-    if (await options.route?.(request, response, url)) return;
+    if (host.capabilities.route && (await hooks.route(request, response, url)))
+      return;
     if (url.pathname === "/api/files" && request.method === "GET") {
-      const snapshot = options.snapshot();
+      const snapshot = host.snapshot();
       if (snapshot.capabilities?.readOnly && !snapshot.capabilities?.files)
         throw new DeskError(403, "无项目会话请通过文件选择器打开预览");
       json(
@@ -382,7 +414,7 @@ export function createDeskBridge(options) {
     }
     if (url.pathname === "/api/state" && request.method === "GET") {
       const settings = (await readDocument(settingsPath)).data;
-      const snapshot = options.snapshot();
+      const snapshot = host.snapshot();
       const limit = Number(url.searchParams.get("historyLimit") ?? 50);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)
         throw new DeskError(422, "消息分页大小无效");
@@ -398,6 +430,15 @@ export function createDeskBridge(options) {
         ...visible,
         capabilities: {
           ...(visible.capabilities ?? {}),
+          sessions:
+            visible.capabilities?.sessions ?? host.capabilities.sessions,
+          reload: visible.capabilities?.reload ?? host.capabilities.reload,
+          auth: visible.capabilities?.auth ?? host.capabilities.auth,
+          skills: visible.capabilities?.skills ?? host.capabilities.skills,
+          mcp: visible.capabilities?.mcp ?? host.capabilities.mcp,
+          interactions:
+            visible.capabilities?.interactions ??
+            host.capabilities.interactions,
           ...(visible.capabilities?.attachments
             ? {
                 attachments: {
@@ -409,7 +450,7 @@ export function createDeskBridge(options) {
               }
             : {}),
           btw: Boolean(
-            options.btw &&
+            host.capabilities.btw &&
               visible.commands?.some(
                 (command) =>
                   command.name === "btw" && command.source === "extension",
@@ -422,14 +463,14 @@ export function createDeskBridge(options) {
         gitExtended: true,
         gitGraph: true,
         marketplaceOfficial: true,
-        packageManagement: !!options.packageAction,
-        packageUpdates: !!options.packageUpdates,
+        packageManagement: host.capabilities.packageManagement,
+        packageUpdates: host.capabilities.packageUpdates,
         // A native context may be absent during /new or /reload handoff.
-        // Check lifecycle readiness before invoking its trust accessor.
+        // Capabilities gate the accessors; lifecycle readiness stays here.
         gitWritable: Boolean(
-          typeof options.projectTrusted === "function" &&
-            (options.canEditShared?.() ?? options.canWrite?.() ?? false) &&
-            options.projectTrusted?.() &&
+          host.capabilities.projectTrusted &&
+            canEditNow() &&
+            trustedNow() &&
             !isGitBusy(snapshot.cwd),
         ),
         defaults: {
@@ -445,7 +486,7 @@ export function createDeskBridge(options) {
       return;
     }
     if (url.pathname === "/api/message-detail" && request.method === "GET") {
-      const row = options
+      const row = host
         .snapshot()
         .messages?.find(
           (row) => String(row.id) === url.searchParams.get("messageId"),
@@ -455,7 +496,7 @@ export function createDeskBridge(options) {
       return;
     }
     if (url.pathname === "/api/commands" && request.method === "GET") {
-      json(response, 200, { rows: options.snapshot().commands ?? [] });
+      json(response, 200, { rows: host.snapshot().commands ?? [] });
       return;
     }
     if (url.pathname === "/api/remote" && request.method === "GET") {
@@ -553,13 +594,17 @@ export function createDeskBridge(options) {
     }
     if (url.pathname === "/api/sessions" && request.method === "GET") {
       json(response, 200, {
-        rows: options.listSessions ? await options.listSessions() : [],
-        supported: !!options.listSessions,
+        rows: host.capabilities.sessions ? await sessions.list() : [],
+        supported: host.capabilities.sessions,
       });
       return;
     }
     if (url.pathname === "/api/interactions" && request.method === "GET") {
-      json(response, 200, { rows: options.interactions?.list() ?? [] });
+      json(response, 200, {
+        rows: host.capabilities.interactions
+          ? (resources.interactions.list() ?? [])
+          : [],
+      });
       return;
     }
     if (url.pathname === "/api/skills" && request.method === "GET") {
@@ -624,14 +669,15 @@ export function createDeskBridge(options) {
       return;
     }
     if (url.pathname === "/api/git" && request.method === "GET") {
-      if (!options.projectTrusted?.())
+      if (!trustedNow())
         throw new DeskError(
           403,
           "请先在 Pi 信任项目，再打开 Git（仓库过滤器可能执行程序）",
         );
-      const target = options.snapshot();
-      if (url.searchParams.get("sessionId") !== target.sessionId)
-        throw new DeskError(409, "当前会话已变化，请刷新后重试");
+      const target = host.target({
+        sessionId: url.searchParams.get("sessionId") ?? "",
+      });
+      target.assertInput();
       const repo = await getGitRepository(target.cwd);
       const result = await repo.read({
         action: url.searchParams.get("action") ?? "status",
@@ -643,9 +689,7 @@ export function createDeskBridge(options) {
           ? Number(url.searchParams.get("page"))
           : undefined,
       });
-      const latest = options.snapshot();
-      if (latest.sessionId !== target.sessionId || latest.cwd !== target.cwd)
-        throw new DeskError(409, "当前会话已变化，请刷新后重试");
+      target.assert();
       json(response, 200, result);
       return;
     }
@@ -654,7 +698,8 @@ export function createDeskBridge(options) {
       request,
       url.pathname === "/api/prompt" ? ATTACHMENT_BODY_LIMIT : BODY_LIMIT,
     );
-    options.validateTarget?.(input);
+    const requestTarget = host.target(input);
+    requestTarget.assertInput({ cwd: false });
     if (url.pathname === "/api/context/files") {
       if (
         !localManagement(request) ||
@@ -672,7 +717,7 @@ export function createDeskBridge(options) {
             ? await filePicker.pickFiles()
             : input.paths;
         const files = await referenceFiles(paths);
-        options.validateTarget?.(input);
+        requestTarget.assertInput();
         json(response, 200, { files });
       } finally {
         response.removeListener("close", cancel);
@@ -680,9 +725,9 @@ export function createDeskBridge(options) {
       return;
     }
     if (url.pathname === "/api/btw") {
-      if (typeof options.btw !== "function")
+      if (!host.capabilities.btw)
         throw new DeskError(404, "当前 Desktop 宿主未启用 /btw 适配");
-      const initial = options.snapshot();
+      const initial = host.snapshot();
       if (
         !initial.capabilities?.btw &&
         !initial.commands?.some(
@@ -690,37 +735,31 @@ export function createDeskBridge(options) {
         )
       )
         throw new DeskError(404, "未检测到已启用的 pi-btw 扩展");
-      const result = await options.btw(input);
-      if (
-        input.sessionId !== undefined &&
-        options.snapshot().sessionId !== input.sessionId
-      )
-        throw new DeskError(409, "Pi 会话已变化，请重新打开侧问答");
+      const result = await prompt.btw(input);
+      if (input.sessionId !== undefined)
+        requestTarget.assert({
+          cwd: false,
+          message: "Pi 会话已变化，请重新打开侧问答",
+        });
       json(response, 200, result);
       return;
     }
     if (url.pathname === "/api/git-analysis") {
-      const target = options.snapshot(),
-        runner = analysis;
-      const checkTarget = () => {
-        const latest = options.snapshot();
-        if (
-          input.sessionId !== target.sessionId ||
-          latest.sessionId !== target.sessionId ||
-          latest.cwd !== target.cwd
-        )
-          throw new DeskError(409, "当前会话已变化，请重新分析");
-        if (latest.replacing || latest.initializing)
-          throw new DeskError(409, "宿主尚在初始化／交接，请稍后分析");
-        if (!options.projectTrusted?.())
+      const runner = analysis;
+      const assertAnalysis = () => {
+        requestTarget.assertInput({
+          ready: true,
+          message: "当前会话已变化，请重新分析",
+        });
+        if (!trustedNow())
           throw new DeskError(403, "请先信任项目再运行本地语言服务器");
       };
-      checkTarget();
+      assertAnalysis();
       if (typeof input.path !== "string" || input.path.length > 4096)
         throw new DeskError(422, "请选择当前变更列表中的文件");
       if (!supportsLspFile(input.path))
         throw new DeskError(422, "本轮仅支持 JS/TS 与 JSON 的 LSP 诊断");
-      const repo = await getGitRepository(target.cwd);
+      const repo = await getGitRepository(requestTarget.cwd);
       const view = await repo.read();
       if (!view.files.some((file) => file.path === input.path))
         throw new DeskError(422, "文件不在当前变更列表");
@@ -735,14 +774,14 @@ export function createDeskBridge(options) {
         throw new DeskError(422, "LSP 只分析 UTF-8 文本文件");
       }
       if (text.includes("\0")) throw new DeskError(422, "LSP 不分析二进制文件");
-      checkTarget();
+      assertAnalysis();
       const revision = createHash("sha256").update(bytes).digest("hex");
       const result = await runner.analyze({
         root: repo.root,
         path: input.path,
         text,
       });
-      checkTarget();
+      assertAnalysis();
       if (
         createHash("sha256")
           .update(
@@ -754,27 +793,23 @@ export function createDeskBridge(options) {
           .digest("hex") !== revision
       )
         throw new DeskError(409, "文件在分析中已变化，请重新分析");
-      checkTarget();
+      assertAnalysis();
       json(response, 200, {
         ...result,
         path: input.path,
         revision,
         scope: "worktree",
-        sessionId: target.sessionId,
+        sessionId: requestTarget.sessionId,
       });
       return;
     }
     if (url.pathname === "/api/git") {
-      const target = options.snapshot();
+      const target = requestTarget;
       const guard = () => {
-        if (
-          input.sessionId !== target.sessionId ||
-          options.snapshot().sessionId !== target.sessionId
-        )
-          throw new DeskError(409, "当前会话已变化，请刷新后重试");
-        if (!options.projectTrusted?.())
+        target.assertInput({ requireSession: true });
+        if (!trustedNow())
           throw new DeskError(403, "请先在 Pi 信任项目，再执行 Git 写操作");
-        if (!(options.canEditShared?.() ?? options.canWrite()))
+        if (!canEditNow())
           throw new DeskError(409, "请等所有会话任务和配置操作结束后写入 Git");
       };
       guard();
@@ -785,7 +820,7 @@ export function createDeskBridge(options) {
         ? await repo.confirm(input.token, binding, guard)
         : await repo.prepare(input, binding);
       if (!input.token) guard();
-      else options.gitChanged?.();
+      else if (host.capabilities.gitChanged) state.gitChanged();
       publish("state_changed", {});
       json(response, 200, {
         ...result,
@@ -797,6 +832,8 @@ export function createDeskBridge(options) {
     let sessionCommand,
       deferredConfiguration = false;
     if (url.pathname === "/api/prompt") {
+      if (!host.capabilities.prompt)
+        throw new DeskError(501, "当前 Desktop 宿主未提供消息提交");
       if (
         typeof input.message !== "string" ||
         (!input.message.trim() && !input.attachments?.length) ||
@@ -809,9 +846,9 @@ export function createDeskBridge(options) {
           422,
           "请通过 Git 面板预览与确认；/git 不会发送给模型",
         );
-      if (isGitBusy(options.snapshot().cwd))
+      requestTarget.assert({ cwd: false });
+      if (isGitBusy(requestTarget.cwd))
         throw new DeskError(409, "Git 写操作正在运行，请完成后再发送消息");
-      const selectedId = options.snapshot().sessionId;
       if (input.attachments?.length && input.message.trim().startsWith("/"))
         throw new DeskError(422, "附件只能随普通消息提交；请先执行命令");
       const context = await prepareAttachments(input.attachments, {
@@ -819,21 +856,23 @@ export function createDeskBridge(options) {
           localManagement(request) &&
           request.headers.origin ===
             `${secure ? "https" : "http"}://${request.headers.host}`,
-        modelInput: options.snapshot().model?.input,
-        blockImages: options.effectiveSettings?.()?.images?.blockImages,
-        autoResize: options.effectiveSettings?.()?.images?.autoResize,
+        modelInput: host.snapshot().model?.input,
+        blockImages: host.capabilities.settings
+          ? state.effectiveSettings()?.images?.blockImages
+          : undefined,
+        autoResize: host.capabilities.settings
+          ? state.effectiveSettings()?.images?.autoResize
+          : undefined,
       });
       // Image decoding awaits a worker. Reject focus changes during that wait,
       // including legacy clients that omitted an explicit target.
-      if (options.snapshot().sessionId !== selectedId)
-        throw new DeskError(409, "当前会话已变化，请刷新后重试");
-      options.validateTarget?.(input);
-      if (isGitBusy(options.snapshot().cwd))
+      const latest = requestTarget.assertInput({ cwd: false });
+      if (isGitBusy(latest.cwd))
         throw new DeskError(409, "Git 写操作正在运行，请完成后再发送消息");
-      context.sessionId = selectedId;
+      context.sessionId = requestTarget.sessionId;
       const match = input.message.trim().match(/^\/sessions(?:\s+([\s\S]*))?$/);
-      if (match && options.sessionCommand)
-        sessionCommand = await options.sessionCommand(match[1] ?? "");
+      if (match && host.capabilities.sessionCommand)
+        sessionCommand = await sessions.command(match[1] ?? "");
       else {
         const args = input.attachments?.length
           ? [input.message || "请根据所附上下文继续。", input.mode, context]
@@ -842,21 +881,35 @@ export function createDeskBridge(options) {
           if (args.length === 2) args.push(undefined);
           args.push(input.requestId);
         }
-        await options.prompt(...args);
+        await prompt.submit(...args);
       }
     } else if (url.pathname === "/api/abort") {
-      await options.abort();
+      if (!host.capabilities.abort)
+        throw new DeskError(501, "当前 Desktop 宿主未提供中止");
+      await prompt.abort();
     } else if (url.pathname === "/api/model") {
-      deferredConfiguration = !options.canWrite();
-      if (deferredConfiguration && !options.canDeferConfiguration?.())
+      if (!host.capabilities.model)
+        throw new DeskError(501, "当前 Desktop 宿主未提供模型切换");
+      deferredConfiguration = !canWriteNow();
+      if (
+        deferredConfiguration &&
+        (!host.capabilities.canDeferConfiguration ||
+          !state.canDeferConfiguration())
+      )
         throw new DeskError(409, "请等待当前任务完成后切换模型");
-      await options.setModel(input.provider, input.id, {
+      await models.set(input.provider, input.id, {
         defer: deferredConfiguration,
       });
     } else if (url.pathname === "/api/thinking") {
-      const canSet = options.canSetThinking?.() ?? options.canWrite();
+      const canSet = host.capabilities.canSetThinking
+        ? state.canSetThinking()
+        : canWriteNow();
       deferredConfiguration = !canSet;
-      if (deferredConfiguration && !options.canDeferConfiguration?.())
+      if (
+        deferredConfiguration &&
+        (!host.capabilities.canDeferConfiguration ||
+          !state.canDeferConfiguration())
+      )
         throw new DeskError(409, "当前宿主暂不可调整思考等级，请稍后重试");
       if (
         !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
@@ -864,26 +917,30 @@ export function createDeskBridge(options) {
         )
       )
         throw new DeskError(422, "思考强度无效");
-      const levels = options.snapshot().thinkingLevels;
+      const levels = host.snapshot().thinkingLevels;
       if (Array.isArray(levels) && !levels.includes(input.level))
         throw new DeskError(422, "当前模型不支持这个思考等级");
-      if (!options.setThinking)
+      if (!host.capabilities.thinking)
         throw new DeskError(501, "请通过 pi web 管理思考强度");
-      await options.setThinking(input.level, {
+      await models.setThinking(input.level, {
         defer: deferredConfiguration,
       });
     } else if (
       url.pathname === "/api/new-session" ||
       url.pathname === "/api/switch-session"
     ) {
-      if (!(options.canManageSessions?.() ?? options.canWrite()))
+      if (
+        !(host.capabilities.canManageSessions
+          ? state.canManageSessions()
+          : canWriteNow())
+      )
         throw new DeskError(409, "任务运行中");
-      if (!options.newSession || !options.switchSession)
+      if (!host.capabilities.newSession || !host.capabilities.switchSession)
         throw new DeskError(501, "请通过 pi web 管理会话");
       const result =
         url.pathname === "/api/new-session"
-          ? await options.newSession(input)
-          : await options.switchSession(input.id);
+          ? await sessions.create(input)
+          : await sessions.switch(input.id);
       if (result?.cancelled) throw new DeskError(409, "扩展取消了会话切换");
       if (result?.sessionId) {
         publish("state_changed", {});
@@ -892,9 +949,9 @@ export function createDeskBridge(options) {
       }
     } else if (url.pathname === "/api/project-trust") {
       editable();
-      if (!options.trustProject)
+      if (!host.capabilities.trustProject)
         throw new DeskError(501, "请通过 pi web 管理项目信任");
-      await options.trustProject(input.trusted);
+      await resources.trustProject(input.trusted);
     } else if (url.pathname === "/api/skill") {
       editable();
       const row = (await skills()).rows.find((row) => row.id === input.id);
@@ -925,11 +982,11 @@ export function createDeskBridge(options) {
           return data;
         },
       );
-      await options.settingsChanged?.();
+      if (host.capabilities.settingsChanged) await state.settingsChanged();
       pending = true;
     } else if (url.pathname === "/api/mcp") {
       editable();
-      if (!options.mcpAction)
+      if (!host.capabilities.mcp)
         throw new DeskError(501, "请通过 pi web 管理原生 MCP");
       // Same namespace collision rules apply across both scopes.
       const inventory = await mcpInventory();
@@ -950,25 +1007,26 @@ export function createDeskBridge(options) {
       pending = true;
     } else if (url.pathname === "/api/mcp-action") {
       editable();
-      if (!options.mcpAction)
+      if (!host.capabilities.mcp)
         throw new DeskError(501, "请通过 pi web 管理原生 MCP");
-      const id = await options.mcpAction(input);
+      const id = await resources.mcpAction(input);
       json(response, 200, { id });
       return;
     } else if (url.pathname === "/api/settings") {
-      if (!(options.canSaveSettings?.() ?? true))
-        throw new DeskError(409, "Pi 设置当前不可写入");
+      if (!host.capabilities.canSaveSettings)
+        throw new DeskError(501, "当前 Desktop 宿主不支持共享配置写入");
       await mutateDocument(
         scopedSettings(input.scope),
         input.revision,
         (data) => patchSettings(data, input),
       );
-      await options.settingsChanged?.();
+      if (host.capabilities.settingsChanged) await state.settingsChanged();
       pending = true;
     } else if (url.pathname === "/api/reload") {
       editable();
-      if (!options.reload) throw new DeskError(501, "请通过 pi web 重载扩展");
-      await options.reload();
+      if (!host.capabilities.reload)
+        throw new DeskError(501, "请通过 pi web 重载扩展");
+      await resources.reload();
       pending = false;
       changedPlugins.clear();
     } else if (url.pathname === "/api/package-updates") {
@@ -980,23 +1038,24 @@ export function createDeskBridge(options) {
       await packageManagement.execute(input.action, input);
     } else if (url.pathname === "/api/auth-start") {
       editable();
-      if (!options.authStart)
+      if (!host.capabilities.auth)
         throw new DeskError(501, "请通过 pi web 管理提供商认证");
-      const id = await options.authStart(input);
+      const id = await models.authStart(input);
       json(response, 200, { id });
       return;
     } else if (url.pathname === "/api/auth-logout") {
       editable();
-      if (!options.authLogout)
+      if (!host.capabilities.authLogout)
         throw new DeskError(501, "请通过 pi web 管理提供商认证");
-      await options.authLogout(input.provider);
+      await models.authLogout(input.provider);
     } else if (url.pathname === "/api/interaction-reply") {
-      if (!options.interactions) throw new DeskError(404, "交互不存在");
-      options.interactions.reply(input);
+      if (!host.capabilities.interactions)
+        throw new DeskError(404, "交互不存在");
+      resources.interactions.reply(input);
     } else if (url.pathname === "/api/provider-remove") {
       editable();
-      if (options.providerRemove) {
-        await options.providerRemove(input);
+      if (host.capabilities.providerRemove) {
+        await models.remove(input);
         publish("state_changed", {});
         json(response, 200, { ok: true });
         return;
@@ -1007,7 +1066,7 @@ export function createDeskBridge(options) {
         delete data.providers[input.id];
         return data;
       });
-      await options.refreshModels();
+      await models.refresh();
     } else if (url.pathname === "/api/plugin") {
       editable();
       const inventory = await plugins();
@@ -1044,7 +1103,7 @@ export function createDeskBridge(options) {
           return data;
         },
       );
-      await options.settingsChanged?.();
+      if (host.capabilities.settingsChanged) await state.settingsChanged();
       pending = true;
       changedPlugins.add(row.id);
     } else if (url.pathname === "/api/plugin-resources") {
@@ -1096,29 +1155,29 @@ export function createDeskBridge(options) {
       changedPlugins.add(row.id);
     } else if (url.pathname === "/api/provider") {
       editable();
-      if (options.providerSave) {
-        await options.providerSave(input);
+      if (host.capabilities.providerSave) {
+        await models.save(input);
         publish("state_changed", {});
         json(response, 200, { ok: true });
         return;
       }
       await mutateDocument(modelsPath, input.revision, (data) => {
-        const native = options
-          .providerCatalog?.()
-          .find((row) => row.id === input.id);
+        const native = host.capabilities.providerCatalog
+          ? models.catalog().find((row) => row.id === input.id)
+          : undefined;
         return patchProvider(data, input, {
           allowEmptyModels: !!native,
           additionalApi: native?.models?.[0]?.api,
         });
       });
-      await options.refreshModels();
+      await models.refresh();
     } else if (url.pathname === "/api/refresh-models") {
       editable();
-      await options.refreshModels();
+      await models.refresh();
     } else if (url.pathname === "/api/default-model") {
       editable();
       if (
-        !options
+        !host
           .snapshot()
           .models.some(
             (model) =>
@@ -1132,7 +1191,7 @@ export function createDeskBridge(options) {
         defaultProvider: input.provider,
         defaultModel: input.id,
       }));
-      await options.settingsChanged?.();
+      if (host.capabilities.settingsChanged) await state.settingsChanged();
     } else throw new DeskError(404, "接口不存在");
     publish("state_changed", {});
     json(response, 200, {
@@ -1150,8 +1209,8 @@ export function createDeskBridge(options) {
         request.method === "POST" &&
         new URL(request.url, "http://localhost").pathname === "/api/remote"
           ? route(request, response)
-          : options.requestContext
-            ? options.requestContext(request, response, () =>
+          : host.capabilities.requestContext
+            ? host.require("requestContext")(request, response, () =>
                 route(request, response),
               )
             : route(request, response),
@@ -1169,11 +1228,11 @@ export function createDeskBridge(options) {
   }
   function localManagement(request) {
     try {
-      const host = new URL(`http://${request.headers.host}`).hostname;
+      const hostname = new URL(`http://${request.headers.host}`).hostname;
       return (
         loopback(request.socket.remoteAddress) &&
         request.headers["x-pi-remote-client"] !== "1" &&
-        ["127.0.0.1", "localhost", "[::1]"].includes(host)
+        ["127.0.0.1", "localhost", "[::1]"].includes(hostname)
       );
     } catch {
       return false;
@@ -1181,7 +1240,7 @@ export function createDeskBridge(options) {
   }
   function connectionInfo() {
     const port = server.address().port;
-    const lan = !loopback(host);
+    const lan = !loopback(listenHost);
     const addresses = lan ? localAddresses() : [];
     const urls = addresses.map(
       (address) => `${secure ? "https" : "http"}://${address}:${port}/`,
@@ -1197,7 +1256,7 @@ export function createDeskBridge(options) {
         ? address
         : (tunnel?.scanUrl ?? info.url);
     if (tunnel?.scanUrl && url === tunnel.scanUrl) {
-      const selected = options.snapshot();
+      const selected = host.snapshot();
       if (
         selected.host === "durable" &&
         /^\d+$/.test(selected.sessionId ?? "")
@@ -1221,7 +1280,9 @@ export function createDeskBridge(options) {
   async function start() {
     if (!Number.isInteger(port) || port < 0 || port > 65535)
       throw new Error("PI_DESK_PORT 无效");
-    if (!["127.0.0.1", "::1", "localhost", "0.0.0.0", "::"].includes(host))
+    if (
+      !["127.0.0.1", "::1", "localhost", "0.0.0.0", "::"].includes(listenHost)
+    )
       throw new Error(
         "请使用 127.0.0.1 / ::1 本机监听，或 0.0.0.0 / :: 远程监听",
       );
@@ -1247,12 +1308,12 @@ export function createDeskBridge(options) {
             };
             server.once("error", failed);
             server.once("listening", listening);
-            server.listen(attemptedPort, host);
+            server.listen(attemptedPort, listenHost);
           });
           break;
         } catch (error) {
           if (
-            !options.autoPort ||
+            !transport.autoPort ||
             error.code !== "EADDRINUSE" ||
             attempt >= 9 ||
             attemptedPort >= 65535
@@ -1262,7 +1323,7 @@ export function createDeskBridge(options) {
         }
       }
       const actualPort = server.address().port;
-      listenUrl = `${secure ? "https" : "http"}://${["::1", "::"].includes(host) ? "[::1]" : "127.0.0.1"}:${actualPort}/`;
+      listenUrl = `${secure ? "https" : "http"}://${["::1", "::"].includes(listenHost) ? "[::1]" : "127.0.0.1"}:${actualPort}/`;
     }
     return listenUrl;
   }
@@ -1270,7 +1331,7 @@ export function createDeskBridge(options) {
     filePicker.close?.();
     await Promise.all([remoteAccess.close(), analysis.stop(), catalog.stop()]);
     analysis = createLspDiagnostics();
-    catalog = createPackageCatalog({ fetchPage: options.catalogFetch });
+    catalog = createPackageCatalog({ fetchPage: transport.catalogFetch });
     const finishing = Promise.all([...clients].map((stream) => stream.end()));
     clients.clear();
     let deadline;

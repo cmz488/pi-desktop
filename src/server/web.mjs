@@ -20,11 +20,8 @@ import {
   configurePiNetwork,
   scopedMcpCredentials,
 } from "../agent/pi-sdk.mjs";
-import {
-  projectMessage,
-  projectToolEvent,
-  usageMetrics,
-} from "../shared/conversation.mjs";
+import { projectMessage, projectToolEvent } from "../shared/conversation.mjs";
+import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
 import { loadWebMcp, validMcpName } from "../resources/mcp-config.mjs";
 import { relative } from "node:path";
@@ -540,24 +537,17 @@ export async function startWebSlot(options = {}) {
     });
   }
   runtime.setRebindSession(bind);
-  const snapshot = () => ({
-    version: VERSION,
-    host: "headless",
-    sessionId: session().sessionManager.getSessionId(),
-    name: session().sessionManager.getSessionName() ?? "新会话",
-    cwd: runtime.cwd,
-    idle: session().isIdle && !busy && !initializing,
-    initializing,
-    operation:
+  const snapshot = () => {
+    const current = session();
+    const stats = current.getSessionStats();
+    const operationText =
       operation ||
-      (session().isCompacting
+      (current.isCompacting
         ? "压缩上下文…"
         : activeTool
           ? `执行 ${activeTool}…`
-          : ""),
-    workingMessage,
-    statuses: [...extensionStatuses.values()],
-    widgets: [...extensionWidgets].flatMap(([key, widget]) => {
+          : "");
+    const widgets = [...extensionWidgets].flatMap(([key, widget]) => {
       try {
         const lines = (widget?.render?.(100) ?? [])
           .slice(0, 40)
@@ -583,77 +573,92 @@ export async function startWebSlot(options = {}) {
       } catch {
         return [];
       }
-    }),
-    commands: commandCatalog(session()),
-    stats: session().getSessionStats(),
-    metrics: usageMetrics(session().getSessionStats()),
-    git,
-    model: session().model
-      ? {
-          provider: session().model.provider,
-          id: session().model.id,
-          name: session().model.name,
-          input: session().model.input,
-        }
-      : null,
-    thinkingLevel: session().thinkingLevel,
-    thinkingEditable: !busy && !initializing,
-    thinkingLevels: session().getAvailableThinkingLevels(),
-    usage: session().getContextUsage(),
-    tools: session().getActiveToolNames(),
-    streamingText,
-    streamingMessage,
-    phase: streamingPhase,
-    activeCalls: [...activeCalls.values()],
-    projectTrusted: session().settingsManager.isProjectTrusted(),
-    models: session()
-      .modelRuntime.getAvailableSnapshot()
-      .filter((model) =>
-        [
-          "stored",
-          "models_json_key",
-          "models_json_command",
-          "runtime",
-        ].includes(
-          session().modelRuntime.getProviderAuthStatus(model.provider).source,
+    });
+    return createAgentSnapshot({
+      version: VERSION,
+      host: "headless",
+      sessionId: current.sessionManager.getSessionId(),
+      name: current.sessionManager.getSessionName() ?? "新会话",
+      cwd: runtime.cwd,
+      idle: current.isIdle && !busy && !initializing,
+      initializing,
+      operation: operationText,
+      activeTool,
+      compacting: current.isCompacting,
+      workingMessage,
+      statuses: [...extensionStatuses.values()],
+      commands: commandCatalog(current),
+      stats,
+      git,
+      model: current.model
+        ? {
+            provider: current.model.provider,
+            id: current.model.id,
+            name: current.model.name,
+            input: current.model.input,
+          }
+        : null,
+      thinkingLevel: current.thinkingLevel,
+      thinkingEditable: !busy && !initializing,
+      thinkingLevels: current.getAvailableThinkingLevels(),
+      usage: current.getContextUsage(),
+      tools: current.getActiveToolNames(),
+      streamingText,
+      streamingMessage,
+      phase: streamingPhase,
+      activeCalls: [...activeCalls.values()],
+      projectTrusted: current.settingsManager.isProjectTrusted(),
+      models: current.modelRuntime
+        .getAvailableSnapshot()
+        .filter((model) =>
+          [
+            "stored",
+            "models_json_key",
+            "models_json_command",
+            "runtime",
+          ].includes(
+            current.modelRuntime.getProviderAuthStatus(model.provider).source,
+          ),
+        )
+        .map((model) => ({
+          provider: model.provider,
+          id: model.id,
+          name: model.name,
+          api: model.api,
+        })),
+      messages: current.sessionManager
+        .getBranch()
+        .filter(
+          (entry) =>
+            entry.type === "message" || entry.type === "custom_message",
+        )
+        .slice(-150)
+        .map((entry) =>
+          entry.type === "message"
+            ? projectMessage(entry.message, entry.id)
+            : projectMessage(
+                {
+                  role: "custom",
+                  customType: entry.customType,
+                  content: entry.content,
+                  display: entry.display,
+                  details: entry.details,
+                  timestamp: entry.timestamp,
+                },
+                entry.id,
+              ),
         ),
-      )
-      .map((model) => ({
-        provider: model.provider,
-        id: model.id,
-        name: model.name,
-        api: model.api,
-      })),
-    messages: session()
-      .sessionManager.getBranch()
-      .filter(
-        (entry) => entry.type === "message" || entry.type === "custom_message",
-      )
-      .slice(-150)
-      .map((entry) =>
-        entry.type === "message"
-          ? projectMessage(entry.message, entry.id)
-          : projectMessage(
-              {
-                role: "custom",
-                customType: entry.customType,
-                content: entry.content,
-                display: entry.display,
-                details: entry.details,
-                timestamp: entry.timestamp,
-              },
-              entry.id,
-            ),
-      ),
-    capabilities: {
-      sessions: true,
-      reload: true,
-      auth: true,
-      marketplace: true,
-      commands: true,
-      attachments: attachmentLimits,
-    },
-  });
+      capabilities: {
+        sessions: true,
+        reload: true,
+        auth: true,
+        marketplace: true,
+        commands: true,
+        attachments: attachmentLimits,
+      },
+      extra: { widgets },
+    });
+  };
   async function exclusive(run) {
     if (busy || !session().isIdle || interactions.running)
       throw new DeskError(409, "请先完成当前任务或交互");
@@ -728,6 +733,46 @@ export async function startWebSlot(options = {}) {
     ...options,
     autoPort: options.port === undefined && !process.env.PI_DESK_PORT,
     agentDir,
+    capabilities: {
+      sessions: true,
+      newSession: true,
+      switchSession: true,
+      sessionCommand: false,
+      canManageSessions: false,
+      packageManagement: true,
+      packageUpdates:
+        typeof DefaultPackageManager.prototype.checkForAvailableUpdates ===
+        "function",
+      packageRoot: true,
+      skills: true,
+      mcp: true,
+      interactions: true,
+      reload: true,
+      auth: true,
+      authLogout: true,
+      providerInventory: false,
+      providerCatalog: true,
+      providerSave: false,
+      providerRemove: false,
+      model: true,
+      thinking: true,
+      trustProject: true,
+      prompt: true,
+      abort: true,
+      btw: true,
+      settings: true,
+      canSaveSettings: true,
+      projectTrusted: true,
+      canWrite: true,
+      canEditShared: false,
+      validateTarget: false,
+      canSetThinking: true,
+      canDeferConfiguration: false,
+      settingsChanged: true,
+      gitChanged: true,
+      route: false,
+      requestContext: false,
+    },
     snapshot,
     btw: (input) => {
       const current = session();

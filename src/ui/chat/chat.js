@@ -4834,10 +4834,8 @@ document.addEventListener("keydown", (event) => {
 });
 // Kept in the existing served browser module so older hosts can still load the page.
 // This logical module owns Git view state; callers provide transport and shared UI.
-// The server's prepare() accepts at most this many paths per confirmation and
-// fingerprints selected untracked inputs within one byte budget.
-const MAX_GIT_STAGE_PATHS = 100;
-const MAX_GIT_STAGE_BYTES = 16 * 1024 * 1024;
+// Limits and permitted actions come from the server's read() result, so this
+// module never restates the prepare() confirmation rules.
 function createGitPane({ request, snapshot, confirm, reveal }) {
   let owner,
     data,
@@ -4892,16 +4890,22 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
   function bulkStagePaths(action) {
     const unstage = action === "unstage";
     const paths = [];
-    let skipped = 0,
-      budget = MAX_GIT_STAGE_BYTES;
+    let skipped = 0;
+    const limits = data?.limits;
+    const maxPaths = Number.isSafeInteger(limits?.stagePaths)
+      ? limits.stagePaths
+      : 0;
+    const maxBytes = Number.isSafeInteger(limits?.stageBytes)
+      ? limits.stageBytes
+      : 0;
+    let budget = maxBytes;
     for (const file of data?.files ?? []) {
       if (unstage ? !file.staged : !file.unstaged) continue;
-      if (paths.length >= MAX_GIT_STAGE_PATHS) {
+      if (paths.length >= maxPaths) {
         skipped++;
         continue;
       }
       // Only selected untracked inputs consume the confirmation byte budget.
-      // Hosts that do not report sizes are left to the server's own check.
       if (!unstage && file.index === "?" && file.size != null) {
         if (file.size > budget) {
           skipped++;
@@ -4925,20 +4929,12 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
       !loading &&
       !historyLoading &&
       !pending;
-    const mergeOnly =
-      state.gitExtended &&
-      data?.mergeHead &&
-      data?.operations?.length &&
-      data.operations.every((name) => name === "MERGE_HEAD");
-    const allowed = (action) =>
-      !data?.operations?.length ||
-      (mergeOnly &&
-        (["stage", "unstage"].includes(action) ||
-          (action === "commit" && !data.unmerged?.length)));
+    const permitted = new Set(data?.permittedActions ?? []);
+    const allowed = (action) => permitted.has(action);
     const writable =
       readable && !data.busy && (state.gitWritable ?? state.idle);
-    // Bulk staging mirrors the single-file actions; prepare() accepts at most
-    // MAX_GIT_STAGE_PATHS paths per confirmation.
+    // Bulk staging mirrors the single-file actions; the limits come from the
+    // server's read() result and prepare() remains the authority.
     const bulk = {
       "stage-all": { action: "stage", ...bulkStagePaths("stage") },
       "unstage-all": { action: "unstage", ...bulkStagePaths("unstage") },
@@ -4998,7 +4994,7 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
                     (!historyData || historyData.page <= 1)) ||
                   (action === "history-next" && !historyData?.nextPage)
                 : !writable ||
-                  !allowed(action) ||
+                  (action !== "manage" && !allowed(action)) ||
                   (action === "manage" && !state.gitExtended) ||
                   (action === "commit" &&
                     (!data.files.some((file) => file.staged) ||
@@ -5551,7 +5547,7 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
         await mutation(
           { action: unstage ? "unstage" : "stage", paths },
           skipped
-            ? `另有 ${skipped} 个文件未包含：一次最多 ${MAX_GIT_STAGE_PATHS} 个，且所选未跟踪文件须在 16 MiB 内；可分批暂存。`
+            ? `另有 ${skipped} 个文件未包含：一次最多 ${data?.limits?.stagePaths ?? 0} 个，且所选未跟踪文件须在 ${Math.round((data?.limits?.stageBytes ?? 0) / 1024 / 1024)} MiB 内；可分批暂存。`
             : "",
         );
         return;
@@ -5802,28 +5798,27 @@ async function prefillGoalPrompt(value) {
   prompt.focus();
   toast("已填入输入框，按 Enter 发送");
 }
-async function handleGoalPanelAction({ action, value }) {
-  if (action === "refresh") {
+async function handleGoalPanelAction({ kind, value }) {
+  if (kind === "refresh") {
     await refresh();
     return;
   }
-  if (action === "focus-composer") {
+  if (kind === "focus-composer") {
     await showView("workspace");
     $("#prompt").focus();
     return;
   }
-  if (action === "prefill") {
+  if (kind === "prefill") {
     await prefillGoalPrompt(value);
     return;
   }
-  if (action === "command") {
-    // Only pause/resume run immediately; confirmation-bearing commands are
-    // prefilled by the panel and sent through the normal composer path.
-    if (!/^\/goal-(?:pause|resume)\s*$/.test(value)) return;
+  if (kind === "command") {
+    // The adapter's declared command set already validated this intent; the
+    // page only sends the exact command, never re-parses free text.
     try {
       await api("/api/prompt", { message: value });
       await refresh();
-      toast(value.includes("pause") ? "已暂停目标" : "已恢复目标");
+      toast(value === "/goal-pause" ? "已暂停目标" : "已恢复目标");
     } catch (error) {
       toast(error.message);
     }

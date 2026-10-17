@@ -12,6 +12,8 @@ npm run test:context:browser
 npm run format:check
 ```
 
+架构深化专项由 `test/host-interface.test.mjs`、`test/agent-snapshot.test.mjs`、`test/target-guard.test.mjs`、`test/agent-runtime.test.mjs`、`test/goal-panel.test.mjs`、`test/extension-workbench.test.mjs`、`test/git-review.test.mjs` 和 `test/bridge.test.mjs` 覆盖：Host 能力声明与动态 TUI slot、snapshot 统一 shape/typed activity、请求目标竞态、声明式面板动作、Durable runtime adapter，以及 Git limits／permitted actions。其中 `test/bridge.test.mjs` 明确验证“回调存在但未声明能力不会启用功能”，包括 `requestContext`、`sessionCommand`、会话新建／切换、`effectiveSettings` 和包管理清单（`updatesSupported`／`writable`）；`test/durable-server.test.mjs` 断言 Durable 的 `/api/sessions` 仍返回 `supported:true` 与 Agent 行，并验证 `/api/new-session`／`/api/switch-session` 仍返回 200，避免 capability 声明和既有会话管理行为分叉。`test/conversation-timeline-browser-check.mjs` 验证新增 activity 不改变旧的思考／生成文案。浏览器回归继续验证真实页面上的目标面板和 Git 审阅 affordance。
+
 目录和发布修改以真实包内容为验证对象：检查入口及模块引用、公共字体／schema、Markdown 引用和示例完整性；运行时分别检查项目工作区、聊天页面与预览的加载链。浏览器回归还覆盖展开状态、流式思考、当前状态卡片和会话切换。
 
 `node test/conversation-timeline-browser-check.mjs` 使用真实聊天渲染器验证活动折叠栏：兼容 Durable 的 `partial` 消息，只有当前活动播放逐字流水高亮，刷新保留动画进度。等待和空消息使用同样的折叠栏，正文流式输出不另加状态行；运行结束后停止动画。展开的折叠栏正文（工具参数与长输出）按稳定键记住各自滚动位置，重绘后沿用同一偏移，不把读者甩回折叠栏顶端。同一回归还验证扩展卡片只进入对话右侧扩展栏、懒详情与展开状态在流式更新后保持、未支持 adapter 回退到原消息，以及会话切换时展示骨架屏而不是演示／空会话界面。

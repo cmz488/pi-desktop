@@ -115,3 +115,15 @@ test("audit, draft and completed states share the same panel", () => {
   assert.match(completed, /新建目标/);
   assert.doesNotMatch(completed, /data-panel-value="\/goal-pause"/);
 });
+
+test("goal panel declares its executable commands at registration", () => {
+  const page = registry.panels([goalRow(activeGoal)], { sessionId: "A" })[0];
+  assert.equal(page.panel.acceptsAction("command", "/goal-pause"), true);
+  assert.equal(page.panel.acceptsAction("command", "/goal-resume"), true);
+  assert.equal(page.panel.acceptsAction("command", "/goal-tweak"), false);
+  assert.equal(page.panel.acceptsAction("command", "/goal-pause "), false);
+  assert.equal(page.panel.acceptsAction("prefill", "/goal-tweak"), true);
+  assert.equal(page.panel.acceptsAction("refresh", ""), true);
+  assert.equal(page.panel.acceptsAction("refresh", "x"), false);
+  assert.equal(page.panel.acceptsAction("focus-composer", ""), true);
+});

@@ -209,22 +209,23 @@ export function createExtensionWorkbench({
   }
 
   // Panel actions are declarative data attributes rendered by the adapter; the
-  // host only validates and forwards them, it never executes extension code.
+  // adapter's declared action contract validates them once at the seam. The
+  // workbench forwards a typed intent and never executes extension code.
   detail.addEventListener("click", (event) => {
     const button = event.target.closest?.("[data-panel-action]");
     if (!button || !detail.contains(button)) return;
     const page = pages.find((row) => row.key === selected);
     if (!page?.panel) return;
-    const action = String(button.dataset.panelAction ?? "");
+    const kind = String(button.dataset.panelAction ?? "");
     const value = String(button.dataset.panelValue ?? "");
-    if (!/^[a-z][a-z0-9-]{0,40}$/.test(action) || value.length > 4000) return;
+    if (!page.panel.panel.acceptsAction?.(kind, value)) return;
     event.preventDefault();
     try {
       void Promise.resolve(
         onPanelAction?.({
           adapterId: page.panel.adapterId,
           panelId: page.panel.panelId,
-          action,
+          kind,
           value,
         }),
       ).catch((error) => onError(error.message));

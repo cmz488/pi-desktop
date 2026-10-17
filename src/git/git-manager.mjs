@@ -12,6 +12,8 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_UNTRACKED_BYTES = 16 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 512 * 1024;
 const FILE_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_STAGE_PATHS = 100;
+const MAX_COMMIT_MESSAGE = 8192;
 const CONFIRM_TTL_MS = 60_000;
 const MAX_CONFIRMATIONS = 64;
 const MAX_REPOSITORIES = 64;
@@ -456,7 +458,7 @@ class GitRepository {
       : "";
     hash.update(mergeHead);
     hash.update(mergeHead ? "valid-merge" : "no-valid-merge");
-    return {
+    const result = {
       root: this.root,
       tags,
       historyRefs,
@@ -484,7 +486,18 @@ class GitRepository {
       branches: historyRefs
         .filter((ref) => ref.type === "branch")
         .map((ref) => ref.name),
+      limits: {
+        stagePaths: MAX_STAGE_PATHS,
+        stageBytes: MAX_UNTRACKED_BYTES,
+        commitMessage: MAX_COMMIT_MESSAGE,
+      },
     };
+    // The client renders affordances from this list instead of restating the
+    // operation-state rule. prepare()/confirm() remain the authority.
+    result.permittedActions = gitActions.filter((action) =>
+      canOperate(result, action),
+    );
+    return result;
   }
   async historyRefsRaw() {
     return this.run([
@@ -732,7 +745,7 @@ class GitRepository {
       if (
         !Array.isArray(input.paths) ||
         !input.paths.length ||
-        input.paths.length > 100
+        input.paths.length > MAX_STAGE_PATHS
       )
         throw new DeskError(422, "请选择要操作的文件");
       request.paths = [
@@ -761,7 +774,7 @@ class GitRepository {
       if (
         typeof input.message !== "string" ||
         !input.message.trim() ||
-        input.message.length > 8192 ||
+        input.message.length > MAX_COMMIT_MESSAGE ||
         input.message.includes("\0")
       )
         throw new DeskError(422, "请输入有效提交说明（最多 8192 字符）");
@@ -852,7 +865,7 @@ class GitRepository {
         if (input.message !== undefined && input.message !== "") {
           if (
             typeof input.message !== "string" ||
-            input.message.length > 8192 ||
+            input.message.length > MAX_COMMIT_MESSAGE ||
             input.message.includes("\0") ||
             !input.message.trim()
           )

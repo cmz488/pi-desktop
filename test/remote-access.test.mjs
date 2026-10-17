@@ -417,6 +417,11 @@ async function fixture(t) {
     prompt: async (text) => {
       messages.push({ role: "user", text });
     },
+    capabilities: {
+      prompt: true,
+      canWrite: true,
+      requestContext: true,
+    },
     async requestContext(req, res, run) {
       if (req.headers.origin)
         assert.equal(req.headers.origin, `http://${req.headers.host}`);

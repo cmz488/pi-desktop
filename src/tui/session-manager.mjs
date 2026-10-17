@@ -243,6 +243,16 @@ export class SessionHost {
     const manager = this;
     const overrides = {
       snapshot: () => manager.snapshot(),
+      capabilities: {
+        ...(manager.baseOptions?.capabilities ?? {}),
+        sessions: true,
+        newSession: true,
+        switchSession: true,
+        sessionCommand: true,
+        canManageSessions: true,
+        canEditShared: true,
+        validateTarget: true,
+      },
       listSessions: () => manager.list(),
       newSession: () => manager.create(),
       switchSession: (id) => manager.select(id),

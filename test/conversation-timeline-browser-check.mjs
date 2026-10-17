@@ -320,7 +320,6 @@ try {
     true,
     "Preserving fold scroll must not collapse the fold",
   );
-
   await evaluate(
     `conversationFixture.render([{role:'user',id:'live-user',text:'live question'},{role:'assistant',id:'persisted',blocks:[{type:'thinking',text:'persisted thought'}]}]);conversationFixture.stream({id:'streaming',role:'assistant',blocks:[{type:'thinking',text:'live thought'}]})`,
   );
@@ -532,7 +531,7 @@ try {
     "等待回复",
   );
   await evaluate(
-    "conversationFixture.render([],{idle:false,phase:'output',operation:'Pi 正在处理'})",
+    "conversationFixture.render([],{idle:false,phase:'output',operation:'Pi 正在处理',activity:{kind:'working',label:'运行中'}})",
   );
   assert.equal(
     await evaluate(

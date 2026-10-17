@@ -23,6 +23,7 @@ async function fixture(t, extra = {}) {
   let selected = "A",
     directory = cwd,
     idle = true;
+  const { capabilities: extraCapabilities, ...extraOptions } = extra;
   const bridge = createDeskBridge({
     agentDir,
     port: 0,
@@ -31,7 +32,14 @@ async function fixture(t, extra = {}) {
     canWrite: () => idle,
     projectTrusted: () => true,
     packageRoot: () => packageRoot,
-    ...extra,
+    ...extraOptions,
+    capabilities: {
+      canWrite: true,
+      projectTrusted: true,
+      packageManagement: true,
+      packageRoot: true,
+      ...(extraCapabilities ?? {}),
+    },
   });
   const origin = new URL(await bridge.start()).origin;
   t.after(async () => {
@@ -78,7 +86,14 @@ test("package operations exclude concurrent writes from validation through nativ
   const management = createPackageManagement({
     agentDir: f.agentDir,
     snapshot: () => ({ sessionId: "A", cwd: f.cwd, host: "durable" }),
-    canWrite: () => true,
+    capabilities: {
+      packageAction: true,
+      packageUpdates: false,
+      packageRoot: true,
+      projectTrusted: true,
+    },
+    writable: () => true,
+    trusted: () => true,
     hasChanged: () => false,
     pending: () => false,
     onWrite: () => changed++,
@@ -150,6 +165,7 @@ test("inventory reads real installed versions; checks are manual, native, scoped
         ],
       };
     },
+    capabilities: { packageUpdates: true },
   });
   let inventory = await (await f.request("/api/plugins")).json();
   assert.equal(inventory.rows[0].installedVersion, "1.0.0");
@@ -200,6 +216,7 @@ test("late native update results cannot be relabeled for a new session or cwd", 
         rows: [{ source: "npm:fixture-extensions", scope: "global" }],
       };
     },
+    capabilities: { packageUpdates: true },
   });
   const pending = f.request("/api/package-updates", { sessionId: "A" });
   await Promise.race([
@@ -250,4 +267,33 @@ test("package writes retain native sources and require original target, trust an
   );
   assert.equal((await f.request("/api/package", input)).status, 409);
   assert.equal(writes.length, 1);
+});
+
+test("plugin inventory follows declared capabilities, not callback presence", async (t) => {
+  const callbackOnly = await fixture(t, {
+    packageUpdates: async () => ({ supported: true, rows: [] }),
+    packageAction: async () => ({}),
+  });
+  let inventory = await (await callbackOnly.request("/api/plugins")).json();
+  assert.equal(inventory.updatesSupported, false);
+  assert.equal(inventory.writable, true);
+
+  const declared = await fixture(t, {
+    capabilities: { packageUpdates: true, packageManagement: true },
+    packageUpdates: async () => ({ supported: true, rows: [] }),
+    packageAction: async () => ({}),
+  });
+  inventory = await (await declared.request("/api/plugins")).json();
+  assert.equal(inventory.updatesSupported, true);
+
+  const noWrite = await fixture(t, {
+    canWrite: () => true,
+    capabilities: { canWrite: false },
+  });
+  inventory = await (await noWrite.request("/api/plugins")).json();
+  assert.equal(
+    inventory.writable,
+    false,
+    "a canWrite callback must not override the declared capability",
+  );
 });

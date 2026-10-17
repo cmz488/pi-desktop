@@ -80,6 +80,7 @@ test("local HTTP chooses metadata references while remote requests upload and ca
     }),
     canWrite: () => true,
     prompt: (message, mode, context) => received.push(context),
+    capabilities: { prompt: true, canWrite: true },
     filePicker: {
       pickFiles: async () => {
         picks++;
@@ -251,6 +252,7 @@ test("attachment HTTP rechecks focus after image-worker awaits and never sends t
     }),
     prompt: () => calls++,
     canWrite: () => true,
+    capabilities: { prompt: true, canWrite: true },
   });
   const url = await bridge.start();
   t.after(() => bridge.stop());

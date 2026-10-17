@@ -10,10 +10,14 @@ import { installedPackageVersion } from "./native-packages.mjs";
 // mutual exclusion are one lifecycle; HTTP callers only request an operation.
 export function createPackageManagement(options) {
   const settingsPath = join(options.agentDir, "settings.json");
+  const capabilities = options.capabilities ?? {};
+  const rootForPackage = capabilities.packageRoot
+    ? options.packageRoot
+    : undefined;
   let updateHints,
     busy = false;
   const editable = () => {
-    if (!(options.canEditShared?.() ?? options.canWrite()))
+    if (!options.writable())
       throw new DeskError(409, "有会话运行中，请在任务完成后修改共享配置");
   };
   const packageTarget = () => {
@@ -51,8 +55,7 @@ export function createPackageManagement(options) {
   }
 
   async function plugins() {
-    const target = packageTarget(),
-      rootForPackage = options.packageRoot;
+    const target = packageTarget();
     const global = await readDocument(settingsPath),
       cwd = target.cwd;
     const documents = [
@@ -163,7 +166,7 @@ export function createPackageManagement(options) {
         const ready = !state.initializing && !state.replacing;
         const trusted =
           row.scope !== "project" ||
-          (ready && (options.projectTrusted?.() ?? true));
+          (ready && (capabilities.projectTrusted ? options.trusted() : true));
         const root =
           ready && trusted
             ? rootForPackage?.(row.source, row.scope)
@@ -200,8 +203,8 @@ export function createPackageManagement(options) {
         ...row,
         pending: options.hasChanged(row.id),
       })),
-      updatesSupported: !!options.packageUpdates,
-      writable: Boolean(options.canEditShared?.() ?? options.canWrite?.()),
+      updatesSupported: capabilities.packageUpdates === true,
+      writable: options.writable() === true,
       pending: options.pending(),
     });
   }
@@ -209,7 +212,7 @@ export function createPackageManagement(options) {
     editable();
     if (!input.sessionId) throw new DeskError(422, "请指定当前会话再检查更新");
     const target = packageTarget(),
-      runner = options.packageUpdates;
+      runner = capabilities.packageUpdates ? options.packageUpdates : undefined;
     checkPackageTarget(target, input);
     if (!runner)
       throw new DeskError(
@@ -236,7 +239,7 @@ export function createPackageManagement(options) {
   async function write(input) {
     editable();
     const target = packageTarget(),
-      runner = options.packageAction;
+      runner = capabilities.packageAction ? options.packageAction : undefined;
     checkPackageTarget(target, input);
     if (!runner)
       throw new DeskError(
@@ -255,7 +258,10 @@ export function createPackageManagement(options) {
       /[\0\r\n]/.test(input.source)
     )
       throw new DeskError(422, "插件来源无效");
-    if (input.scope === "project" && !options.projectTrusted?.())
+    if (
+      input.scope === "project" &&
+      !(capabilities.projectTrusted && options.trusted())
+    )
       throw new DeskError(403, "请先信任项目再管理项目插件");
     const document = await readDocument(
       input.scope === "global"
@@ -272,12 +278,11 @@ export function createPackageManagement(options) {
       // Older callers can pass an absolute local source that Pi persists
       // relative to settings. Delegate identity to Pi's public resolver.
       if (!configured && input.revision === undefined) {
-        const installed = options.packageRoot?.(input.source, input.scope);
+        const installed = rootForPackage?.(input.source, input.scope);
         configured =
           !!installed &&
           sources.some(
-            (source) =>
-              options.packageRoot?.(source, input.scope) === installed,
+            (source) => rootForPackage?.(source, input.scope) === installed,
           );
       }
       if (!configured)

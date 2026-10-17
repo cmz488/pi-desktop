@@ -71,6 +71,14 @@ test("HTTP clients keep independent selection, restore committed snapshots, and 
     [],
     "resource listings must not project the conversation transcript",
   );
+  const sessions = await (
+    await fetch(origin + `/api/sessions?sessionId=${one.id}`)
+  ).json();
+  assert.equal(sessions.supported, true);
+  assert(
+    sessions.rows.some((row) => row.id === String(one.id)),
+    "Durable session management must remain advertised and list its Agents",
+  );
   const oneView = await (
     await fetch(origin + `/api/state?id=${one.id}`)
   ).json();
@@ -138,6 +146,15 @@ test("HTTP clients keep independent selection, restore committed snapshots, and 
     (await (await fetch(origin + `/api/state?id=${two.id}`)).json()).active
       .messages.length === 0,
   );
+  const createdSession = await post("/api/new-session", {});
+  assert.equal(createdSession.status, 200);
+  const createdBody = await createdSession.json();
+  assert(createdBody.sessionId, "Durable new-session must return an Agent id");
+  const switchedSession = await post("/api/switch-session", {
+    id: String(one.id),
+  });
+  assert.equal(switchedSession.status, 200);
+  assert.equal((await switchedSession.json()).sessionId, String(one.id));
 });
 
 test("model and thinking changes queued during a run apply after the run becomes idle", async (t) => {

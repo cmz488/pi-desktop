@@ -146,6 +146,7 @@ test("LSP HTTP validates target, trust, changed-file scope and native handoff be
     port: 0,
     host: "127.0.0.1",
     snapshot: () => ({ cwd: root, sessionId: "target", replacing }),
+    capabilities: { projectTrusted: true },
     projectTrusted: () => {
       if (replacing) throw new Error("No native context");
       return trusted;
@@ -187,6 +188,7 @@ test(
       host: "127.0.0.1",
       snapshot: () => ({ cwd: root, sessionId }),
       canWrite: () => false,
+      capabilities: { projectTrusted: true },
       projectTrusted: () => {
         if (++calls === 2) announce();
         return true;

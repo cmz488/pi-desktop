@@ -13,7 +13,8 @@ import { createDurableResources } from "../agent/durable-resources.mjs";
 import { createAgentBrowser } from "../agent/agent-browser.mjs";
 import { createInteractionStore } from "../agent/interaction-store.mjs";
 import { webCommands } from "../shared/pi-commands.mjs";
-import { projectMessage, usageMetrics } from "../shared/conversation.mjs";
+import { projectMessage } from "../shared/conversation.mjs";
+import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { openNativeTranscript } from "../session/pi-session-storage.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
 import { DeskError, readDocument } from "../config/config-store.mjs";
@@ -342,6 +343,44 @@ export async function startDurableDesk(options = {}) {
     bridge = createDeskBridge({
       ...options,
       agentDir,
+      capabilities: {
+        sessions: true,
+        newSession: true,
+        switchSession: true,
+        sessionCommand: true,
+        canManageSessions: true,
+        packageManagement: Boolean(resources),
+        packageUpdates: Boolean(resources),
+        packageRoot: true,
+        skills: Boolean(resources),
+        mcp: Boolean(resources),
+        interactions: true,
+        reload: true,
+        auth: Boolean(providers),
+        authLogout: Boolean(providers),
+        providerInventory: Boolean(providers),
+        providerCatalog: false,
+        providerSave: Boolean(providers),
+        providerRemove: Boolean(providers),
+        model: true,
+        thinking: true,
+        trustProject: Boolean(resources),
+        prompt: true,
+        abort: true,
+        btw: true,
+        settings: true,
+        canSaveSettings: true,
+        projectTrusted: true,
+        canWrite: true,
+        canEditShared: true,
+        validateTarget: true,
+        canSetThinking: true,
+        canDeferConfiguration: true,
+        settingsChanged: true,
+        gitChanged: false,
+        route: true,
+        requestContext: true,
+      },
       modelsPath: join(directory, "models.json"),
       host: options.host ?? process.env.PI_DESK_HOST ?? "127.0.0.1",
       port: options.port ?? process.env.PI_DESK_PORT ?? 0,
@@ -453,25 +492,26 @@ export async function startDurableDesk(options = {}) {
             output: call.output ?? "",
             status: call.status,
           }));
-        ctx.snapshot = {
-          ...result,
-          active: active ? { ...active, resourceState: undefined } : null,
+        const stats = {
+          tokens: { ...active?.usage, total: active?.usage?.tokens ?? 0 },
+          cost: active?.usage?.cost ?? 0,
+        };
+        ctx.snapshot = createAgentSnapshot({
           version: manifest.version,
           host: "durable",
           frameworkVersion: result.frameworkVersion,
           sessionId: active ? String(active.id) : "",
-          sessionCommands: true,
           name: active?.name ?? "新会话",
           cwd: active?.cwd ?? options.cwd ?? process.cwd(),
           idle: active?.idle ?? true,
-          configurationPending: !!active?.configurationPending,
-          canDeferConfiguration: !!active && !auth.running,
           initializing: !!nativeSnapshot.initializing,
           operation: calls.length
             ? `执行 ${calls[0].name}…`
             : active?.compactions?.length
               ? "压缩上下文…"
               : "",
+          activeTool: calls[0]?.name ?? "",
+          compacting: !!active?.compactions?.length,
           statuses: nativeSnapshot.statuses ?? [],
           workingMessage: nativeSnapshot.workingMessage ?? "",
           model: model
@@ -502,14 +542,7 @@ export async function startDurableDesk(options = {}) {
           activeCalls: calls,
           tools: active?.tools ?? [],
           usage: active?.contextUsage ?? null,
-          stats: {
-            tokens: { ...active?.usage, total: active?.usage?.tokens ?? 0 },
-            cost: active?.usage?.cost ?? 0,
-          },
-          metrics: usageMetrics({
-            tokens: { ...active?.usage, total: active?.usage?.tokens ?? 0 },
-            cost: active?.usage?.cost ?? 0,
-          }),
+          stats,
           commands: resourceHost ? nativeInfo.commands : webCommands,
           git:
             active &&
@@ -534,7 +567,14 @@ export async function startDurableDesk(options = {}) {
             agentBrowser: !!browser && !remoteClient,
             browserRemoteDisabled: remoteClient,
           },
-        };
+          extra: {
+            ...result,
+            active: active ? { ...active, resourceState: undefined } : null,
+            sessionCommands: true,
+            configurationPending: !!active?.configurationPending,
+            canDeferConfiguration: !!active && !auth.running,
+          },
+        });
         return requestState.run(ctx, run);
       },
       async route(request, response, url) {

@@ -129,6 +129,12 @@ test("Git HTTP requires explicit session, project trust, idle writers and a one-
     prompt: () => {
       prompts++;
     },
+    capabilities: {
+      prompt: true,
+      canWrite: true,
+      canEditShared: true,
+      projectTrusted: true,
+    },
   });
   t.after(() => bridge.stop());
   const url = (await bridge.start()).replace(/\/$/, "");

@@ -6,6 +6,14 @@ Pi Desktop 管理 Agent，并让桌面与手机客户端操作同一个工作区
 
 **Agent**：拥有独立项目目录、模型、工具选择和对话的运行对象。切换客户端选中的 Agent 不会停止其他 Agent。
 
+**Host**：拥有 Agent 进程生命周期、HTTP 传输与路由的 Desktop 宿主；通过 Host interface 提供会话快照、请求目标、能力声明和会话操作。
+
+**Agent runtime**：Agent worker 进程内执行模型回合的 harness adapter。Host 负责进程监督，runtime 只拥有执行；当前 adapter 是 Durable，headless Pi 不在本轮范围。
+
+**请求目标**：一次写请求开始时捕获的 Agent 会话与工作目录身份；异步等待后用它拒绝已经过期的结果。
+
+**扩展卡片动作**：扩展 adapter 在注册时声明的动作类型与 payload；工作台只转发 typed intent，页面不解析命令文本。
+
 **原生资源**：Pi 提供的扩展、技能、提示模板、MCP、工具与交互能力，供 Agent 在自己的项目环境中使用。
 
 **会话同步**：客户端跟随当前 Agent 的消息和运行状态，同时保留自己的选择与输入。

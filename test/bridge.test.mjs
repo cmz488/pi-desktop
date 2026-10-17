@@ -56,6 +56,13 @@ async function fixture(t, options = {}) {
     setModel: async () => {},
     refreshModels: async () => {},
     ...options,
+    capabilities: {
+      prompt: true,
+      abort: true,
+      model: true,
+      canWrite: true,
+      ...(options.capabilities ?? {}),
+    },
   });
   const url = new URL(await bridge.start());
   const origin = url.origin;
@@ -93,6 +100,7 @@ async function fixture(t, options = {}) {
 test("pi-btw is exposed only when the extension command and Desktop adapter are available", async (t) => {
   const f = await fixture(t, {
     btw: async (input) => ({ action: input.action, threadId: "side-thread" }),
+    capabilities: { btw: true },
   });
   const state = await f.request("/api/state");
   assert.equal((await state.json()).capabilities.btw, true);
@@ -303,6 +311,16 @@ test("model and thinking changes defer while running, while Pi settings remain s
       if (defer) queued.push({ thinkingLevel: value });
       else level = value;
     },
+    capabilities: {
+      thinking: true,
+      canSetThinking: true,
+      canDeferConfiguration: true,
+      settings: true,
+      canSaveSettings: true,
+      settingsChanged: true,
+    },
+    effectiveSettings: () => ({}),
+    settingsChanged: () => {},
   });
   f.setIdle(false);
   const modelChange = await f.request("/api/model", {
@@ -342,5 +360,169 @@ test("model and thinking changes defer while running, while Pi settings remain s
   assert.equal(
     (await legacy.request("/api/thinking", { level: "low" })).status,
     409,
+  );
+});
+
+test("Host capabilities, not optional option presence, drive feature advertisement", async (t) => {
+  const plain = await fixture(t);
+  const plainState = await (await plain.request("/api/state")).json();
+  assert.equal(plainState.packageManagement, false);
+  assert.equal(plainState.packageUpdates, false);
+  assert.equal(plainState.capabilities.sessions, false);
+
+  const capable = await fixture(t, {
+    listSessions: async () => [],
+    packageAction: async () => ({ ok: true }),
+    packageUpdates: async () => ({ supported: true, rows: [] }),
+    capabilities: {
+      sessions: true,
+      packageManagement: true,
+      packageUpdates: true,
+    },
+  });
+  const capableState = await (await capable.request("/api/state")).json();
+  assert.equal(capableState.packageManagement, true);
+  assert.equal(capableState.packageUpdates, true);
+  assert.equal(capableState.capabilities.sessions, true);
+
+  const callbackOnly = await fixture(t, {
+    listSessions: async () => [],
+    packageAction: async () => ({ ok: true }),
+    packageUpdates: async () => ({ supported: true, rows: [] }),
+  });
+  const callbackOnlyState = await (
+    await callbackOnly.request("/api/state")
+  ).json();
+  assert.equal(callbackOnlyState.packageManagement, false);
+  assert.equal(callbackOnlyState.packageUpdates, false);
+  assert.equal(callbackOnlyState.capabilities.sessions, false);
+});
+
+test("a file picker that outlives its Agent target is rejected by the request token", async (t) => {
+  let dir;
+  let session = "A";
+  const f = await fixture(t, {
+    snapshot: () => ({
+      sessionId: session,
+      cwd: dir,
+      idle: true,
+      messages: [],
+    }),
+    filePicker: {
+      pickFiles: async () => {
+        session = "B";
+        return [join(dir, "context.txt")];
+      },
+    },
+  });
+  dir = f.dir;
+  await writeFile(join(dir, "context.txt"), "context");
+  const response = await f.request("/api/context/files", { sessionId: "A" });
+  assert.equal(response.status, 409);
+});
+
+test("requestContext capability gates its callback even when the callback exists", async (t) => {
+  let calls = 0;
+  const off = await fixture(t, {
+    requestContext: (request, response, run) => {
+      calls++;
+      return run();
+    },
+  });
+  assert.equal((await off.request("/api/state")).status, 200);
+  assert.equal(calls, 0);
+
+  const on = await fixture(t, {
+    requestContext: (request, response, run) => {
+      calls++;
+      return run();
+    },
+    capabilities: { requestContext: true },
+  });
+  assert.equal((await on.request("/api/state")).status, 200);
+  assert.equal(calls, 1);
+});
+
+test("session and session-command capabilities gate their callbacks and responses", async (t) => {
+  let listed = 0,
+    commands = 0,
+    created = 0,
+    switched = 0;
+  const f = await fixture(t, {
+    listSessions: async () => {
+      listed++;
+      return [{ id: "A", name: "one", live: true }];
+    },
+    sessionCommand: async () => {
+      commands++;
+      return { text: "sessions output" };
+    },
+    newSession: async () => {
+      created++;
+      return { sessionId: "B" };
+    },
+    switchSession: async (id) => {
+      switched++;
+      return { sessionId: id };
+    },
+    canManageSessions: () => true,
+    capabilities: {
+      sessions: true,
+      newSession: true,
+      switchSession: true,
+      sessionCommand: true,
+      canManageSessions: true,
+    },
+  });
+  const sessions = await (await f.request("/api/sessions")).json();
+  assert.equal(sessions.supported, true);
+  assert.deepEqual(sessions.rows, [{ id: "A", name: "one", live: true }]);
+  assert.equal(listed, 1);
+  assert.equal((await f.request("/api/new-session", {})).status, 200);
+  assert.equal(created, 1);
+  assert.equal(
+    (await f.request("/api/switch-session", { id: "B" })).status,
+    200,
+  );
+  assert.equal(switched, 1);
+  const command = await f.request("/api/prompt", {
+    message: "/sessions list",
+  });
+  assert.equal(command.status, 200);
+  assert.equal((await command.json()).sessionCommand.text, "sessions output");
+  assert.equal(commands, 1);
+
+  const off = await fixture(t, {
+    sessionCommand: async () => {
+      commands++;
+      return { text: "must not run" };
+    },
+  });
+  const before = commands;
+  const prompt = await off.request("/api/prompt", {
+    message: "/sessions list",
+  });
+  assert.equal(prompt.status, 200);
+  assert.equal(commands, before);
+  assert.equal((await prompt.json()).sessionCommand, undefined);
+});
+
+test("effective settings are projected only when the settings capability is declared", async (t) => {
+  const off = await fixture(t, {
+    effectiveSettings: () => ({ theme: "dark" }),
+  });
+  assert.equal(
+    (await (await off.request("/api/settings?scope=global")).json()).effective,
+    null,
+  );
+
+  const on = await fixture(t, {
+    effectiveSettings: () => ({ theme: "dark" }),
+    capabilities: { settings: true },
+  });
+  assert.equal(
+    (await (await on.request("/api/settings?scope=global")).json()).effective
+      .theme,
+    "dark",
   );
 });

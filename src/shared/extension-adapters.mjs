@@ -18,6 +18,55 @@ const escapeHtml = (value) =>
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : null;
 
+const PANEL_ACTION_KINDS = new Set([
+  "command",
+  "prefill",
+  "refresh",
+  "focus-composer",
+]);
+const MAX_PANEL_PREFILL = 4000;
+
+function normalizePanelActions(actions) {
+  const input = asRecord(actions);
+  if (!input) throw new TypeError("扩展面板 actions 必须是对象");
+  for (const key of Object.keys(input))
+    if (!PANEL_ACTION_KINDS.has(key))
+      throw new TypeError(`未知的扩展面板动作：${key}`);
+  const command = input.command ?? [];
+  if (
+    !Array.isArray(command) ||
+    command.some(
+      (value) =>
+        typeof value !== "string" || !value || value.length > MAX_PANEL_PREFILL,
+    )
+  )
+    throw new TypeError("扩展面板 command 必须是字符串数组");
+  for (const key of ["prefill", "refresh", "focus-composer"])
+    if (input[key] !== undefined && typeof input[key] !== "boolean")
+      throw new TypeError(`扩展面板 ${key} 必须是布尔值`);
+  return {
+    command: [...new Set(command)],
+    prefill: input.prefill === true,
+    refresh: input.refresh === true,
+    "focus-composer": input["focus-composer"] === true,
+  };
+}
+
+function acceptsPanelAction(panel, kind, value) {
+  if (!panel.actions || typeof kind !== "string") return false;
+  if (kind === "command")
+    return typeof value === "string" && panel.actions.command.includes(value);
+  if (kind === "prefill")
+    return (
+      panel.actions.prefill === true &&
+      typeof value === "string" &&
+      value.length <= MAX_PANEL_PREFILL
+    );
+  if (kind === "refresh" || kind === "focus-composer")
+    return panel.actions[kind] === true && value === "";
+  return false;
+}
+
 const goalStatuses = {
   active: "进行中",
   paused: "已暂停",
@@ -534,6 +583,12 @@ const goalPanel = {
     "set_goal_tasks",
     "update_goal_task",
   ],
+  actions: {
+    command: ["/goal-pause", "/goal-resume"],
+    prefill: true,
+    refresh: true,
+    "focus-composer": true,
+  },
   aggregate: aggregateGoalPanel,
   render: renderGoalPanel,
 };
@@ -662,30 +717,46 @@ export function createExtensionAdapterRegistry(adapters = builtins) {
         );
       if (registered.has(adapter.id))
         throw new Error(`扩展适配器已注册：${adapter.id}`);
+      let panel;
       if (adapter.panel !== undefined) {
-        const panel = adapter.panel;
+        const source = adapter.panel;
         if (
-          !asRecord(panel) ||
-          typeof panel.id !== "string" ||
-          !panel.id.trim() ||
-          typeof panel.title !== "string" ||
-          typeof panel.render !== "function" ||
-          (panel.aggregate !== undefined &&
-            typeof panel.aggregate !== "function") ||
-          (panel.tools !== undefined &&
-            (!Array.isArray(panel.tools) ||
-              panel.tools.some(
+          !asRecord(source) ||
+          typeof source.id !== "string" ||
+          !source.id.trim() ||
+          typeof source.title !== "string" ||
+          typeof source.render !== "function" ||
+          (source.aggregate !== undefined &&
+            typeof source.aggregate !== "function") ||
+          (source.tools !== undefined &&
+            (!Array.isArray(source.tools) ||
+              source.tools.some(
                 (name) => typeof name !== "string" || name.length > 80,
               )))
         )
           throw new TypeError(
             "扩展面板必须提供 id、title、render，以及可选的 aggregate 和 tools",
           );
+        const actions = normalizePanelActions(
+          source.actions ?? {
+            command: [],
+            prefill: true,
+            refresh: true,
+            "focus-composer": true,
+          },
+        );
+        panel = {
+          ...source,
+          actions,
+          acceptsAction: (kind, value) =>
+            acceptsPanelAction(panel, kind, value),
+        };
       }
       const entry = {
         id: adapter.id,
         version: adapter.version,
-        adapter,
+        adapter: panel ? { ...adapter, panel } : adapter,
+        panel,
         active: true,
         cleanup: undefined,
       };

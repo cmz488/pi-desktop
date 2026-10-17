@@ -365,13 +365,13 @@ try {
     {
       adapterId: "pi-goal-x",
       panelId: "goal",
-      action: "command",
+      kind: "command",
       value: "/goal-pause",
     },
     {
       adapterId: "pi-goal-x",
       panelId: "goal",
-      action: "prefill",
+      kind: "prefill",
       value: "/goal-tweak",
     },
   ]);
