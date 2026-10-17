@@ -15,7 +15,7 @@ npm start -- --port 4318
 
 ```bash
 npm pack
-npm install --global ./pi-desktop-extension-0.26.12.tgz
+npm install --global ./pi-desktop-extension-0.26.13.tgz
 pi-desktop --port 4318
 ```
 

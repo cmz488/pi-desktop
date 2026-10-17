@@ -320,6 +320,81 @@ try {
     true,
     "Preserving fold scroll must not collapse the fold",
   );
+  // A refresh keeps this client's reading state: the expanded fold, its own
+  // offset and the transcript position must all come back instead of the
+  // reader landing on a collapsed fold at the top.
+  const reloadRows = [];
+  for (let index = 0; index < 4; index++) {
+    reloadRows.push({
+      role: "user",
+      id: `reload-user-${index}`,
+      text: `question ${index}`,
+    });
+    reloadRows.push({
+      role: "assistant",
+      id: `reload-assistant-${index}`,
+      blocks: [{ type: "text", text: `answer ${index} `.repeat(60) }],
+    });
+  }
+  reloadRows.push(
+    { role: "user", id: "reload-tool-user", text: "run the long command" },
+    {
+      role: "assistant",
+      id: "reload-tool-assistant",
+      blocks: [
+        {
+          type: "toolCall",
+          id: "reload-tool-call",
+          name: "bash",
+          arguments: JSON.stringify({ command: "make" }),
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      id: "reload-tool-result",
+      toolCallId: "reload-tool-call",
+      toolName: "bash",
+      text: longOutput,
+    },
+  );
+  await evaluate(
+    `conversationFixture.render(${JSON.stringify(reloadRows)},{idle:true})`,
+  );
+  await evaluate(
+    "for (const node of document.querySelectorAll('.context-activity, .tool-card')) node.open=true",
+  );
+  await until(
+    "document.querySelector('.tool-card[open] .tool-details pre:last-of-type')?.scrollHeight>document.querySelector('.tool-card[open] .tool-details pre:last-of-type')?.clientHeight",
+  );
+  await evaluate(
+    "(()=>{document.querySelector('.tool-card[open] .tool-details pre:last-of-type').scrollTop=180;document.querySelector('#messages').scrollTop=120})()",
+  );
+  await until("document.querySelector('#messages').scrollTop===120");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await call("Page.navigate", {
+    url: `http://127.0.0.1:${server.address().port}/`,
+  });
+  await until("!!window.conversationFixture");
+  await evaluate(
+    `conversationFixture.render(${JSON.stringify(reloadRows)},{idle:true})`,
+  );
+  await until(
+    "document.querySelector('.tool-card[open] .tool-details pre:last-of-type')?.scrollTop===180",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.context-activity').open&&document.querySelector('.tool-card').open",
+    ),
+    true,
+    "A refresh must reopen the folds the reader had expanded",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('#messages').scrollTop"),
+    120,
+    "A refresh must restore the transcript position, not jump to the fold top",
+  );
+
   await evaluate(
     `conversationFixture.render([{role:'user',id:'live-user',text:'live question'},{role:'assistant',id:'persisted',blocks:[{type:'thinking',text:'persisted thought'}]}]);conversationFixture.stream({id:'streaming',role:'assistant',blocks:[{type:'thinking',text:'live thought'}]})`,
   );

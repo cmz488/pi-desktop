@@ -924,6 +924,43 @@ const disclosures = new Map();
 // Live updates rebuild those nodes, so offsets are remembered per stable key.
 const foldScroll = new Map();
 const MAX_REMEMBERED_FOLD_SCROLL = 500;
+/* Fold state is this client's own reading state, not Pi data. Keep it in
+ * sessionStorage so a page refresh reopens the same folds at the same offset;
+ * otherwise the expanded activity collapses and its scroll progress is lost. */
+const FOLD_STATE_KEY = "pi-web-fold-state";
+const MAX_PERSISTED_CONVERSATIONS = 64;
+const conversationScroll = new Map();
+const restoredScrollSessions = new Set();
+const storedFoldState = (() => {
+  try {
+    return JSON.parse(sessionStorage.getItem(FOLD_STATE_KEY) ?? "null") ?? {};
+  } catch {
+    return {};
+  }
+})();
+for (const entry of Array.isArray(storedFoldState.disclosures)
+  ? storedFoldState.disclosures
+  : [])
+  if (Array.isArray(entry) && typeof entry[0] === "string")
+    disclosures.set(entry[0], entry[1] === true);
+for (const entry of Array.isArray(storedFoldState.scroll)
+  ? storedFoldState.scroll
+  : [])
+  if (
+    Array.isArray(entry) &&
+    typeof entry[0] === "string" &&
+    Number.isFinite(entry[1])
+  )
+    foldScroll.set(entry[0], entry[1]);
+for (const entry of Array.isArray(storedFoldState.conversation)
+  ? storedFoldState.conversation
+  : [])
+  if (
+    Array.isArray(entry) &&
+    typeof entry[0] === "string" &&
+    Number.isFinite(entry[1])
+  )
+    conversationScroll.set(entry[0], entry[1]);
 let extensionWorkbench;
 const activityAnimationStarts = new Map();
 function toolSummary(value) {
@@ -1219,12 +1256,68 @@ function handleLazyDetails(event) {
 $("#messages").addEventListener("toggle", handleLazyDetails, true);
 // The isolated renderer harness may ship only #messages; the real page has both.
 $("#extension-rail-list")?.addEventListener("toggle", handleLazyDetails, true);
+let foldStateWrite;
+function writeFoldState() {
+  try {
+    sessionStorage.setItem(
+      FOLD_STATE_KEY,
+      JSON.stringify({
+        disclosures: [...disclosures].slice(-500),
+        scroll: [...foldScroll].slice(-MAX_REMEMBERED_FOLD_SCROLL),
+        conversation: [...conversationScroll].slice(
+          -MAX_PERSISTED_CONVERSATIONS,
+        ),
+      }),
+    );
+  } catch {
+    /* Sandboxed hosts can block storage; in-memory state still applies. */
+  }
+}
+function saveFoldState(flush = false) {
+  if (flush) {
+    clearTimeout(foldStateWrite);
+    foldStateWrite = undefined;
+    writeFoldState();
+    return;
+  }
+  if (foldStateWrite) return;
+  foldStateWrite = setTimeout(() => {
+    foldStateWrite = undefined;
+    writeFoldState();
+  }, 150);
+}
+/* Opening a fold or scrolling its body must reach storage even when no redraw
+ * happens before the refresh. Scroll does not bubble, so listen in capture. */
+function rememberFoldInteraction(event) {
+  const node = event.target;
+  if (event.type === "toggle") {
+    if (!node.matches?.("[data-disclosure]")) return;
+    disclosures.set(node.dataset.disclosure, node.open);
+  } else if (node.id === "messages") {
+    const sessionId = state?.sessionId;
+    if (!sessionId) return;
+    conversationScroll.set(sessionId, node.scrollTop);
+    while (conversationScroll.size > MAX_PERSISTED_CONVERSATIONS)
+      conversationScroll.delete(conversationScroll.keys().next().value);
+  } else if (node.dataset?.scrollKey) {
+    if (!node.clientHeight) return;
+    foldScroll.set(node.dataset.scrollKey, node.scrollTop);
+  } else return;
+  saveFoldState();
+}
+for (const root of [$("#messages"), $("#extension-rail-list")]) {
+  if (!root) continue;
+  root.addEventListener("toggle", rememberFoldInteraction, true);
+  root.addEventListener("scroll", rememberFoldInteraction, true);
+}
+window.addEventListener("pagehide", () => saveFoldState(true));
 function rememberDisclosures() {
   for (const root of [$("#messages"), $("#extension-rail-list")])
     for (const details of root?.querySelectorAll("[data-disclosure]") ?? [])
       disclosures.set(details.dataset.disclosure, details.open);
   while (disclosures.size > 500)
     disclosures.delete(disclosures.keys().next().value);
+  saveFoldState();
 }
 /* An expanded fold is read, not just opened: scrolling its long arguments or
  * output must survive the redraw that streaming triggers. Collapsed folds are
@@ -1235,6 +1328,7 @@ function rememberFoldScroll() {
       foldScroll.set(node.dataset.scrollKey, node.scrollTop);
   while (foldScroll.size > MAX_REMEMBERED_FOLD_SCROLL)
     foldScroll.delete(foldScroll.keys().next().value);
+  saveFoldState();
 }
 function restoreFoldScroll() {
   for (const node of document.querySelectorAll("[data-scroll-key]")) {
@@ -1444,7 +1538,14 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
   }
   if (enter) animateConversationEnter(node);
   restoreFoldScroll();
-  node.scrollTop = nearBottom ? node.scrollHeight : previous;
+  const sessionId = state?.sessionId;
+  const savedTop =
+    sessionId && !restoredScrollSessions.has(sessionId)
+      ? conversationScroll.get(sessionId)
+      : undefined;
+  if (sessionId && messageRows.length) restoredScrollSessions.add(sessionId);
+  node.scrollTop =
+    savedTop != null ? savedTop : nearBottom ? node.scrollHeight : previous;
 }
 let liveFrame;
 function renderLiveConversation() {
