@@ -1,0 +1,13 @@
+DSH icon artwork in src/ui/shared/dsh-icons.mjs and workspace ancestry logic in
+src/shared/sidebar-view.mjs are adapted from DeepSeek Harness
+Copyright (c) 2026 DeepSeek, MIT license.
+Source: https://github.com/deepseek-ai/deepseek-harness
+Revision: d743267388641bc76f17c45ce8b4c231aed1d32c
+License: licenses/deepseek-harness-MIT.txt
+
+Workspace layout, glass surfaces and interaction reference: Herta renderer source
+Copyright (c) 2026 PersonaCLI, MIT license (source code only).
+Source: https://github.com/PersonaCLI/Herta
+Revision: 1cd918d00181394f189b2463a9f6cef051a03cb9
+License and excluded third-party material: licenses/herta-MIT.txt
+The Pi Desktop implementation uses no Herta character artwork, persona or audio.

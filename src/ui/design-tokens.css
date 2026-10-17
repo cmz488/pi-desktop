@@ -1,0 +1,234 @@
+/* Herta-derived day glass: mint/cyan light behind milk glass, never a flat
+ * Pi website palette. Source and MIT attribution: docs/references/herta-workspace.md. */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("fonts/CommitMono-400-Regular.otf") format("opentype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("fonts/SourceSerif4-Italic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: swap;
+}
+:root {
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Noto Sans SC",
+    "Noto Sans CJK SC", "Source Han Sans CN", sans-serif;
+  --mono: "Commit Mono", "SFMono-Regular", Consolas, monospace;
+  --pixel: "Departure Mono", var(--mono);
+  --serif: "Source Serif 4", Georgia, "Noto Serif CJK SC", serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --radius-control: 14px;
+  --radius-panel: 26px;
+  --motion-fast: 180ms;
+  --frost-filter: blur(22px) saturate(130%);
+}
+:root,
+body.chat-shell {
+  color-scheme: light;
+  --canvas: #edf5f4;
+  --panel: #fbfdfd;
+  --side: #eff6f5;
+  --text: #263638;
+  --muted: #52666b;
+  --border: #cfdddc;
+  --control-border: #7c9397;
+  --accent: #2f6970;
+  --accent-foreground: #ffffff;
+  --accent-surface: #dbece8;
+  --hover: #e3eeeb;
+  --input: #f5f9f8;
+  --glass: rgba(255, 255, 255, 0.64);
+  --glass-raised: rgba(255, 255, 255, 0.82);
+  --glass-edge: rgba(255, 255, 255, 0.88);
+  --glass-highlight: rgba(255, 255, 255, 0.96);
+  --hairline: rgba(34, 65, 67, 0.1);
+  --sidebar-glass: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.72),
+    rgba(242, 250, 246, 0.46)
+  );
+  --composer-glass: rgba(255, 255, 255, 0.74);
+  --assistant-glass: rgba(255, 255, 255, 0.72);
+  --shell-wash: rgba(247, 251, 250, 0.78);
+  --ambient:
+    radial-gradient(
+      ellipse at 12% 24%,
+      rgba(192, 246, 215, 0.98),
+      transparent 48%
+    ),
+    radial-gradient(
+      ellipse at 82% 12%,
+      rgba(165, 240, 250, 0.96),
+      transparent 52%
+    ),
+    radial-gradient(
+      ellipse at 45% 82%,
+      rgba(89, 186, 222, 0.6),
+      transparent 58%
+    ),
+    linear-gradient(135deg, #56c9df, #b4eadc 48%, #52bedc);
+  --userMessageBg: rgba(221, 236, 232, 0.76);
+  --customMessageBg: rgba(226, 242, 235, 0.76);
+  --customMessageLabel: #37685e;
+  --thinkingText: #566b70;
+  --toolPendingBg: rgba(230, 239, 238, 0.72);
+  --toolSuccessBg: #e3f0e9;
+  --toolErrorBg: #f9ece8;
+  --success: #31725c;
+  --warning: #8a641c;
+  --danger: #ae4342;
+  --code: #3b6776;
+  --button-ink: #2b3e41;
+  --button-label: #ffffff;
+  --scrim: rgba(23, 49, 52, 0.24);
+  --shadow: 0 18px 56px rgba(36, 73, 76, 0.14);
+  --panel-shadow:
+    0 12px 32px rgba(43, 77, 78, 0.07), inset 0 1px 0 var(--glass-highlight);
+  --jelly-shadow:
+    0 10px 28px rgba(46, 82, 81, 0.09), 0 2px 5px rgba(46, 82, 81, 0.035),
+    inset 0 1px 0 var(--glass-highlight);
+}
+:root[data-theme="dark"],
+body.chat-shell.dark {
+  color-scheme: dark;
+  --canvas: #131d20;
+  --panel: #233033;
+  --side: #1d292c;
+  --text: #e6f0ed;
+  --muted: #afc0c0;
+  --border: #465b5d;
+  --control-border: #7d989a;
+  --accent: #b4dcd5;
+  --accent-foreground: #17312e;
+  --accent-surface: #304b47;
+  --hover: #314543;
+  --input: #283c3d;
+  --glass: rgba(30, 46, 48, 0.66);
+  --glass-raised: rgba(43, 61, 63, 0.84);
+  --glass-edge: rgba(211, 241, 231, 0.13);
+  --glass-highlight: rgba(214, 243, 233, 0.13);
+  --hairline: rgba(214, 243, 233, 0.12);
+  --sidebar-glass: linear-gradient(
+    165deg,
+    rgba(38, 58, 58, 0.79),
+    rgba(22, 38, 41, 0.52)
+  );
+  --composer-glass: rgba(43, 63, 65, 0.83);
+  --assistant-glass: rgba(37, 53, 55, 0.82);
+  --shell-wash: rgba(13, 23, 26, 0.76);
+  --ambient:
+    radial-gradient(
+      ellipse at 12% 24%,
+      rgba(47, 126, 97, 0.78),
+      transparent 48%
+    ),
+    radial-gradient(
+      ellipse at 82% 12%,
+      rgba(33, 115, 135, 0.75),
+      transparent 52%
+    ),
+    radial-gradient(
+      ellipse at 45% 82%,
+      rgba(32, 99, 120, 0.6),
+      transparent 58%
+    ),
+    linear-gradient(135deg, #163c3c, #223d35 48%, #122e3c);
+  --userMessageBg: rgba(55, 79, 76, 0.88);
+  --customMessageBg: rgba(48, 74, 64, 0.82);
+  --customMessageLabel: #b2decb;
+  --thinkingText: #afc0c0;
+  --toolPendingBg: rgba(45, 64, 65, 0.8);
+  --toolSuccessBg: #2d473a;
+  --toolErrorBg: #503a38;
+  --success: #a0d9b9;
+  --warning: #edca8b;
+  --danger: #ffb2a9;
+  --code: #b4dcd5;
+  --button-ink: #d5ebe4;
+  --button-label: #203936;
+  --scrim: rgba(4, 15, 18, 0.56);
+  --shadow: 0 18px 56px rgba(0, 0, 0, 0.32);
+  --panel-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.13), inset 0 1px 0 var(--glass-highlight);
+  --jelly-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.19), 0 2px 5px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 var(--glass-highlight);
+}
+:root,
+body.chat-shell,
+body.chat-shell.dark {
+  --bg: var(--canvas);
+  --line: var(--border);
+  --active: var(--accent-surface);
+  --pi: var(--accent);
+  --surface: var(--panel);
+  --grid: transparent;
+  --git-added: var(--success);
+  --git-removed: var(--danger);
+}
+/* Like Herta's cached frost source: blur a STATIC background, not the entire
+ * scrolling app. Embedded renderers share the parent's backdrop instead. */
+body {
+  isolation: isolate;
+  background: var(--canvas);
+}
+body:not(.desktop-embedded)::before,
+body:not(.desktop-embedded)::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+}
+body:not(.desktop-embedded)::before {
+  z-index: -2;
+  inset: -64px;
+  background: var(--ambient);
+  filter: blur(34px) saturate(120%);
+}
+body:not(.desktop-embedded)::after {
+  z-index: -1;
+  inset: 0;
+  background: var(--shell-wash);
+}
+::selection {
+  background: var(--accent-surface);
+  color: var(--text);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  body.chat-shell,
+  body.chat-shell.dark {
+    --frost-filter: none;
+    --glass: var(--panel);
+    --glass-raised: var(--panel);
+    --sidebar-glass: var(--side);
+    --composer-glass: var(--panel);
+    --assistant-glass: var(--panel);
+    --userMessageBg: var(--hover);
+    --customMessageBg: var(--side);
+  }
+}

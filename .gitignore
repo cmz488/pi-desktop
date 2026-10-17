@@ -1,0 +1,10 @@
+node_modules/
+.reference/
+.desktop-data/
+dist/
+coverage/
+screenshots/
+.env
+.env.*
+!.env.example
+*.log

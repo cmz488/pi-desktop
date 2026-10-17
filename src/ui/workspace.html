@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Pi Desktop</title>
+    <link rel="stylesheet" href="design-tokens.css" />
+    <link rel="stylesheet" href="workspace.css" />
+  </head>
+  <body>
+    <button id="nav-backdrop" aria-label="关闭项目导航" hidden></button>
+    <aside id="workspace-nav">
+      <div class="brand">
+        <button id="home" aria-label="Pi Desktop 无项目对话">
+          <svg
+            class="pi-logo"
+            viewBox="165.29 165.29 469.43 469.43"
+            aria-hidden="true"
+          >
+            <path
+              fill="#F09082"
+              d="M165.29 165.29H517.36V400H400V282.65H165.29Z"
+            />
+            <path
+              fill="#4D9ABF"
+              d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"
+            />
+            <path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z" /></svg
+          ><strong>pi</strong><small>desktop</small></button
+        ><button
+          id="sidebar-collapse"
+          class="icon-toggle"
+          aria-label="收起侧边栏"
+          aria-controls="workspace-nav"
+          aria-expanded="true"
+        >
+          <span data-dsh-icon="sidebar"></span>
+        </button>
+      </div>
+      <button id="new-chat" class="new-chat">
+        <span data-dsh-icon="new-chat"></span> 新会话
+      </button>
+      <button id="extensions-entry" class="settings-entry" aria-pressed="false">
+        <span data-dsh-icon="extensions"></span>扩展工作台
+      </button>
+      <button id="skill-center" class="settings-entry">
+        <span data-dsh-icon="skill"></span>技能中心
+      </button>
+      <nav id="conversations" aria-label="无项目对话"></nav>
+      <div class="section-label">
+        <span>工作区</span>
+        <div class="workspace-actions">
+          <button id="search-toggle" aria-label="搜索项目和会话">
+            <span data-dsh-icon="search"></span>
+          </button>
+          <button
+            id="filter-toggle"
+            aria-label="侧边栏视图选项"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="agent-menu"
+          >
+            <span data-dsh-icon="filter"></span>
+          </button>
+          <button id="add-project" aria-label="添加项目">
+            <span data-dsh-icon="project-add"></span>
+          </button>
+        </div>
+      </div>
+      <input
+        id="workspace-search"
+        aria-label="搜索项目和会话"
+        placeholder="搜索项目和会话"
+        hidden
+      />
+      <nav id="projects" aria-label="项目和 Agents"></nav>
+      <button
+        id="settings"
+        class="settings-entry"
+        aria-label="设置"
+        aria-pressed="false"
+      >
+        <span data-dsh-icon="settings"></span> <span>设置</span>
+      </button>
+      <footer>
+        <span class="dot"></span> Pi Durable <span id="process-count"></span>
+      </footer>
+    </aside>
+    <main>
+      <header class="mobile-header">
+        <button
+          id="navigation-toggle"
+          aria-label="项目导航"
+          aria-controls="workspace-nav"
+          aria-expanded="false"
+        >
+          <span data-dsh-icon="sidebar"></span>
+        </button>
+        <div>
+          <strong id="title">项目工作空间</strong><small id="subtitle"></small>
+        </div>
+      </header>
+      <section id="offline-settings" hidden>
+        <h1>设置</h1>
+        <p>
+          启动 Pi 会话后可管理全局配置、人格、插件、Skills、MCP 和远程连接。
+        </p>
+        <button id="settings-start">启动会话</button>
+        <button id="settings-back">返回会话</button>
+      </section>
+      <section id="empty">
+        <div class="symbol">
+          <svg
+            class="pi-logo"
+            viewBox="165.29 165.29 469.43 469.43"
+            aria-hidden="true"
+          >
+            <path
+              fill="#F09082"
+              d="M165.29 165.29H517.36V400H400V282.65H165.29Z"
+            />
+            <path
+              fill="#4D9ABF"
+              d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"
+            />
+            <path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z" />
+          </svg>
+        </div>
+        <h1>从一个想法开始。</h1>
+        <p>
+          添加本地项目，创建独立
+          Agent。会话、任务和配置持久保存，切换项目时后台工作继续。
+        </p>
+        <button id="empty-add">添加项目</button
+        ><button id="empty-start" hidden>启动会话</button>
+      </section>
+      <iframe id="runtime" title="Pi Agent 工作空间" hidden></iframe>
+    </main>
+    <dialog id="editor">
+      <form id="editor-form">
+        <div class="dialog-title">
+          <h2 id="editor-title">添加项目</h2>
+          <button type="button" id="close-editor" aria-label="关闭">✕</button>
+        </div>
+        <label>名称<input name="name" required maxlength="120" /></label>
+        <label id="directory-field"
+          >项目目录
+          <div class="directory">
+            <input name="cwd" placeholder="/home/你/projects/app" /><button
+              type="button"
+              id="pick-directory"
+              hidden
+            >
+              选择
+            </button>
+          </div></label
+        >
+        <div id="personality-fields" hidden>
+          <p class="hint">
+            人格保存为独立 AGENTS.md，追加到 Pi 原生提示词和全局 AGENTS.md
+            中；在输入框上方选择人格。
+          </p>
+          <label
+            >人格提示词 · AGENTS.md<textarea
+              name="instructions"
+              rows="10"
+              placeholder="身份、交流风格和行为约定"
+            ></textarea>
+          </label>
+        </div>
+        <p id="editor-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-editor">取消</button
+          ><button type="submit" class="primary">保存</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="rename-dialog">
+      <form id="rename-form">
+        <h2>重命名会话</h2>
+        <label>名称<input name="name" required maxlength="120" /></label>
+        <p id="rename-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="rename-cancel">取消</button
+          ><button type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="remove-project-dialog"
+      aria-labelledby="remove-project-title"
+      aria-describedby="remove-project-description"
+    >
+      <form id="remove-project-form">
+        <h2 id="remove-project-title">移除工作区</h2>
+        <strong id="remove-project-name"></strong>
+        <p id="remove-project-description"></p>
+        <p id="remove-project-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="remove-project-cancel">取消</button>
+          <button type="submit" class="danger">移除工作区</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="agent-menu" role="menu" aria-label="会话管理" hidden></div>
+    <div id="notice" role="status" hidden></div>
+    <script type="module" src="workspace.js"></script>
+  </body>
+</html>

@@ -1,0 +1,1435 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="pi-desk-mode" content="demo" />
+    <title>pi · 工作空间</title>
+    <link rel="stylesheet" href="vendor/katex.css" />
+    <link rel="stylesheet" href="prototype.css" />
+    <link rel="stylesheet" href="design-tokens.css" />
+    <link rel="stylesheet" href="chat-shell.css" />
+  </head>
+  <body class="chat-shell">
+    <div class="app">
+      <div
+        class="sidebar-resize"
+        role="separator"
+        aria-label="调整左侧栏宽度"
+        aria-orientation="vertical"
+        tabindex="0"
+      ></div>
+      <button
+        class="drawer-backdrop"
+        data-action="sidebar"
+        aria-label="关闭导航"
+        hidden
+      ></button>
+      <aside class="sidebar" aria-label="工作空间导航">
+        <div class="brand">
+          <span class="pi-mark" aria-hidden="true"
+            ><svg
+              class="pi-logo"
+              viewBox="165.29 165.29 469.43 469.43"
+              aria-hidden="true"
+            >
+              <path
+                fill="#F09082"
+                d="M165.29 165.29H517.36V400H400V282.65H165.29Z"
+              />
+              <path
+                fill="#4D9ABF"
+                d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"
+              />
+              <path
+                fill="#F1BE58"
+                d="M517.36 400H634.72V634.72H517.36Z"
+              /></svg></span
+          ><strong>pi</strong><span class="brand-tag">desktop</span
+          ><button
+            class="icon-button sidebar-dismiss"
+            data-action="sidebar"
+            aria-label="关闭导航"
+          >
+            ✕
+          </button>
+        </div>
+        <button class="workspace-switch" data-action="workspace-info">
+          <span data-icon="folder"></span
+          ><span
+            ><strong id="workspace-name">pi-desktop</strong
+            ><small id="workspace-path">本地工作空间</small></span
+          ><span>⌄</span>
+        </button>
+        <button class="new-session" data-action="new-session">
+          <span data-icon="plus"></span>新建会话<kbd>⌘ N</kbd>
+        </button>
+        <nav class="main-nav">
+          <button class="active" data-view="workspace">
+            <span data-icon="chat"></span>会话</button
+          ><button data-view="extensions">
+            <span data-icon="extensions"></span>扩展工作台</button
+          ><button data-view="mcp">
+            <span data-icon="layers"></span>MCP 服务</button
+          ><button data-view="marketplace">
+            <span data-icon="plugin"></span>插件市场
+          </button>
+        </nav>
+        <div class="sidebar-section">
+          最近会话<button
+            class="icon-button"
+            data-action="refresh-sessions"
+            aria-label="刷新会话"
+          >
+            ↻
+          </button>
+        </div>
+        <div class="sessions" id="sessions"></div>
+        <div class="sidebar-bottom">
+          <button data-view="general">
+            <span data-icon="settings"></span>设置</button
+          ><button data-view="remote">
+            <span data-icon="phone"></span>远程连接
+          </button>
+          <div class="runtime-label">
+            <span class="dot"></span
+            ><span id="runtime-label">Pi 0.99.2 · 演示</span
+            ><button
+              class="icon-button"
+              data-action="theme"
+              aria-label="切换明暗主题"
+            >
+              <span data-icon="sun"></span>
+            </button>
+          </div>
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <button
+            class="icon-button"
+            data-action="sidebar"
+            aria-label="切换导航"
+          >
+            <span data-icon="sidebar"></span>
+          </button>
+          <button
+            class="icon-button settings-back"
+            data-view="workspace"
+            aria-label="返回会话"
+            hidden
+          >
+            ←
+          </button>
+          <div class="breadcrumb">
+            <span id="page-label">会话</span><span class="slash">/</span
+            ><strong id="session-title">搭建 pi 工作空间</strong>
+          </div>
+          <nav class="workspace-view-switch" aria-label="会话工作区">
+            <button
+              type="button"
+              data-view="workspace"
+              data-workspace-view="workspace"
+              aria-pressed="true"
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              data-view="extensions"
+              data-workspace-view="extensions"
+              aria-pressed="false"
+            >
+              扩展<span
+                id="extension-page-count"
+                class="extension-count"
+                aria-hidden="true"
+                hidden
+              ></span>
+            </button>
+          </nav>
+          <div class="top-actions">
+            <button
+              type="button"
+              class="icon-button"
+              id="agent-config-button"
+              data-action="agent-config"
+              aria-label="配置 Agent 目录、工具和运行环境"
+              hidden
+            >
+              <span data-icon="settings"></span>
+            </button>
+            <button
+              type="button"
+              class="icon-button right-pane-trigger"
+              data-action="workspace-tools"
+              aria-controls="workspace-right"
+              aria-expanded="true"
+              aria-label="隐藏右侧栏"
+            >
+              <span data-icon="sidebar"></span>
+            </button>
+            <span id="connection-status" role="status" aria-live="polite"
+              >交互演示</span
+            >
+          </div>
+        </header>
+        <section id="view-workspace" class="view workspace-view">
+          <div class="conversation">
+            <div
+              id="native-history-toolbar"
+              class="native-history-toolbar"
+              hidden
+            >
+              <span id="native-history-label"></span>
+              <button id="native-history-older" type="button" hidden>
+                加载较早消息
+              </button>
+              <button id="native-history-resume" type="button">
+                在 Desktop 中继续
+              </button>
+            </div>
+            <div class="messages" id="messages"></div>
+            <div class="composer-wrap">
+              <section
+                id="ask-user"
+                class="ask-user"
+                aria-label="Ask User"
+                hidden
+              ></section>
+              <div
+                id="desktop-composer-context"
+                class="composer-context"
+                hidden
+              >
+                <label class="context-selector"
+                  ><span data-dsh-icon="folder"></span
+                  ><select id="composer-project" aria-label="选择项目"></select
+                  ><span data-dsh-icon="chevron"></span
+                ></label>
+                <label class="context-selector"
+                  ><span data-dsh-icon="branch"></span
+                  ><select
+                    id="composer-system-prompt"
+                    aria-label="系统提示词"
+                  ></select
+                  ><span data-dsh-icon="chevron"></span
+                ></label>
+              </div>
+              <form id="composer" class="composer">
+                <div id="command-menu" class="command-menu" hidden>
+                  <div class="command-menu-head">
+                    <strong>Pi 命令与技能</strong
+                    ><span>↑ ↓ 选择 · Tab / Enter 填入</span>
+                  </div>
+                  <div
+                    id="command-options"
+                    role="listbox"
+                    aria-label="Pi 命令与技能"
+                  ></div>
+                  <div class="command-menu-foot">
+                    Esc 关闭 · 技能与模板将交由 pi 展开
+                  </div>
+                </div>
+                <div
+                  id="context-attachments"
+                  class="context-attachments"
+                  aria-label="已选上下文附件"
+                  hidden
+                ></div>
+                <input
+                  id="context-files"
+                  type="file"
+                  multiple
+                  hidden
+                  accept="text/*,.md,.json,.yaml,.yml,.toml,.xml,.csv,.log,.ts,.tsx,.js,.jsx,.py,.rs,.c,.h,.cpp,.java,.sh,.txt,.svg,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+                />
+                <textarea
+                  id="prompt"
+                  rows="2"
+                  aria-label="发送给 pi 的消息"
+                  placeholder="描述你想要构建的内容"
+                  aria-autocomplete="list"
+                  aria-controls="command-options"
+                  aria-expanded="false"
+                ></textarea>
+                <div class="composer-toolbar">
+                  <label
+                    id="composer-permission"
+                    class="context-selector"
+                    hidden
+                    ><span data-dsh-icon="shield"></span
+                    ><select id="composer-approval" aria-label="Agent 权限等级">
+                      <option value="ask-all">全部请求确认</option>
+                      <option value="ask-risky">高风险请求确认</option>
+                      <option value="yolo">YOLO</option></select
+                    ><span data-dsh-icon="chevron"></span
+                  ></label>
+                  <div id="model-controls" class="model-controls">
+                    <button
+                      type="button"
+                      class="model-button composer-control"
+                      data-action="model"
+                    >
+                      <span data-icon="layers"></span
+                      ><span id="selected-model">选择模型</span><span>⌄</span>
+                    </button>
+                    <div class="thinking-picker">
+                      <button
+                        type="button"
+                        id="thinking-level"
+                        class="composer-control"
+                        aria-label="思考强度"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        中等思考 ⌄
+                      </button>
+                      <div
+                        id="thinking-menu"
+                        role="menu"
+                        aria-label="思考强度"
+                        hidden
+                      ></div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    id="attach-context"
+                    disabled
+                    class="composer-control context-add"
+                    aria-label="添加上下文"
+                    title="添加上下文"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    id="analysis-control"
+                    class="composer-control analysis-control"
+                    aria-label="选择模型和思考强度"
+                    aria-haspopup="menu"
+                    aria-controls="composer-model-popover"
+                    aria-expanded="false"
+                    hidden
+                  >
+                    <span class="model-trigger-label">选择模型</span
+                    ><span class="model-trigger-effort"></span
+                    ><span data-dsh-icon="chevron"></span>
+                  </button>
+                  <span class="composer-spacer"></span
+                  ><button
+                    type="button"
+                    class="icon-button composer-control"
+                    id="stop-button"
+                    data-action="stop"
+                    aria-label="停止任务"
+                    hidden
+                  >
+                    ■</button
+                  ><button
+                    type="submit"
+                    class="send-button"
+                    id="send-button"
+                    aria-label="发送消息"
+                  >
+                    <span data-icon="arrow"></span>
+                  </button>
+                </div>
+              </form>
+              <div class="composer-note">
+                <div class="session-metrics" aria-label="Pi 会话状态">
+                  <div class="metrics-primary">
+                    <span id="run-status"><span class="dot"></span>就绪</span>
+                    <button
+                      type="button"
+                      class="context-metric stat-pill"
+                      data-usage-details
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                    >
+                      <span id="context-usage" title="当前上下文占用"
+                        >上下文 —</span
+                      ><span id="context-detail">—</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="stat-pill"
+                      data-usage-details
+                      id="token-total"
+                      title="当前会话累计 Token"
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                    >
+                      Token —
+                    </button>
+                  </div>
+                  <div class="metrics-secondary">
+                    <span id="token-cost" title="会话累计费用（模型及工具报告）"
+                      >$—</span
+                    >
+                    <button
+                      type="button"
+                      class="stat-pill"
+                      data-usage-details
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                      id="cache-hit"
+                      title="缓存读取 /（未缓存输入 + 缓存读取 + 缓存写入）"
+                    >
+                      缓存 —
+                    </button>
+                    <select
+                      id="send-mode"
+                      aria-label="运行中消息处理"
+                      title="引导：运行中立即补充；排队：完成后继续"
+                    >
+                      <option value="steer">引导输入</option>
+                      <option value="follow_up">排队输入</option>
+                    </select>
+                  </div>
+                </div>
+                <div
+                  id="usage-details"
+                  role="dialog"
+                  aria-label="会话用量详情"
+                  hidden
+                  tabindex="-1"
+                >
+                  <div class="usage-heading">
+                    <strong>会话用量</strong
+                    ><button
+                      type="button"
+                      id="usage-close"
+                      aria-label="关闭用量详情"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p id="usage-context-note"></p>
+                  <dl id="usage-breakdown"></dl>
+                  <p class="usage-footnote">
+                    Token
+                    和费用累计记录本会话的模型请求，包含上下文压缩。缓存命中率按输入侧
+                    Token 计算。
+                  </p>
+                </div>
+                <span id="extension-status" hidden></span
+                ><span id="cost-usage" hidden></span>
+              </div>
+            </div>
+          </div>
+          <aside
+            id="extension-rail"
+            class="extension-rail"
+            aria-label="当前会话的扩展卡片"
+            hidden
+          >
+            <header class="extension-rail-head">
+              <span class="extension-rail-title">扩展</span>
+              <span
+                id="extension-rail-count"
+                class="extension-rail-count"
+              ></span>
+            </header>
+            <div id="extension-rail-list" class="extension-rail-list"></div>
+            <button
+              type="button"
+              class="extension-rail-open"
+              data-go="extensions"
+            >
+              打开扩展工作台
+            </button>
+          </aside>
+          <aside
+            id="workspace-right"
+            class="workspace-right"
+            aria-label="工作区审查与 Git 工具"
+          >
+            <div
+              class="preview-resize"
+              role="separator"
+              aria-label="调整右侧栏宽度"
+              tabindex="0"
+            ></div>
+            <header class="right-tabs">
+              <button
+                type="button"
+                class="icon-button"
+                data-action="hide-right-sidebar"
+                aria-label="隐藏整个右侧栏"
+                title="隐藏整个右侧栏；可从顶部恢复"
+              >
+                <span data-icon="sidebar"></span>
+              </button>
+              <div role="tablist" aria-label="工作区面板">
+                <button
+                  role="tab"
+                  data-right-view="review"
+                  aria-selected="false"
+                >
+                  审查</button
+                ><button
+                  role="tab"
+                  data-right-view="tools"
+                  aria-selected="false"
+                >
+                  工具输出</button
+                ><button
+                  role="tab"
+                  data-right-view="commit"
+                  aria-selected="false"
+                >
+                  提交</button
+                ><button
+                  role="tab"
+                  data-right-view="history"
+                  aria-selected="false"
+                >
+                  历史</button
+                ><button
+                  role="tab"
+                  data-right-view="manage"
+                  aria-selected="false"
+                >
+                  管理
+                </button>
+              </div>
+              <button
+                class="icon-button"
+                data-action="close-right-view"
+                aria-label="关闭当前侧栏页签"
+                hidden
+              >
+                ×
+              </button>
+            </header>
+            <div class="right-placeholder">
+              <span data-icon="folder"></span><strong>工作区审查</strong>
+              <p>展开 Git 变更查看差异，或从消息中查看工具输出。</p>
+            </div>
+            <section
+              id="git-review-pane"
+              class="git-review-pane"
+              hidden
+              aria-label="Git 变更审查"
+            >
+              <div class="git-review-toolbar">
+                <select id="git-source" aria-label="变更来源">
+                  <option value="unstaged">未暂存</option>
+                  <option value="staged">已暂存</option></select
+                ><button class="text-button" data-git-action="refresh">
+                  ↻ 刷新
+                </button>
+              </div>
+              <p id="git-review-notice" class="muted" role="status" hidden></p>
+              <div id="git-files"></div>
+              <section id="git-diagnostics" class="git-diagnostics" hidden>
+                <div class="diagnostics-head">
+                  <strong>本地 LSP 诊断</strong
+                  ><button
+                    type="button"
+                    class="text-button"
+                    data-git-action="analyze"
+                  >
+                    分析当前文件
+                  </button>
+                </div>
+                <p id="git-diagnostics-note" class="muted"></p>
+                <div id="git-diagnostics-list"></div>
+              </section>
+              <pre
+                id="git-output"
+                hidden
+                tabindex="0"
+                aria-label="Git 命令结果"
+              ></pre>
+            </section>
+            <section
+              id="git-history-pane"
+              class="git-history-pane"
+              hidden
+              aria-label="Git 提交历史"
+            >
+              <header>
+                <h3>图表</h3>
+                <select id="git-history-scope" aria-label="Git 图表范围">
+                  <option value="current">自动 · 当前 HEAD</option>
+                  <option value="all">全部分支与标签</option>
+                </select>
+                <button type="button" class="text-button" data-git-action="log">
+                  刷新历史
+                </button>
+              </header>
+              <div id="git-history-list"></div>
+              <nav class="git-history-pages" aria-label="提交历史分页">
+                <button
+                  type="button"
+                  class="text-button"
+                  data-git-action="history-prev"
+                >
+                  上一页</button
+                ><span id="git-history-page" class="muted"></span
+                ><button
+                  type="button"
+                  class="text-button"
+                  data-git-action="history-next"
+                >
+                  下一页
+                </button>
+              </nav>
+              <pre
+                id="git-history-detail"
+                tabindex="0"
+                aria-label="提交详情和补丁"
+                hidden
+              ></pre>
+            </section>
+            <section
+              id="git-manage-pane"
+              class="git-manage-pane"
+              hidden
+              aria-label="Git 分支、合并、回退与标签"
+            >
+              <h3>Git 管理</h3>
+              <p id="git-manage-notice" class="muted"></p>
+              <pre
+                id="git-manage-output"
+                tabindex="0"
+                aria-label="Git 管理操作结果"
+                hidden
+              ></pre>
+              <label class="field-label"
+                >操作<select id="git-manage-action">
+                  <option value="merge">merge · 正常合并</option>
+                  <option value="checkout">checkout · 分支或提交</option>
+                  <option value="reset">reset · 保留工作树</option>
+                  <option value="tag">tag · 本地标签</option>
+                </select></label
+              ><label class="field-label"
+                >目标分支 / tag / 提交 SHA<input
+                  id="git-ref"
+                  value="HEAD"
+                  maxlength="1024"
+                  autocomplete="off" /></label
+              ><label class="field-label" data-git-field="checkout"
+                >Checkout 模式<select id="git-checkout-mode">
+                  <option value="auto">已有分支或提交</option>
+                  <option value="create">创建新分支</option>
+                  <option value="detach">detached HEAD</option>
+                </select></label
+              ><label class="field-label" data-git-field="reset"
+                >Reset 模式<select id="git-reset-mode">
+                  <option value="soft">soft · 保留索引和工作树</option>
+                  <option value="mixed">mixed · 取消暂存、保留工作树</option>
+                </select></label
+              ><label class="field-label" data-git-field="tag"
+                >Tag 操作<select id="git-tag-operation">
+                  <option value="create">创建</option>
+                  <option value="delete">删除本地 tag</option>
+                </select></label
+              ><label class="field-label" id="git-name-field" hidden
+                >新分支 / tag 名称<input
+                  id="git-new-name"
+                  maxlength="1024"
+                  autocomplete="off" /></label
+              ><label class="field-label" data-git-field="tag"
+                >创建 tag 的注释（可选）<textarea
+                  id="git-tag-message"
+                  maxlength="8192"
+                  rows="3"
+                ></textarea>
+              </label>
+              <p class="muted">
+                不支持 hard、文件恢复、强制切换或覆盖 tag。提交 SHA
+                可从历史详情复制；写入前仍须确认。
+              </p>
+              <div data-git-field="tag">
+                <strong>本地 tag</strong>
+                <div id="git-tag-list"></div>
+              </div>
+              <button
+                type="button"
+                class="primary-button"
+                data-git-action="manage"
+              >
+                预览操作
+              </button>
+            </section>
+            <section
+              id="git-commit-pane"
+              class="git-commit-pane"
+              hidden
+              aria-label="提交与推送"
+            >
+              <h3>提交已暂存变更</h3>
+              <p id="git-commit-summary" class="muted">不会自动暂存文件</p>
+              <label class="field-label"
+                >提交说明<textarea
+                  id="git-message"
+                  maxlength="8192"
+                  rows="5"
+                  placeholder="描述这次变更"
+                ></textarea></label
+              ><button
+                type="button"
+                class="primary-button"
+                data-git-action="commit"
+              >
+                预览提交
+              </button>
+              <p class="muted">提交和推送分别确认；不会自动加入未暂存文件。</p>
+              <button
+                type="button"
+                class="outline-button"
+                data-git-action="push"
+              >
+                预览推送
+              </button>
+            </section>
+            <section class="preview-panel" id="preview-panel" hidden>
+              <header>
+                <strong id="preview-title">工具输出</strong
+                ><button
+                  class="icon-button"
+                  data-action="close-preview"
+                  aria-label="关闭预览"
+                >
+                  ✕
+                </button>
+              </header>
+              <pre id="preview-content"></pre>
+            </section>
+            <section
+              id="git-tool-card"
+              class="git-tool-card"
+              aria-label="Git 工具"
+            >
+              <header>
+                <span>Git 工具</span>
+                <div>
+                  <details class="git-more">
+                    <summary aria-label="更多 Git 操作">···</summary>
+                    <div class="git-more-menu">
+                      <button type="button" data-git-action="refresh">
+                        刷新 Git 状态</button
+                      ><button type="button" data-git-action="log">
+                        提交历史</button
+                      ><label
+                        >远端<select
+                          id="git-remote-select"
+                          aria-label="已配置远端"
+                        ></select></label
+                      ><button type="button" data-git-action="fetch">
+                        Fetch</button
+                      ><button type="button" data-git-action="pull">
+                        Pull（仅快进）</button
+                      ><button type="button" data-git-action="push">
+                        Push
+                      </button>
+                    </div>
+                  </details>
+                  <button
+                    type="button"
+                    class="icon-button"
+                    data-action="git-review"
+                    aria-label="展开 Git 审查"
+                  >
+                    ↗
+                  </button>
+                </div>
+              </header>
+              <button
+                type="button"
+                class="git-card-row"
+                data-action="git-review"
+              >
+                <span>▧</span><span>变更</span><span id="git-card-count"></span
+                ><span id="git-card-stats"
+                  ><span class="git-added">+—</span
+                  ><span class="git-removed">−—</span></span
+                >
+              </button>
+              <div class="git-card-row git-branch-row">
+                <span>⑂</span>
+                <details class="git-branch-menu">
+                  <summary>
+                    <span id="git-branch">分支 —</span><span>⌄</span>
+                  </summary>
+                  <div>
+                    <select
+                      id="git-branch-select"
+                      aria-label="本地分支"
+                    ></select
+                    ><button
+                      type="button"
+                      class="outline-button"
+                      data-git-action="switch"
+                    >
+                      预览切换
+                    </button>
+                  </div>
+                </details>
+              </div>
+              <button
+                type="button"
+                class="git-card-row"
+                data-action="git-commit"
+              >
+                <span>⌁</span><span>提交或推送</span>
+              </button>
+              <p id="git-status" class="git-card-status" role="status"></p>
+              <p id="git-notice" class="git-card-note" role="status" hidden></p>
+              <span id="git-root" hidden></span>
+            </section>
+          </aside>
+        </section>
+        <section
+          id="view-extensions"
+          class="extension-workbench"
+          aria-label="扩展工作台"
+          hidden
+        >
+          <header class="extension-workbench-header">
+            <div>
+              <h1>扩展工作台</h1>
+              <p>当前会话的扩展页面，在这里展开。</p>
+            </div>
+            <button type="button" class="outline-button" data-view="workspace">
+              返回会话
+            </button>
+          </header>
+          <div class="extension-workbench-empty">
+            <span class="extension-empty-mark" data-icon="extensions"></span>
+            <h2>此会话还没有扩展页面</h2>
+            <p>
+              此会话还没有扩展页面。支持 Desktop
+              卡片的插件会在这里显示，状态仍由 Pi 扩展管理。
+            </p>
+            <button type="button" class="outline-button" data-view="plugins">
+              管理扩展
+            </button>
+            <small>终端专用 TUI 控件不会自动转换为网页。</small>
+          </div>
+          <div class="extension-workbench-layout" hidden>
+            <nav
+              class="extension-page-list"
+              aria-label="当前会话的扩展页面"
+            ></nav>
+            <section
+              class="extension-page-detail"
+              aria-label="扩展页面详情"
+              tabindex="0"
+            ></section>
+          </div>
+        </section>
+        <section class="settings-shell" id="settings-shell" hidden>
+          <nav class="settings-nav" aria-label="设置分类">
+            <h2>
+              <span class="pi-mark"
+                ><svg
+                  class="pi-logo"
+                  viewBox="165.29 165.29 469.43 469.43"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#F09082"
+                    d="M165.29 165.29H517.36V400H400V282.65H165.29Z"
+                  />
+                  <path
+                    fill="#4D9ABF"
+                    d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"
+                  />
+                  <path
+                    fill="#F1BE58"
+                    d="M517.36 400H634.72V634.72H517.36Z"
+                  /></svg
+              ></span>
+              设置
+            </h2>
+            <button data-view="general">
+              <span data-icon="settings"></span>Pi 配置</button
+            ><button data-view="personality" class="desktop-personality" hidden>
+              <span data-icon="commands"></span>人格与提示词</button
+            ><button data-view="providers">
+              <span data-icon="layers"></span>模型提供商</button
+            ><button data-view="plugins">
+              <span data-icon="plugin"></span>已安装插件</button
+            ><button data-view="skills">
+              <span data-icon="commands"></span>技能与模板</button
+            ><button data-view="mcp">
+              <span data-icon="layers"></span>MCP 服务</button
+            ><button data-view="marketplace">
+              <span data-icon="search"></span>插件市场</button
+            ><button data-view="appearance">
+              <span data-icon="sun"></span>外观</button
+            ><button data-view="remote">
+              <span data-icon="phone"></span>远程连接
+            </button>
+            <div class="settings-version">
+              pi extension<br /><span id="settings-version">v0.4.0</span>
+            </div>
+          </nav>
+          <div class="settings-content">
+            <section id="view-personality" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>人格与提示词</h1>
+                  <p>使用 AGENTS.md 定义 Pi 的身份、交流风格和行为约定。</p>
+                </div>
+                <button class="outline-button" data-action="add-personality">
+                  添加人格
+                </button>
+              </div>
+              <form id="personality-form" class="settings-card">
+                <h2>全局人格</h2>
+                <p class="muted">
+                  应用到所有项目和无项目会话；选定的人格在其基础上追加。
+                </p>
+                <p id="personality-file" class="config-location"></p>
+                <label class="field-label"
+                  >AGENTS.md<textarea
+                    id="personality-content"
+                    rows="12"
+                    spellcheck="false"
+                    placeholder="例如：你是一位严谨、直接的工程师，使用中文交流……"
+                  ></textarea>
+                </label>
+                <p id="personality-status" role="status"></p>
+                <div class="page-head-actions">
+                  <button type="button" data-action="refresh-personality">
+                    重新读取</button
+                  ><button type="submit" class="primary" id="save-personality">
+                    保存并应用
+                  </button>
+                </div>
+              </form>
+              <h2>可选人格</h2>
+              <div id="personality-profiles"></div>
+            </section>
+            <section id="view-general" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>Pi 配置</h1>
+                  <p>管理 pi 的模型行为、工具、资源和终端设置。</p>
+                </div>
+                <select id="settings-scope" aria-label="配置范围">
+                  <option value="global">用户配置</option>
+                  <option value="project">当前项目</option>
+                </select>
+              </div>
+              <div class="notice" id="project-trust-notice" hidden>
+                项目扩展与配置尚未信任。<button
+                  type="button"
+                  data-action="trust-project"
+                >
+                  信任当前项目
+                </button>
+              </div>
+              <div class="config-location" id="config-location">
+                ~/.pi/agent/settings.json
+              </div>
+              <div class="notice" id="settings-pending" hidden>
+                配置已保存。<button data-action="reload">重载并应用</button
+                ><span id="settings-pending-note"
+                  >网络代理、存储路径等启动项需重启服务。</span
+                >
+              </div>
+              <label class="search-box settings-search"
+                ><span data-icon="search"></span
+                ><input
+                  id="settings-search"
+                  placeholder="搜索 Pi 配置"
+                  aria-label="搜索 Pi 配置"
+              /></label>
+              <div
+                id="settings-categories"
+                class="settings-categories"
+                role="tablist"
+                aria-label="Pi 配置分类"
+              ></div>
+              <form id="settings-form">
+                <div id="settings-groups"></div>
+                <div class="settings-save">
+                  <span id="draft-label">没有未保存的修改</span
+                  ><button
+                    type="button"
+                    class="outline-button"
+                    data-action="discard-settings"
+                  >
+                    放弃修改</button
+                  ><button
+                    type="submit"
+                    class="primary-button"
+                    id="save-settings"
+                    disabled
+                  >
+                    保存修改
+                  </button>
+                </div>
+              </form>
+            </section>
+            <section id="view-providers" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>模型提供商</h1>
+                  <p>配置端点与模型，使用 pi 原生认证管理密钥和账号。</p>
+                </div>
+                <button class="primary-button" data-action="add-provider">
+                  ＋ 添加提供商
+                </button>
+              </div>
+              <div class="filter-row">
+                <label class="search-box"
+                  ><span data-icon="search"></span
+                  ><input
+                    id="provider-search"
+                    placeholder="搜索提供商或模型"
+                    aria-label="搜索提供商" /></label
+                ><button class="outline-button" data-action="refresh-models">
+                  刷新模型
+                </button>
+              </div>
+              <div class="config-location" id="default-model-label">
+                默认模型：由 pi 自动选择
+              </div>
+              <div id="provider-list" class="provider-list"></div>
+            </section>
+            <section id="view-skills" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>技能与提示模板</h1>
+                  <p>
+                    管理 pi
+                    发现的技能。停用后重载，将同时从命令菜单和模型可用技能中移除。
+                  </p>
+                </div>
+                <button class="outline-button" data-action="reload">
+                  重载资源
+                </button>
+              </div>
+              <label class="search-box settings-search"
+                ><span data-icon="search"></span
+                ><input
+                  id="skill-search"
+                  placeholder="搜索技能或提示模板"
+                  aria-label="搜索技能与模板"
+              /></label>
+              <div id="skill-list"></div>
+              <div class="settings-card">
+                <h2>管理加载路径</h2>
+                <p class="muted">
+                  用户资源来自 pi agent 目录，项目资源来自
+                  .pi。额外路径和过滤规则由原生配置管理。
+                </p>
+                <button class="outline-button" data-action="resource-settings">
+                  配置技能与模板路径
+                </button>
+              </div>
+            </section>
+            <section id="view-mcp" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>MCP 服务</h1>
+                  <p>使用 Pi 原生客户端连接工具与资源。</p>
+                </div>
+                <button class="primary-button" data-action="add-mcp">
+                  ＋ 添加服务
+                </button>
+              </div>
+              <div class="notice" id="mcp-pending" hidden>
+                配置已保存，重载后连接服务。<button data-action="reload">
+                  重载资源
+                </button>
+              </div>
+              <div class="settings-toolbar">
+                <label class="search-box"
+                  ><span data-icon="search"></span
+                  ><input
+                    id="mcp-search"
+                    placeholder="搜索 MCP 服务"
+                    aria-label="搜索 MCP 服务" /></label
+                ><button class="outline-button" data-mcp-action="status">
+                  连接状态
+                </button>
+              </div>
+              <div id="mcp-list" class="provider-list"></div>
+              <p class="muted">
+                用户配置写入 agent/mcp.json；受信任项目写入 .pi/mcp.json。认证由
+                Pi 管理。
+              </p>
+            </section>
+            <section id="view-appearance" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>外观</h1>
+                  <p>使用 pi.dev 的配色、Pi 标志与明暗主题。</p>
+                </div>
+              </div>
+              <section class="settings-card">
+                <h2>界面</h2>
+                <div class="setting-row">
+                  <label for="web-theme" class="setting-label"
+                    >主题<small
+                      >保存在当前浏览器，独立于 pi 终端主题。</small
+                    ></label
+                  ><select id="web-theme">
+                    <option value="system">跟随系统</option>
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <label for="web-font-size" class="setting-label"
+                    >界面字号<small
+                      >调整界面与对话字号；Ctrl+= 放大，Ctrl+- 缩小，Ctrl+0
+                      重置。</small
+                    ></label
+                  ><select id="web-font-size">
+                    <option value="12">紧凑 · 12 px</option>
+                    <option value="13">小字 · 13 px</option>
+                    <option value="14">默认 · 14 px</option>
+                    <option value="15">舒适 · 15 px</option>
+                    <option value="16">大字 · 16 px</option>
+                    <option value="17">17 px</option>
+                    <option value="18">18 px</option>
+                    <option value="19">19 px</option>
+                    <option value="20">20 px</option>
+                    <option value="21">21 px</option>
+                    <option value="22">22 px</option>
+                    <option value="23">23 px</option>
+                    <option value="24">超大 · 24 px</option>
+                  </select>
+                </div>
+              </section>
+              <div class="settings-card">
+                <h2>Pi 终端外观</h2>
+                <p class="muted">
+                  终端主题、思考内容、工具输出等由原生 pi 配置管理。
+                </p>
+                <button class="outline-button" data-action="display-settings">
+                  打开显示配置
+                </button>
+              </div>
+            </section>
+            <section id="view-plugins" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>插件管理器</h1>
+                  <p>
+                    安装、更新、启用、停用与卸载 Pi
+                    插件。配置修改后点击「重载并应用」。
+                  </p>
+                </div>
+                <div class="page-head-actions">
+                  <button
+                    class="outline-button desktop-update-all"
+                    data-action="update-all-extensions"
+                    hidden
+                  >
+                    全量更新
+                  </button>
+                  <button
+                    class="outline-button"
+                    data-action="check-package-updates"
+                  >
+                    检查更新
+                  </button>
+                  <button class="outline-button" data-action="install-source">
+                    从来源安装
+                  </button>
+                </div>
+              </div>
+              <p id="plugin-permissions" class="config-location" hidden>
+                此处管理用户插件。无项目会话只开放读取与网页工具；第三方扩展在项目
+                Agent 中启用并重载后运行。
+              </p>
+              <div
+                id="package-update-status"
+                class="config-location"
+                role="status"
+              ></div>
+              <div class="filter-row">
+                <div class="segmented" id="plugin-filter">
+                  <button class="selected" data-filter="all">
+                    全部 <span>0</span></button
+                  ><button data-filter="enabled">已启用</button
+                  ><button data-filter="pending">待重载</button
+                  ><button data-filter="updates">可更新 <span>0</span></button>
+                </div>
+                <label class="search-box"
+                  ><span data-icon="search"></span
+                  ><input
+                    id="plugin-search"
+                    placeholder="搜索插件"
+                    aria-label="搜索插件"
+                /></label>
+              </div>
+              <div class="notice" id="reload-notice" hidden>
+                <span id="pending-label"></span
+                ><button data-action="reload">重载并应用</button>
+              </div>
+              <div id="plugin-grid" class="plugin-grid"></div>
+            </section>
+            <section id="view-marketplace" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>插件市场</h1>
+                  <p>
+                    读取 pi.dev 官方目录；包内容由作者提供，不代表官方安全审核。
+                  </p>
+                </div>
+                <div class="page-head-actions">
+                  <button class="outline-button" data-action="refresh-market">
+                    刷新目录
+                  </button>
+                  <button class="outline-button" data-action="install-source">
+                    从来源安装
+                  </button>
+                </div>
+              </div>
+              <form id="market-search-form" class="filter-row">
+                <label class="search-box"
+                  ><span data-icon="search"></span
+                  ><input
+                    id="market-search"
+                    placeholder="搜索插件、技能、主题"
+                    aria-label="搜索市场"
+                /></label>
+                <label class="market-select"
+                  >官方类型<select id="market-type" aria-label="按官方类型筛选">
+                    <option value="">全部类型</option>
+                    <option value="extension">extension</option>
+                    <option value="skill">skill</option>
+                    <option value="theme">theme</option>
+                    <option value="prompt">prompt</option>
+                  </select></label
+                >
+                <label class="market-select"
+                  >官方排序<select id="market-sort" aria-label="按官方指标排序">
+                    <option value="downloads">月下载量 ↓</option>
+                    <option value="recent">最近发布</option>
+                    <option value="name">名称 A–Z</option>
+                  </select></label
+                >
+                <button class="primary-button" type="submit">搜索</button
+                ><a
+                  href="https://pi.dev/packages"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Pi 官方目录 ↗</a
+                >
+              </form>
+              <p class="muted market-note">
+                当前官方类型没有独立 MCP 分类。<button
+                  type="button"
+                  class="link-button"
+                  data-action="search-market-mcp"
+                >
+                  搜索 MCP 关键词
+                </button>
+              </p>
+              <div id="market-status" class="config-location" role="status">
+                数据来源：pi.dev 官方目录
+              </div>
+              <div id="market-grid" class="plugin-grid"></div>
+              <nav
+                id="market-pages"
+                class="market-pages"
+                aria-label="官方目录分页"
+              ></nav>
+            </section>
+            <section id="view-remote" class="view settings-view" hidden>
+              <div class="page-head">
+                <div>
+                  <h1>连接手机</h1>
+                  <p>开启远程连接，手机扫码继续同一个工作空间。</p>
+                </div>
+                <span class="tag" id="network-status">局域网共享</span>
+              </div>
+              <div class="settings-card connection-card">
+                <div class="connection-visual">
+                  <div id="connection-qr"></div>
+                </div>
+                <div class="connection-details">
+                  <h2 id="connection-title">手机扫码连接</h2>
+                  <p class="muted" id="connection-description">
+                    使用 Tailscale
+                    Funnel，手机无需安装应用，也不必与电脑连接同一网络。
+                  </p>
+                  <p id="connection-error" role="alert" hidden></p>
+                  <a
+                    id="connection-setup"
+                    target="_blank"
+                    rel="noreferrer"
+                    hidden
+                    >电脑首次设置 Tailscale</a
+                  >
+                  <a
+                    id="connection-approval"
+                    target="_blank"
+                    rel="noreferrer"
+                    hidden
+                    >完成 Tailscale 授权</a
+                  >
+                  <a
+                    id="connection-url"
+                    class="connection-url"
+                    target="_blank"
+                    rel="noreferrer"
+                  ></a>
+                  <div
+                    id="connection-addresses"
+                    class="connection-addresses"
+                  ></div>
+                  <div class="connection-foot">
+                    <span id="connection-port"></span
+                    ><button
+                      class="outline-button"
+                      data-action="refresh-connection"
+                    >
+                      刷新地址
+                    </button>
+                  </div>
+                  <div class="connection-actions" id="connection-actions">
+                    <button
+                      class="primary-button"
+                      data-action="start-remote"
+                      id="start-remote"
+                    >
+                      开启远程连接
+                    </button>
+                    <button
+                      class="outline-button"
+                      data-action="stop-remote"
+                      id="stop-remote"
+                      hidden
+                    >
+                      停止共享
+                    </button>
+                    <button
+                      class="outline-button"
+                      data-action="rotate-remote"
+                      id="rotate-remote"
+                      hidden
+                    >
+                      撤销连接并更新二维码
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="btw-dialog" class="btw-dialog" aria-labelledby="btw-title">
+      <div class="btw-head">
+        <div>
+          <span class="btw-eyebrow">PI · SIDE THREAD</span>
+          <h2 id="btw-title">侧问答</h2>
+        </div>
+        <div class="btw-head-actions">
+          <button type="button" class="outline-button" id="btw-new">
+            新建
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+            id="btw-back"
+            aria-label="返回侧问答列表"
+            hidden
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+            id="btw-close"
+            aria-label="关闭侧问答"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <p class="btw-subtitle">侧问答与主会话隔离 · 新建时读取当前会话上下文</p>
+      <div id="btw-content" class="btw-content"></div>
+      <form id="btw-composer" class="btw-composer" hidden>
+        <textarea
+          id="btw-question"
+          rows="2"
+          maxlength="10000"
+          placeholder="继续追问…"
+        ></textarea>
+        <div class="btw-composer-footer">
+          <span id="btw-model-label"></span>
+          <button type="button" class="outline-button" id="btw-cancel" hidden>
+            停止
+          </button>
+          <button type="submit" class="primary-button" id="btw-send">
+            提问
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <h2 id="dialog-title"></h2>
+        <button
+          class="icon-button"
+          data-action="close-dialog"
+          aria-label="关闭弹窗"
+        >
+          ✕
+        </button>
+      </div>
+      <form id="dialog-form">
+        <div id="dialog-body"></div>
+        <div class="dialog-actions">
+          <button
+            type="button"
+            class="outline-button"
+            data-action="close-dialog"
+          >
+            取消</button
+          ><button type="submit" class="primary-button" id="dialog-submit">
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="interaction-dialog">
+      <div class="dialog-head">
+        <h2 id="interaction-title">Pi 请求</h2>
+        <button
+          type="button"
+          class="icon-button"
+          data-action="cancel-interaction"
+          aria-label="取消交互"
+        >
+          ✕
+        </button>
+      </div>
+      <form id="interaction-form">
+        <div id="interaction-body"></div>
+        <div class="dialog-actions">
+          <button
+            type="button"
+            class="outline-button"
+            data-action="cancel-interaction"
+          >
+            取消</button
+          ><button class="primary-button" type="submit" id="interaction-submit">
+            继续
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="prototype.js"></script>
+  </body>
+</html>

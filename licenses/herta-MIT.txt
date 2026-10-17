@@ -1,0 +1,54 @@
+MIT License
+
+Copyright (c) 2026 PersonaCLI
+
+SCOPE — please read before reusing anything from this repository.
+
+The MIT grant below covers the SOURCE CODE of this project. It does NOT, and
+cannot, cover third-party intellectual property that this project builds upon.
+"Herta"/黑塔 is a character from HoYoverse's Honkai: Star Rail. This is an
+unofficial fan project, not affiliated with, endorsed by, or sponsored by
+HoYoverse/miHoYo/Cognosphere.
+
+The following are EXCLUDED from the grant below. They remain the property of
+their respective owners, are included here only to the extent permitted for
+non-commercial fan works, and are not licensed for redistribution or
+commercial use by this license:
+
+  - packages/gui/build/**          app icons (character likeness)
+  - packages/gui/resources/**      in-app artwork (character likeness)
+  - packages/herta/prompts/**      persona material and canon corpora,
+  - packages/herta/prompts-en/**   including quoted in-game dialogue
+  - website/src/assets/**          site imagery and audio
+  - website/public/**              favicon and link-preview image (same
+                                   character likeness)
+  - data/voice/**                  voice audio (not distributed in this
+                                   repository; see README)
+
+If you fork or reuse this project, the code is yours to use under MIT — the
+character, artwork, dialogue, and voice are not ours to give.
+
+Third-party software compiled into the installers (pdf.js under Apache-2.0,
+React and the rest under MIT/ISC/BlueOak) is redistributed under its own
+licenses, reproduced in THIRD-PARTY-NOTICES.md; Electron's and Chromium's
+notices are placed beside the executable by the packager.
+
+---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

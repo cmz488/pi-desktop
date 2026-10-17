@@ -1,0 +1,33 @@
+{
+  "deepseekHarness": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "commit": "d743267388641bc76f17c45ce8b4c231aed1d32c",
+    "archive": "https://codeload.github.com/deepseek-ai/deepseek-harness/tar.gz/d743267388641bc76f17c45ce8b4c231aed1d32c",
+    "localPath": ".reference/deepseek-harness",
+    "license": "MIT",
+    "read": [
+      "apps/desktop/README.md",
+      "apps/desktop/src/main.ts",
+      "apps/desktop/src/host-process.ts",
+      "apps/desktop/src/backend-controller.ts",
+      "apps/desktop/src/node-environment.ts"
+    ]
+  },
+  "piDurable": {
+    "article": "https://earendil.com/posts/pi-durable/",
+    "package": "@earendil-works/pi-durable",
+    "installedVersion": "1.0.2"
+  },
+  "agentBrowser": {
+    "repository": "https://github.com/vercel-labs/agent-browser",
+    "package": "agent-browser",
+    "installedVersion": "0.38.1",
+    "license": "Apache-2.0"
+  },
+  "piAgentBrowserNative": {
+    "repository": "https://github.com/fitchmultz/pi-agent-browser-native",
+    "package": "pi-agent-browser-native",
+    "installedVersion": "0.9.5",
+    "license": "MIT"
+  }
+}
