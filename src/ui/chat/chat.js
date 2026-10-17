@@ -4942,8 +4942,13 @@ function createGitPane({ request, snapshot, confirm, reveal }) {
     $("#git-notice").hidden = !notice;
     $("#git-review-notice").textContent = notice;
     $("#git-review-notice").hidden = !notice;
+    // The bulk action follows the reviewed side, so the toolbar stays one row
+    // even in a narrow docked panel.
+    const stagedView = source() === "staged";
     for (const button of panel.querySelectorAll("[data-git-action]")) {
       const action = button.dataset.gitAction;
+      if (bulk[action])
+        button.hidden = action !== (stagedView ? "unstage-all" : "stage-all");
       button.disabled =
         action === "refresh"
           ? pending || !!loading

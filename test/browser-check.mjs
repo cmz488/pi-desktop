@@ -805,9 +805,9 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     await evaluate(`document.querySelector('#dialog').close()`);
   assert(
     await evaluate(
-      `document.querySelector('.git-file-stage[data-git-action="stage"]')?.disabled===false&&document.querySelector('[data-git-action="unstage-all"]').disabled===true`,
+      `document.querySelector('.git-file-stage[data-git-action="stage"]')?.disabled===false&&document.querySelector('[data-git-action="stage-all"]').hidden===false&&document.querySelector('[data-git-action="unstage-all"]').hidden===true`,
     ),
-    "Each change row stages with git add, and bulk unstaging stays disabled while nothing is staged",
+    "Each change row stages with git add, and the bulk action follows the reviewed side",
   );
   await evaluate(
     `document.querySelector('[data-git-action="stage-all"]').click()`,
@@ -826,7 +826,36 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     ),
     "Bulk staging skips files outside the confirmation byte budget and says so",
   );
-  await evaluate(`document.querySelector('#dialog').close()`);
+  await evaluate(`document.querySelector('#dialog-form').requestSubmit()`);
+  await wait(
+    `!document.querySelector('#dialog').open&&!document.querySelector('[data-git-action="refresh"]').disabled`,
+  );
+  await evaluate(
+    `document.querySelector('#git-source').value='staged';document.querySelector('#git-source').dispatchEvent(new Event('change'))`,
+  );
+  await wait(
+    `document.querySelector('#git-files').textContent.includes('review-error.ts')&&document.querySelector('[data-git-action="unstage-all"]').disabled===false`,
+  );
+  assert(
+    await evaluate(
+      `document.querySelector('[data-git-action="unstage-all"]').hidden===false&&document.querySelector('[data-git-action="stage-all"]').hidden===true&&document.querySelector('.git-file-stage[data-git-action="unstage"]')?.disabled===false`,
+    ),
+    "Confirmed bulk staging really runs git add and switches the bulk action to unstaging",
+  );
+  await evaluate(
+    `document.querySelector('[data-git-action="unstage-all"]').click()`,
+  );
+  await wait(`document.querySelector('#dialog').open`);
+  await evaluate(`document.querySelector('#dialog-form').requestSubmit()`);
+  await wait(
+    `!document.querySelector('#dialog').open&&document.querySelector('#git-files').textContent.includes('没有已暂存变更')`,
+  );
+  await evaluate(
+    `document.querySelector('#git-source').value='unstaged';document.querySelector('#git-source').dispatchEvent(new Event('change'))`,
+  );
+  await wait(
+    `document.querySelector('[data-git-action="stage-all"]').hidden===false`,
+  );
   assert.equal(
     await evaluate(`window.analysisRequests`),
     0,
