@@ -65,6 +65,18 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 - **租约**：被杀死进程的锁需要约 10 秒过期，期间第二个 writer 被拒绝（`DeskError(409, "Agent 存储正在被另一个宿主占用")`）；优雅 `close()` 在前台任务在途时会等待，因此不属于中断。
 - **不可控**：真正的中断只能由进程死亡产生，进程内无法模拟；该验证因此不在 `npm test` 的快速套件里，而是独立命令。
 
+## 会话树退回与分叉
+
+`test/durable-session-tree.test.mjs` 在 `npm test` 内验证两类操作（真实 HTTP 命令 + 真实原生日志）：
+
+- **分叉（branch/fork）**：`fork` 从指定 entry 创建新会话，返回 `sessionId`；新会话拥有该点之前的上下文、以 0 用量开始，源会话的用量与消息不受影响。
+- **退回（rewind）**：上下文重建到退回点——退回点之前的消息仍在上下文里，其后的回合不再出现；原条目仍在存储里（`desk.rewind` 标记记录 `rewindTo`），且不会把被放弃的回答重放进新上下文。退回后继续对话只提交一份回答。
+- **Pi JSONL 一致性**：退回在同一个文件里完成（不新建会话文件），`pi-desktop-rewind` 自定义条目对模型不可见，活跃分支经过退回点、新回合是它的子条目，被放弃的回合仍在文件里但不在活跃分支上——TUI 因此看到与 Desktop 相同的会话树。
+
+浏览器回归在 `test/durable-browser-check.mjs` 中完成：右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
+
+已知限制：退回需要该 Agent 的原生转录（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionContext`）从原生日志取得，Desktop 不自行实现上下文推导。
+
 ## 契约与规范的验证
 
 接口契约（[docs/architecture/interfaces/](../architecture/interfaces/README.md)）每条都必须在“可执行证据”里指向测试或命令；新增或改变契约时必须同时补上断言，未登记的对外行为不算契约。运行归属与两条 seam 见 [边界文档](../architecture/pi-boundary.md)。

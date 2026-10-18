@@ -360,6 +360,23 @@ export async function openNativeTranscript({
           dirty = true;
           continue;
         }
+        if (entry.kind === "desk.rewind") {
+          // 退回：把原生 leaf 移回退回点，之后的条目成为它的子条目；原路径保留在文件里。
+          // 标记自身的 model 就是该点之前的上下文（它们已在原生日志中），所以不重复导出；
+          // 自定义条目对模型不可见，使 Pi 与 Durable 看到同一份上下文。
+          const native = mapping.get(entry.data?.rewindTo);
+          if (native !== undefined) {
+            manager.branch(native);
+            manager.appendCustomEntry("pi-desktop-rewind", {
+              conversation: id,
+              rewindTo: entry.data.rewindTo,
+              native,
+            });
+          }
+          through = entry.id;
+          dirty = true;
+          continue;
+        }
         let first;
         if (entry.kind === "pi.reset") manager.resetLeaf();
         if (entry.kind === "pi.compaction") {
@@ -470,6 +487,15 @@ export async function openNativeTranscript({
     await sync();
     return {
       sync,
+      /* 退回点之前的模型上下文，用 Pi 自己的推导（含压缩与编辑），供 Host 写入 Durable
+       * 头部标记；该条目尚未写入原生日志时返回 undefined。 */
+      rewindMessages(entryId) {
+        const native = mapping.get(entryId);
+        if (native === undefined || !manager.getEntry(native)) return undefined;
+        const entries = manager.getEntries();
+        const byId = new Map(entries.map((entry) => [entry.id, entry]));
+        return sdk.buildSessionContext(entries, native, byId).messages;
+      },
       async check() {
         if (failure) throw failure;
         if (resumePath) await assertNoNativeTui(cwd);

@@ -681,6 +681,32 @@ export async function openAgentWorkspace(options) {
       await repairNativeContext(fork);
       return { id: fork.id };
     }
+    if (command === "rewind") {
+      // 退回：追加一个头部标记（head: "self"），它的 model 就是退回点之前的模型上下文，
+      // 因此后续回合从该点继续，而原始条目全部留在存储里。原生日志的 leaf 移动由同步循环
+      // 在见到该标记时用 Pi 的 branch() 完成。
+      if (!Number.isSafeInteger(input.entryId))
+        throw new DeskError(422, "退回位置无效");
+      if (!Array.isArray(input.messages) || input.messages.length > 2000)
+        throw new DeskError(422, "退回上下文无效");
+      const known = (await workspace.transcript(selected.id)).entries.some(
+        (entry) => entry.id === input.entryId,
+      );
+      if (!known) throw new DeskError(404, "退回位置不存在");
+      const marker = await selected.commit(
+        (tx) =>
+          tx.appendEntry(selected.id, {
+            kind: "desk.rewind",
+            head: "self",
+            model: input.messages.filter(
+              (message) => message.role !== "system",
+            ),
+            data: { rewindTo: input.entryId },
+          }),
+        context,
+      );
+      return { id: selected.id, entryId: marker.id, rewindTo: input.entryId };
+    }
     throw new DeskError(404, "不支持的 Agent 操作");
   }
   async function close() {

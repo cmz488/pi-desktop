@@ -1180,6 +1180,55 @@ function activityProgress(value, key) {
     )
     .join("")}</span>`;
 }
+/* 消息动作：右键消息可退回或分叉。退回让模型上下文从该消息之后重建；分叉从该消息创建
+ * 独立会话。两者都由 Host 写回 Pi JSONL 会话树，因此 TUI 看到同一棵树。 */
+let messageMenu;
+function closeMessageMenu() {
+  messageMenu?.remove();
+  messageMenu = undefined;
+}
+function openMessageMenu(x, y, entryId) {
+  closeMessageMenu();
+  const menu = document.createElement("div");
+  menu.className = "message-menu";
+  menu.setAttribute("role", "menu");
+  menu.dataset.entryId = String(entryId);
+  const run = async (command) => {
+    closeMessageMenu();
+    try {
+      const result = await api("/api/command", {
+        command,
+        // 命令的目标 id 与 entryId 都是数字：Host 用严格相等校验目标。
+        id: Number(durableAgentId),
+        entryId,
+      });
+      // 分叉返回新会话；退回原地重建上下文，由 state_changed 推动刷新。
+      if (command === "fork" && result?.sessionId)
+        chooseDurableAgent(result.sessionId);
+      else
+        toast(command === "fork" ? "已分叉" : "已退回，上下文从该消息之后重建");
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  for (const [command, label] of [
+    ["rewind", "退回到此消息"],
+    ["fork", "从此消息分叉"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.dataset.command = command;
+    button.textContent = label;
+    button.addEventListener("click", () => void run(command));
+    menu.append(button);
+  }
+  document.body.append(menu);
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
+  messageMenu = menu;
+}
 function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
   const assistant = message.role !== "user";
   const stateCard = message.extensionState === true;
@@ -1195,6 +1244,10 @@ function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
     if (rail) article.classList.add("extension-rail-card");
     if (message.extensionView) article.dataset.extensionCard = "true";
     article.dataset.turn = message.id ?? `turn-${host.children.length}`;
+    // 消息动作（退回／分叉）挂在条目 id 上；流式占位消息没有该字段。
+    if (Number.isSafeInteger(message.entryId))
+      article.dataset.entryId = String(message.entryId);
+    else delete article.dataset.entryId;
     article.innerHTML = `<span class="${assistant ? "agent-avatar" : "avatar"}">${assistant ? piLogo : "你"}</span><div class="message-body"><div class="message-label">${esc(message.extensionView?.label ?? (message.role === "custom" ? (message.customType ?? "扩展") : assistant ? "Pi" : "你"))}</div></div>`;
     host.append(article);
   }
@@ -3141,6 +3194,18 @@ function applyRecord(record) {
     updateCommands();
   }
 }
+$("#messages")?.addEventListener("contextmenu", (event) => {
+  const row = event.target.closest("[data-entry-id]");
+  if (!row || !durableAgentId) return;
+  event.preventDefault();
+  openMessageMenu(event.clientX, event.clientY, Number(row.dataset.entryId));
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!event.target.closest(".message-menu")) closeMessageMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMessageMenu();
+});
 document.addEventListener("visibilitychange", () => {
   if (!live) return;
   if (document.hidden || !hostFocused) sessionConnection.pause();

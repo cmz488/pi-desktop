@@ -48,6 +48,7 @@ class DeskError extends Error { status }
 - **未启动的 Agent 不允许读取**：`agent.source !== "pi"`、未归档且缺少原生会话文件时抛 `DeskError(409, "请先启动 Agent")`；记录已丢失抛 `DeskError(404, "Pi 会话记录已不存在")`。
 - **写目标唯一**：所有跨 `await` 的写入必须经 `host.target()`／`supervisor.target(id)` 校验，路由不复制 409 规则。
 - **catalog 是只读快照 + revision**：`store.read()` 返回 `{ revision, projects, agents }`；写入走 `mutateDocument` 的锁 + revision 栅栏。
+- **原生转录绑定在宿主启动时接管的 Agent 上**：默认多进程 Desktop 每个 Agent 一个 worker，因此每个 Agent 有各自的 `agents/<id>` 目录与 `native-session.json`；注入 workspace 或 `--single-process` 宿主只绑定启动时的那个 Agent，其他会话没有原生 JSONL（退回因此返回 409，分叉不受影响）。
 
 ## 顺序约束
 
@@ -85,4 +86,5 @@ class DeskError extends Error { status }
 - `test/session-manager.test.mjs`、`test/sessions-command.test.mjs`（`npm run test:sessions`）。
 - `test/config-store.test.mjs`：revision 栅栏与锁冲突。
 - `test/remote-lazy.test.mjs`：`revision()` 作为轮询入口的形状。
+- 会话树退回与分叉：`test/durable-session-tree.test.mjs`（会话与 JSONL）、`npm run test:durable:browser`（消息右键菜单）。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

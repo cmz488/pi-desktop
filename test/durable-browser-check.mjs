@@ -28,7 +28,22 @@ try {
     models,
     settings: { retry: { enabled: false } },
   });
-  app = await startDurableDesk({ workspace, port: 0 });
+  // 原生转录绑定在宿主启动时接管的 Agent 上（默认多进程宿主每个 Agent 一个 worker）。
+  // 本夹具先建好 Agent A 并声明它的 owner 与目录，使退回能写回 Pi JSONL 会话树。
+  const agentDir = join(root, "agent");
+  const agentA = await workspace.execute("create", {
+    cwd,
+    name: "Agent A",
+    model: { provider: faux.provider.id, modelId: faux.models[0].id },
+  });
+  app = await startDurableDesk({
+    workspace,
+    port: 0,
+    agentDir,
+    directory: join(agentDir, "agents", String(agentA.id)),
+    nativeSessionOwner: `${agentA.id}:0`,
+    resources: false,
+  });
   const profile = join(root, "browser");
   browser = spawn(
     "/usr/bin/chromium",
@@ -67,21 +82,10 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     "the snapshot counter must observe the initial state fetch",
   );
   assert(await evaluate("!!document.querySelector('#workspace-right')"));
-  await evaluate(
-    `document.querySelector('[data-action="new-session"]').click()`,
-  );
-  await until(
-    "document.querySelector('#dialog').open && !!document.querySelector('[name=agentName]')",
-  );
-  await evaluate(
-    `(() => {const form=document.querySelector('#dialog-form');form.elements.agentName.value='Agent A';form.elements.agentCwd.value=${JSON.stringify(cwd)};form.requestSubmit()})()`,
-  );
   await until(
     "document.querySelector('#session-title').textContent==='Agent A'",
   );
-  const first = (await workspace.read()).agents.find(
-    (agent) => agent.name === "Agent A",
-  ).id;
+  const first = agentA.id;
   await evaluate("document.querySelector('#prompt').value='draft A'");
   await evaluate(
     `document.querySelector('[data-action="new-session"]').click()`,
@@ -253,6 +257,65 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   );
   await until(
     "document.querySelector('#messages').innerText.includes('recovered response') && document.querySelector('#stop-button').hidden===true",
+  );
+  // 消息动作：右键消息可退回或分叉，两者都写回 Pi JSONL 会话树。
+  const entryIds = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('#messages [data-entry-id]')].map((row) => row.dataset.entryId))`,
+    ),
+  );
+  assert(entryIds.length >= 2, "message rows expose their entry id");
+  const openMenu = (selector) =>
+    evaluate(`(() => {
+      const row = document.querySelector('${selector}');
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 80 }));
+    })()`);
+  await openMenu("#messages [data-entry-id]");
+  await until("!!document.querySelector('.message-menu')");
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.message-menu [role=menuitem]').length",
+    ),
+    2,
+  );
+  await evaluate(
+    "document.querySelector('.message-menu [data-command=rewind]').click()",
+  );
+  await until("!document.querySelector('.message-menu')");
+  await until(
+    "document.querySelector('#messages').innerText.includes('recovered response')===false && document.querySelector('#stop-button').hidden===true",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('#messages').innerText.includes('draft A')",
+    ),
+    "the rewound timeline keeps everything up to the target message",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('#messages').innerText.includes('retry after network recovery')===false",
+    ),
+    "the rewound timeline drops what came after the target message",
+  );
+  await openMenu("#messages [data-entry-id]");
+  await until("!!document.querySelector('.message-menu')");
+  await evaluate(
+    "document.querySelector('.message-menu [data-command=fork]').click()",
+  );
+  await until(
+    "document.querySelector('#session-title').textContent.includes('分支')",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('#messages').innerText.includes('draft A')",
+    ),
+    "the fork keeps the context up to its fork point",
+  );
+  await evaluate(
+    `document.querySelector('[data-session-id="${first}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent==='Agent A' && document.querySelector('#stop-button').hidden===true",
   );
   assert.deepEqual(driver.errors, []);
   console.log(

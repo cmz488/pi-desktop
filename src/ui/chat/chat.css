@@ -4949,3 +4949,32 @@ body.dark {
     display: inline-flex !important;
   }
 }
+
+/* 消息动作菜单（右键消息）：退回或分叉当前会话。 */
+.message-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  font-size: calc(12px * var(--ui-font-scale));
+}
+.message-menu > button {
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.message-menu > button:hover,
+.message-menu > button:focus-visible {
+  background: var(--hover);
+}

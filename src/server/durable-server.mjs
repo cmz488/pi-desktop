@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createDeskBridge } from "./bridge.mjs";
@@ -36,6 +36,7 @@ const commands = new Set([
   "abort",
   "compact",
   "fork",
+  "rewind",
 ]);
 async function body(request) {
   let length = 0;
@@ -225,6 +226,8 @@ export async function startDurableDesk(options = {}) {
       root = await workspace.read();
     }
     if (options.nativeSessionOwner && root.agents[0]) {
+      // 原生转录（以及它的元数据）写在宿主目录里；注入 workspace 的宿主也必须能落盘。
+      await mkdir(directory, { recursive: true, mode: 0o700 });
       transcript = await openNativeTranscript({
         agentDir,
         directory,
@@ -332,6 +335,25 @@ export async function startDurableDesk(options = {}) {
       }
       root = await workspace.read();
       return { ...result, sessionId: String(result.id) };
+    };
+    /* 退回：上下文用 Pi 从原生会话树推导出的退回点前缀重建，Durable 只提交标记；
+     * 原生 leaf 的移动由紧随其后的同步循环完成。 */
+    const rewind = async (input = {}) => {
+      // 原生日志只绑定在宿主启动时接管的 Agent 上（默认多进程宿主每个 Agent 一个 worker）。
+      if (!transcript)
+        throw new DeskError(409, "该会话没有原生转录，不能退回；可改用分叉");
+      await transcript.sync();
+      const messages = transcript?.rewindMessages(input.entryId);
+      if (!messages?.length)
+        throw new DeskError(409, "退回位置尚未写入原生会话，请稍后重试");
+      const result = await workspace.execute("rewind", {
+        id: input.id,
+        entryId: input.entryId,
+        messages,
+      });
+      await transcript?.sync();
+      root = await workspace.read();
+      return result;
     };
     async function reload() {
       const ctx = target();
@@ -685,15 +707,18 @@ export async function startDurableDesk(options = {}) {
             throw new DeskError(409, "操作目标与所选 Agent 不一致");
           let result;
           if (input.command === "create") result = await create(input);
+          else if (input.command === "rewind") result = await rewind(input);
           else {
             result = await workspace.execute(input.command, input);
             if (input.command === "configure")
               await resources?.ensure((await workspace.read(input.id)).active);
-            if (input.command === "fork")
+            if (input.command === "fork") {
               await resources?.selectTools(
                 (await workspace.read(result.id)).active,
                 { defaults: true },
               );
+              result = { ...result, sessionId: String(result.id) };
+            }
           }
           root = await workspace.read();
           bridge.publish("state_changed", {});
