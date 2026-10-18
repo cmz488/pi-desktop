@@ -88,6 +88,8 @@ flowchart TD
 
 ## Backlog：本轮不实现，但边界已就位
 
+本轮的深化已交付两项：Durable 的定点重启与恢复可见性（`recovery` 读模型进入 `/api/state`，SIGKILL 后用检查点续跑），以及 Pi 的会话树退回与分叉（同一 JSONL 文件里的 `branch()` + `desk.rewind` 头部标记）。下面两项是明确留到后续的深化，边界与入口位置已记录，便于下一轮直接开工。
+
 ### 子代理与任务图管理（Durable 侧）
 
 - **现状**：Durable 上游提供 task graph、child tasks、`Abort and Subagents`；本项目只在 `src/agent/agent-workspace.mjs` 透传，没有管理面，也没有 UI 呈现。
