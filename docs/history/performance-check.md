@@ -106,3 +106,32 @@ npm run format:check
 当前正在承载手机对话的进程没有重启，因此尚未应用新的服务端静态传输策略。若继续使用独立 Web 模式，待任务完成后停止原服务，再用原启动参数启动并刷新手机页面，不要另开一个相同端口的服务。0.7.0 的三端共享模式改用原生 TUI 加载扩展后执行 `/desk`，与独立 `pi web` 模式择一启动；迁移方法见 README。
 
 后续若出现真实卡顿，应记录手机首次连接与回前台的耗时，并区分静态资源下载、会话快照、SSE 建连和模型首字时间。不能把当前本机测试扩大为手机实机或公网网络的性能结论。
+
+## 0.26.15：五项性能深化（2026-10-18）
+
+同一台机器上的前后对比；夹具为 Durable + SQLite + faux provider（55 条已提交消息、流式回答约 16 s）与真实 Chromium 渲染器。基准脚本只在仓库外运行，已删除。
+
+| 项目                                      |                    之前 |                                    之后 |
+| ----------------------------------------- | ----------------------: | --------------------------------------: |
+| 01 一次流式回答的 `workspace.read`        |        376 次（23.4/s） |                                    5 次 |
+| 01 同一回答的 `state_changed` 广播        |                     118 | 3（另有 59 条 `assistant_update` 增量） |
+| 01 客户端流式期间 `/api/state` 取整份快照 |                每次广播 |                ≤ 5 次（浏览器回归断言） |
+| 02 worker 就绪（3 个并发）                |              868–896 ms |                              632–675 ms |
+| 02 空闲 Agent RSS                         |              211–212 MB |                              164–165 MB |
+| 03 `repo.read()` git 子进程               |                      11 |                                       4 |
+| 03 `repo.read()` 耗时                     |                 38.1 ms |                                 30.0 ms |
+| 03 分支标签 `gitInfo()`                   | 7.0 ms／次（1–2 spawn） |           命中缓存 0.0 ms（1.5 s 窗口） |
+| 04 空闲 revision 探测的完整读取           |            每次轮询一次 |                  0（两次探测 0 次读取） |
+| 05 150 行刷新（一行变化）                 |                 80.2 ms |                                  0.3 ms |
+| 05 300 行刷新（一行变化）                 |                  153 ms |                                  0.6 ms |
+| 05 冷渲染 150／300 行                     |          84.7／236.8 ms |              不变（首次绘制仍需建节点） |
+
+实现要点：
+
+- 会话：Durable 宿主保留一个 150 ms 增量窗口，流式 partial 以 `assistant_update` 下发；只有已提交历史或空闲状态变化时才重建工作区并广播 `state_changed`。`agent-workspace.live()` 提供不投影 transcript 的只读投影。
+- worker：`pi-sdk.mjs` 改为按需加载 + memoize，worker 启动与之并行；网络设置、原生 transcript 与 `convertToLlm` 分别使用 `core/settings-manager.js`、`core/session-manager.js`、`core/messages.js` 子模块。旧实现同时加载 PATH 解析的 SDK 与内嵌 SDK（本机是两个不同文件），这是 -47 MB 的主因。
+- Git：`status --porcelain=v2 --branch` 一次取得文件、HEAD、分支与 upstream；remotes 取自已有的 config 读取；操作标记直接读仓库打开时确定的 git dir；常见情形只需一次 `diff HEAD`，仅当同一文件两侧都有改动时才跑第二次。分支标签按 cwd 复用 1.5 s，Git 写入与非仓库结果不缓存。
+- revision：新增 `GET /api/revision`，宿主用内存变更位回答（是否支持由 capability 决定）；Durable 宿主对该路径不做 transcript 同步、不做工作区读取、不唤醒资源宿主。聊天交互、MCP 视图与外层工作区索引先探测，每第 3 个 tick 仍强制刷新。
+- 渲染：会话按 `appendMessage` 的合并规则分组，签名未变则复用节点；签名覆盖 activity 的 sources、tool card 的配对结果行、lazy/detail 状态，并以原始行大小指纹作为兜底（不匹配则整体重建）。
+
+边界：以上为本机夹具数字，不代表手机蜂窝网络或更大的真实会话；真实公网 Tailscale、真实手机与 Electron 硬件性能未在本次验证范围。不做 Agent 空闲自动挂起。
