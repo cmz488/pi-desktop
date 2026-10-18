@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { piSdk } from "../src/agent/pi-sdk.mjs";
+import { piSdk, loadEmbeddedPiSdk } from "../src/agent/pi-sdk.mjs";
+
+await loadEmbeddedPiSdk();
 import {
   installedPackageVersion,
   checkNativePackageUpdates,

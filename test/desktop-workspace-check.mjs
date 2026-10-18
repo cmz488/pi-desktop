@@ -4,11 +4,15 @@ import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { embeddedPiSdk as sdk } from "../src/agent/pi-sdk.mjs";
+import {
+  embeddedPiSdk as sdk,
+  loadEmbeddedPiSdk,
+} from "../src/agent/pi-sdk.mjs";
 import { nativeSessionDirectory } from "../src/session/pi-session-storage.mjs";
 import { desktopFixture } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
 
+await loadEmbeddedPiSdk();
 let pickerCalls = 0;
 let prepared = 0;
 let runtimeState = { phase: "off", backendState: "", managed: true };

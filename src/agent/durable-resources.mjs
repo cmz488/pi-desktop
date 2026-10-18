@@ -11,7 +11,7 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import { startWebSlot } from "../server/web.mjs";
-import { embeddedPiSdk as piSdk, embeddedSdkEntry } from "./pi-sdk.mjs";
+import { embeddedSdkEntry, loadEmbeddedPiSdk } from "./pi-sdk.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
 import { readFile } from "node:fs/promises";
 import { commandCatalog } from "../shared/pi-commands.mjs";
@@ -39,6 +39,7 @@ export function createDurableResources({
     closing = false;
   async function ensureHost(active) {
     if (!active) return undefined;
+    const piSdk = await loadEmbeddedPiSdk();
     let pending = hosts.get(active.id);
     if (pending) {
       const host = await pending;

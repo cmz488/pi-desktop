@@ -14,8 +14,8 @@ import { attachmentLimits } from "./context-attachments.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { commandCatalog, webCommands } from "../shared/pi-commands.mjs";
 import {
-  piSdk,
   checkPiSdk,
+  loadEmbeddedPiSdk,
   webTerminalTheme,
   configurePiNetwork,
   scopedMcpCredentials,
@@ -25,8 +25,9 @@ import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
 import { loadWebMcp, validMcpName } from "../resources/mcp-config.mjs";
 import { relative } from "node:path";
-const {
-  VERSION,
+/* The SDK namespace is bound once the host loads it, so module-scope use of
+ * these names stays synchronous while a fresh worker pays nothing for them. */
+let VERSION,
   getAgentDir,
   SettingsManager,
   SessionManager,
@@ -38,10 +39,28 @@ const {
   createToolSearchExtension,
   createMcpExtension,
   ProjectTrustStore,
-  hasTrustRequiringProjectResources,
-} = piSdk;
+  hasTrustRequiringProjectResources;
+function bindSdk(namespace) {
+  ({
+    VERSION,
+    getAgentDir,
+    SettingsManager,
+    SessionManager,
+    DefaultPackageManager,
+    createAgentSessionRuntime,
+    createAgentSessionServices,
+    createAgentSessionFromServices,
+    createCodemodeExtension,
+    createToolSearchExtension,
+    createMcpExtension,
+    ProjectTrustStore,
+    hasTrustRequiringProjectResources,
+  } = namespace);
+  return namespace;
+}
 
 export async function startWeb(options = {}) {
+  bindSdk(await loadEmbeddedPiSdk());
   const manager = new SessionHost({
     agentDir: options.agentDir ?? getAgentDir(),
     createSlot: ({ path, parent, bridgeFactory, controller }) =>
@@ -76,7 +95,8 @@ export async function startWeb(options = {}) {
 }
 
 export async function startWebSlot(options = {}) {
-  const sdk = checkPiSdk(options.sdk ?? piSdk);
+  const sdk = checkPiSdk(options.sdk ?? (await loadEmbeddedPiSdk()));
+  bindSdk(sdk);
   const {
     VERSION,
     getAgentDir,
@@ -676,6 +696,7 @@ export async function startWebSlot(options = {}) {
   async function skillInventory() {
     if (!skillsCache)
       skillsCache = (async () => {
+        const skills = (await loadEmbeddedPiSdk()).loadSkills;
         const manager = packages(
           SettingsManager.create(runtime.cwd, agentDir, {
             projectTrusted: session().settingsManager.isProjectTrusted(),
@@ -683,34 +704,30 @@ export async function startWebSlot(options = {}) {
         );
         const resolved = await manager.resolve(async () => "skip");
         return resolved.skills.flatMap((resource) =>
-          piSdk
-            .loadSkills({
-              cwd: runtime.cwd,
-              agentDir,
-              skillPaths: [resource.path],
-              includeDefaults: false,
-            })
-            .skills.map((skill) => ({
-              id: skill.filePath,
-              name: skill.name,
-              description: skill.description,
-              source: resource.metadata.source,
-              scope:
-                resource.metadata.scope === "project" ? "project" : "global",
-              packageSource:
-                resource.metadata.origin === "package"
-                  ? resource.metadata.source
-                  : null,
-              pattern:
-                resource.metadata.origin === "package"
-                  ? relative(
-                      resource.metadata.packageRoot ??
-                        resource.metadata.baseDir,
-                      resource.path,
-                    ).replaceAll("\\", "/")
-                  : resource.path,
-              enabled: resource.enabled,
-            })),
+          skills({
+            cwd: runtime.cwd,
+            agentDir,
+            skillPaths: [resource.path],
+            includeDefaults: false,
+          }).skills.map((skill) => ({
+            id: skill.filePath,
+            name: skill.name,
+            description: skill.description,
+            source: resource.metadata.source,
+            scope: resource.metadata.scope === "project" ? "project" : "global",
+            packageSource:
+              resource.metadata.origin === "package"
+                ? resource.metadata.source
+                : null,
+            pattern:
+              resource.metadata.origin === "package"
+                ? relative(
+                    resource.metadata.packageRoot ?? resource.metadata.baseDir,
+                    resource.path,
+                  ).replaceAll("\\", "/")
+                : resource.path,
+            enabled: resource.enabled,
+          })),
         );
       })();
     return skillsCache;

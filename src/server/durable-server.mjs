@@ -24,8 +24,9 @@ import manifest from "../../package.json" with { type: "json" };
 import { parseSessionsCommand } from "../tui/sessions-command.mjs";
 import {
   embeddedSdkEntry,
-  embeddedPiSdk,
   configurePiNetwork,
+  loadEmbeddedPiSdk,
+  loadPiSettingsManager,
 } from "../agent/pi-sdk.mjs";
 
 const commands = new Set([
@@ -80,13 +81,17 @@ export async function startDurableDesk(options = {}) {
       join(homedir(), ".pi", "agent"),
   );
   const directory = resolve(options.directory ?? join(agentDir, "desktop"));
+  // Start the SDK graph in parallel with everything below; only the steps that
+  // need its namespace await it. The early network step uses the same package's
+  // settings submodule so a fresh host does not serialize behind the whole SDK.
+  const sdkReady = loadEmbeddedPiSdk();
   // The model transport uses Node fetch, even when owned by Electron. Reuse
   // Pi's dispatcher so HTTP(S)_PROXY, NO_PROXY, settings and timeouts all apply.
-  const networkSettings = embeddedPiSdk.SettingsManager.create(
-    options.cwd ?? process.cwd(),
-    agentDir,
-    { projectTrusted: false },
-  );
+  const networkSettings = (
+    await loadPiSettingsManager()
+  ).SettingsManager.create(options.cwd ?? process.cwd(), agentDir, {
+    projectTrusted: false,
+  });
   if (!(await configurePiNetwork(networkSettings, embeddedSdkEntry)))
     throw new DeskError(503, "无法初始化 Pi 网络配置，请更新资源 SDK");
   const providers =
@@ -160,6 +165,8 @@ export async function startDurableDesk(options = {}) {
         initialize: (target) => resources?.attach(target),
       }));
     if (options.workspace) await resources?.attach(workspace);
+    // Resource sessions (tool scope, extensions, interactions) need the SDK.
+    await sdkReady;
     root = await workspace.read();
     if (!root.agents.length) {
       const settings = (await readDocument(join(agentDir, "settings.json")))
@@ -829,18 +836,80 @@ export async function startDurableDesk(options = {}) {
         },
       },
     });
-    const unsubscribe = workspace.subscribe(() => {
-      void (transcript?.sync() ?? Promise.resolve())
-        .then(() => workspace.read())
-        .then((value) => {
+    /* Streaming used to rebuild the whole workspace projection on every commit
+     * and broadcast it, so a single answer cost hundreds of full reads and
+     * snapshot fetches. The delta window keeps the same information flowing:
+     * live partials become assistant updates the page applies in place, and a
+     * full read plus state_changed only happens when committed history or the
+     * idle flag actually changed (or when a workspace cannot report live state). */
+    const DELTA_WINDOW_MS = 150;
+    const agentSignatures = new Map();
+    let deltaTimer, deltaBusy, deltaQueued;
+    async function flushDeltas() {
+      deltaTimer = undefined;
+      if (stopped || deltaBusy) {
+        deltaQueued = true;
+        return;
+      }
+      deltaBusy = true;
+      try {
+        await transcript?.sync();
+        let structural = typeof workspace.live !== "function";
+        for (const agent of root.agents) {
+          if (typeof workspace.live !== "function") break;
+          let state;
+          try {
+            state = await workspace.live(agent.id);
+          } catch {
+            continue;
+          }
+          const structure = `${state.idle ? 1 : 0}:${state.entryCount}:${state.lastEntryId}`;
+          if (agentSignatures.get(`structure:${agent.id}`) !== structure) {
+            agentSignatures.set(`structure:${agent.id}`, structure);
+            structural = true;
+          }
+          const partial = state.partial ?? null;
+          const partialKey = partial
+            ? `${partial.id}:${String(partial.text ?? "").length}:${partial.blocks?.length ?? 0}`
+            : "";
+          if (agentSignatures.get(`partial:${agent.id}`) !== partialKey) {
+            agentSignatures.set(`partial:${agent.id}`, partialKey);
+            if (partial)
+              bridge.publish("assistant_update", {
+                sessionId: String(agent.id),
+                message: partial,
+                phase: partial.blocks?.some(
+                  (block) => block.type === "thinking",
+                )
+                  ? "thinking"
+                  : "output",
+              });
+          }
+        }
+        if (structural) {
+          const value = await workspace.read();
           root = value;
           bridge.publish("state_changed", {});
           for (const agent of value.agents)
             if (agent.idle && agent.pendingConfiguration)
               void applyDeferredConfiguration(agent.id).catch(() => {});
-        })
-        .catch(() => {});
-    });
+        }
+      } catch {
+        /* A failed delta window must never stop the host. */
+      } finally {
+        deltaBusy = false;
+        if (deltaQueued) {
+          deltaQueued = false;
+          scheduleDeltas();
+        }
+      }
+    }
+    function scheduleDeltas() {
+      if (deltaTimer) return;
+      deltaTimer = setTimeout(() => void flushDeltas(), DELTA_WINDOW_MS);
+      deltaTimer.unref?.();
+    }
+    const unsubscribe = workspace.subscribe(() => scheduleDeltas());
     for (const agent of root.agents)
       if (agent.idle && agent.pendingConfiguration)
         void applyDeferredConfiguration(agent.id).catch(() => {});
@@ -849,6 +918,8 @@ export async function startDurableDesk(options = {}) {
     const stop = () =>
       (stopPromise ??= (async () => {
         stopped = true;
+        clearTimeout(deltaTimer);
+        deltaTimer = undefined;
         unsubscribe();
         auth.cancelAll();
         // Cancel tool waiters through Harness before disposing their native UI/MCP runtime.

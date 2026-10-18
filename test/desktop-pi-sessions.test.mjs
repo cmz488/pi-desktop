@@ -4,7 +4,10 @@ import { readFile, writeFile, rm, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { embeddedPiSdk as sdk } from "../src/agent/pi-sdk.mjs";
+import {
+  embeddedPiSdk as sdk,
+  loadEmbeddedPiSdk,
+} from "../src/agent/pi-sdk.mjs";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 import {
   nativeSessionDirectory,
@@ -15,6 +18,7 @@ import {
   createPiSessions,
   projectPiRecord,
 } from "../src/control-plane/pi-sessions.mjs";
+await loadEmbeddedPiSdk();
 const user = (text) => ({ role: "user", content: text, timestamp: Date.now() });
 const assistant = (text) => ({
   role: "assistant",

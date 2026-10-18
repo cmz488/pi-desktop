@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { contentText } from "../shared/conversation.mjs";
-import { embeddedPiSdk as sdk } from "./pi-sdk.mjs";
+import { loadPiMessages } from "./pi-sdk.mjs";
 
 const signature = (message) =>
   message.role === "toolResult"
@@ -223,7 +223,7 @@ export function createNativeRuntime({
       await runner().emit({ type: "turn_start" });
       const projected = await runner().emitContext([...request.messages]);
       await save();
-      return { messages: sdk.convertToLlm(projected) };
+      return { messages: (await loadPiMessages()).convertToLlm(projected) };
     },
     async afterResponse(message) {
       assistant = message;

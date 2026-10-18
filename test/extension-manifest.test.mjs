@@ -4,7 +4,9 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { piSdk } from "../src/agent/pi-sdk.mjs";
+import { piSdk, loadEmbeddedPiSdk } from "../src/agent/pi-sdk.mjs";
+
+await loadEmbeddedPiSdk();
 
 test("extension manifest delegates host packages to Pi while retaining standalone development SDKs", async () => {
   const manifest = JSON.parse(

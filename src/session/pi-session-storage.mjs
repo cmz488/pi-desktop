@@ -15,7 +15,12 @@ import {
 import { join, dirname, relative, isAbsolute, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { DatabaseSync } from "node:sqlite";
-import { embeddedPiSdk as sdk, embeddedSdkEntry } from "../agent/pi-sdk.mjs";
+import { embeddedSdkEntry, loadPiSessionManager } from "../agent/pi-sdk.mjs";
+
+/* The transcript and archive paths only need the session-manager submodule.
+ * Capture it once so the synchronous archive readers keep their contract. */
+let sessionSdk;
+const sessionModule = async () => (sessionSdk ??= await loadPiSessionManager());
 import { DeskError } from "../config/config-store.mjs";
 
 const { getDefaultSessionDir } = await import(
@@ -52,6 +57,7 @@ export async function nativeSessionDirectory(cwd, agentDir) {
   return result;
 }
 export async function readNativeRecord(path, agentDir) {
+  const sdk = await sessionModule();
   const { roots } = await sessionRoots(agentDir);
   const resolved = await realpath(path);
   const inside = await Promise.all(
@@ -157,6 +163,7 @@ export async function openNativeTranscript({
   workspace,
   id,
 }) {
+  const sdk = await sessionModule();
   const metadataPath = join(directory, "native-session.json");
   let failure;
   let metadata;
@@ -493,6 +500,7 @@ export async function openNativeTranscript({
 // recover the filesystem/catalog gap after a crash; staging files never end in
 // .jsonl, so Pi cannot discover a half-finished move or restoration.
 export async function openSessionArchives(directory, agentDir) {
+  await sessionModule();
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const databasePath = join(directory, "session-archives.sqlite"),
     db = new DatabaseSync(databasePath);
@@ -598,6 +606,8 @@ export async function openSessionArchives(directory, agentDir) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   }
   function decode(id) {
+    const sdk = sessionSdk;
+    if (!sdk) throw new DeskError(409, "会话归档尚未就绪，请稍后重试");
     const row = rowFor(id);
     if (!row) throw new DeskError(404, "未找到归档记录");
     if (sessionDigest(row.raw) !== row.digest)
@@ -623,6 +633,7 @@ export async function openSessionArchives(directory, agentDir) {
     });
   }
   async function finishArchive(id, record, check) {
+    const sdk = await sessionModule();
     const stage = stagePath(record, id, "archive");
     await noWriter(record, "归档");
     check();
@@ -678,6 +689,7 @@ export async function openSessionArchives(directory, agentDir) {
     },
     read: decode,
     async archive(id, path, cwd, nativeId) {
+      const sdk = await sessionModule();
       const previous = rowFor(id);
       if (previous?.phase === "archived") return decode(id);
       if (previous?.phase === "archiving") return this.completeArchive(id);

@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { embeddedPiSdk as sdk } from "../agent/pi-sdk.mjs";
+import { loadEmbeddedPiSdk } from "../agent/pi-sdk.mjs";
 import { DeskError, readDocument } from "../config/config-store.mjs";
 import {
   installedPackageVersion,
@@ -19,7 +19,8 @@ export function createDesktopGlobal({
 }) {
   const path = join(agentDir, "AGENTS.md");
   const cwd = join(directory, "global-context");
-  const makeManager = () => {
+  const makeManager = async () => {
+    const sdk = await loadEmbeddedPiSdk();
     const settings = sdk.SettingsManager.create(cwd, agentDir, {
       projectTrusted: false,
     });
@@ -37,7 +38,7 @@ export function createDesktopGlobal({
     const sources = (document.data.packages ?? []).map((row) =>
       typeof row === "string" ? row : row.source,
     );
-    const { manager } = makeManager();
+    const { manager } = await makeManager();
     const versions = await Promise.all(
       sources.map(async (source) => ({
         source,
@@ -56,20 +57,28 @@ export function createDesktopGlobal({
       command: "pi update --extensions",
     };
   }
-  const effectiveFile = () =>
-    sdk
-      .loadProjectContextFiles({ cwd: agentDir, agentDir })
-      .find((row) => dirname(row.path) === resolve(agentDir))?.path ?? path;
+  const effectiveFile = async () => {
+    const sdk = await loadEmbeddedPiSdk();
+    return (
+      sdk
+        .loadProjectContextFiles({ cwd: agentDir, agentDir })
+        .find((row) => dirname(row.path) === resolve(agentDir))?.path ?? path
+    );
+  };
   return {
     readPersonality: async () => ({
       ...(await readPersonality(path)),
-      effectiveFile: effectiveFile(),
+      effectiveFile: await effectiveFile(),
     }),
     savePersonality: (input) =>
       supervisor.shared(async ({ reload }) => {
         const result = await writePersonality(path, input);
         const reloadRequired = await reload();
-        return { ...result, effectiveFile: effectiveFile(), reloadRequired };
+        return {
+          ...result,
+          effectiveFile: await effectiveFile(),
+          reloadRequired,
+        };
       }),
     updates,
     update: (input) =>
@@ -81,7 +90,7 @@ export function createDesktopGlobal({
         )
           throw new DeskError(409, "插件列表已变化，请重新读取并确认全量更新");
         await mkdir(cwd, { recursive: true, mode: 0o700 });
-        const { settings, manager } = makeManager();
+        const { settings, manager } = await makeManager();
         await runNativePackageAction(manager, settings, {
           action: "update-all",
           scope: "global",

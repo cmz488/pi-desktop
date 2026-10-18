@@ -5,12 +5,16 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { embeddedPiSdk as sdk } from "../src/agent/pi-sdk.mjs";
+import {
+  embeddedPiSdk as sdk,
+  loadEmbeddedPiSdk,
+} from "../src/agent/pi-sdk.mjs";
 import { nativeSessionDirectory } from "../src/session/pi-session-storage.mjs";
 import { openDesktopStore } from "../src/control-plane/store.mjs";
 import { createSupervisor } from "../src/control-plane/supervisor.mjs";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 
+await loadEmbeddedPiSdk();
 async function native(f, name) {
   const manager = sdk.SessionManager.create(
     f.cwd,

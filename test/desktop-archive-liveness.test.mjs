@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventEmitter } from "node:events";
-import { embeddedPiSdk as sdk } from "../src/agent/pi-sdk.mjs";
+import {
+  embeddedPiSdk as sdk,
+  loadEmbeddedPiSdk,
+} from "../src/agent/pi-sdk.mjs";
 import {
   nativeSessionDirectory,
   openSessionArchives,
@@ -14,6 +17,7 @@ import { desktopFixture, until } from "./desktop-fixture.mjs";
 import { openDesktopStore } from "../src/control-plane/store.mjs";
 import { createSupervisor } from "../src/control-plane/supervisor.mjs";
 
+await loadEmbeddedPiSdk();
 test(
   "repeated archive requests preserve the original SQLite transcript and session identity",
   { timeout: 15000 },

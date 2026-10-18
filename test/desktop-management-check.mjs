@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
-import { embeddedPiSdk as sdk } from "../src/agent/pi-sdk.mjs";
+import {
+  embeddedPiSdk as sdk,
+  loadEmbeddedPiSdk,
+} from "../src/agent/pi-sdk.mjs";
 import { nativeSessionDirectory } from "../src/session/pi-session-storage.mjs";
 
+await loadEmbeddedPiSdk();
 const f = await desktopFixture();
 let browser, driver;
 try {

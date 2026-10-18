@@ -8,8 +8,11 @@ import {
   resolvePiSdk,
   checkPiSdk,
   piSdk,
+  loadEmbeddedPiSdk,
   scopedMcpCredentials,
 } from "../src/agent/pi-sdk.mjs";
+
+await loadEmbeddedPiSdk();
 
 test("SDK resolver follows the installed Pi package entry across an upgrade instead of using the local peer", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-web-sdk-upgrade-"));

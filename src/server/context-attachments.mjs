@@ -10,7 +10,7 @@ import {
 import { join, basename, isAbsolute, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { DeskError } from "../config/config-store.mjs";
-import { piSdk } from "../agent/pi-sdk.mjs";
+import { loadEmbeddedPiSdk } from "../agent/pi-sdk.mjs";
 import { getImageDimensions } from "@earendil-works/pi-tui";
 
 export const attachmentLimits = Object.freeze({
@@ -95,6 +95,7 @@ export async function referenceFiles(paths) {
  * @param {{modelInput?: readonly string[], blockImages?: boolean, autoResize?: boolean, allowReferences?: boolean}} settings
  */
 export async function prepareAttachments(input = [], settings = {}) {
+  const piSdk = await loadEmbeddedPiSdk();
   if (!Array.isArray(input) || input.length > attachmentLimits.maxCount)
     throw new DeskError(422, "最多添加 8 个上下文附件");
   let total = 0;

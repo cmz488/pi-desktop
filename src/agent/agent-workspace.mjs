@@ -21,7 +21,7 @@ import {
 import { projectMessage } from "../shared/conversation.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
-import { embeddedPiSdk as sdk } from "./pi-sdk.mjs";
+import { loadPiMessages, loadPiSessionManager } from "./pi-sdk.mjs";
 
 import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
 
@@ -234,6 +234,7 @@ export async function openAgentWorkspace(options) {
     // Older imports put native UI roles in model history. Repair the
     // effective contribution through Durable edits; immutable history and native
     // entry IDs stay intact. Run before resources read or tasks resume.
+    const { convertToLlm } = await loadPiMessages();
     const view = await selected.context(context);
     const edits = view.entries.flatMap((entry, index) => {
       const messages = view.contributions[index];
@@ -243,7 +244,7 @@ export async function openAgentWorkspace(options) {
             {
               target: entry.id,
               action: "replace",
-              messages: sdk.convertToLlm(messages),
+              messages: convertToLlm(messages),
             },
           ]
         : [];
@@ -299,6 +300,99 @@ export async function openAgentWorkspace(options) {
       ),
     };
   }
+  // The live half of an Agent projection: cheap enough to run per streaming
+  // window. `transcript` adds the expensive part (every committed entry run
+  // through projectMessage), so callers that only need status/partial/tools
+  // must leave it off.
+  async function projectActive(id, { transcript: withTranscript = true } = {}) {
+    const selected = await conversation(id);
+    const view = await selected.viewState(context);
+    try {
+      const live = view.value.docs["pi.live"] ?? {};
+      const entries = view.value.entries;
+      const agentSummary = await summary(selected);
+      const model =
+        agentSummary.model &&
+        models.getModel(
+          agentSummary.model.provider,
+          agentSummary.model.modelId,
+        );
+      const projected = await selected.context(context);
+      const lastEntry = entries.at(-1);
+      const active = {
+        ...agentSummary,
+        contextUsage: contextUsage(projected, model?.contextWindow),
+        ...(withTranscript
+          ? {
+              messages: entries.flatMap((entry) =>
+                (entry.data?.nativeMessage?.role === "custom"
+                  ? [entry.data.nativeMessage]
+                  : (entry.model ?? [])
+                )
+                  .filter((message) =>
+                    ["user", "assistant", "toolResult", "custom"].includes(
+                      message.role,
+                    ),
+                  )
+                  .map((message, index) => ({
+                    ...projectMessage(message, `${entry.id}:${index}`),
+                    entryId: entry.id,
+                    stopReason: message.stopReason,
+                    error: message.errorMessage,
+                  })),
+              ),
+            }
+          : {}),
+        partial: live.generation?.message
+          ? projectMessage(live.generation.message, "partial")
+          : null,
+        liveTools: live.tools ?? [],
+        retry: live.generation?.retry,
+        compactions: live.compactions ?? [],
+        queued: (view.value.docs["pi.inbox"]?.items ?? []).map((item) => ({
+          id: item.id,
+          mode: item.mode,
+        })),
+        usage: usageTotal(view.value.docs["pi.usage"]),
+        resourceState: await harness.snapshot(
+          DesktopResources,
+          selected.id,
+          context,
+        ),
+        // A cheap structural fingerprint: the live window compares it instead
+        // of rebuilding the transcript to find out whether history changed.
+        entryCount: entries.length,
+        lastEntryId: lastEntry ? String(lastEntry.id) : "",
+      };
+      if (!withTranscript) return active;
+      const latestResources = new Map(
+        (active.resourceState?.entries ?? []).map((entry) => [
+          entry.customType,
+          entry,
+        ]),
+      );
+      for (const [type, entry] of latestResources) {
+        const message = projectMessage(
+          {
+            role: "custom",
+            customType: type,
+            display: true,
+            content: "",
+            details: entry.data,
+          },
+          `resource:${type}`,
+        );
+        if (message.extensionView) active.messages.push(message);
+      }
+      return active;
+    } finally {
+      view.dispose();
+    }
+  }
+  async function live(id) {
+    guard();
+    return projectActive(id, { transcript: false });
+  }
   async function read(id) {
     guard();
     const records = await conversations();
@@ -338,77 +432,7 @@ export async function openAgentWorkspace(options) {
       active: null,
     };
     if (id === undefined) return result;
-    const selected = await conversation(id);
-    const view = await selected.viewState(context);
-    try {
-      const live = view.value.docs["pi.live"] ?? {};
-      const agentSummary = await summary(selected);
-      const model =
-        agentSummary.model &&
-        models.getModel(
-          agentSummary.model.provider,
-          agentSummary.model.modelId,
-        );
-      const projected = await selected.context(context);
-      result.active = {
-        ...agentSummary,
-        contextUsage: contextUsage(projected, model?.contextWindow),
-        messages: view.value.entries.flatMap((entry) =>
-          (entry.data?.nativeMessage?.role === "custom"
-            ? [entry.data.nativeMessage]
-            : (entry.model ?? [])
-          )
-            .filter((message) =>
-              ["user", "assistant", "toolResult", "custom"].includes(
-                message.role,
-              ),
-            )
-            .map((message, index) => ({
-              ...projectMessage(message, `${entry.id}:${index}`),
-              entryId: entry.id,
-              stopReason: message.stopReason,
-              error: message.errorMessage,
-            })),
-        ),
-        partial: live.generation?.message
-          ? projectMessage(live.generation.message, "partial")
-          : null,
-        liveTools: live.tools ?? [],
-        retry: live.generation?.retry,
-        compactions: live.compactions ?? [],
-        queued: (view.value.docs["pi.inbox"]?.items ?? []).map((item) => ({
-          id: item.id,
-          mode: item.mode,
-        })),
-        usage: usageTotal(view.value.docs["pi.usage"]),
-        resourceState: await harness.snapshot(
-          DesktopResources,
-          selected.id,
-          context,
-        ),
-      };
-      const latestResources = new Map(
-        (result.active.resourceState?.entries ?? []).map((entry) => [
-          entry.customType,
-          entry,
-        ]),
-      );
-      for (const [type, entry] of latestResources) {
-        const message = projectMessage(
-          {
-            role: "custom",
-            customType: type,
-            display: true,
-            content: "",
-            details: entry.data,
-          },
-          `resource:${type}`,
-        );
-        if (message.extensionView) result.active.messages.push(message);
-      }
-    } finally {
-      view.dispose();
-    }
+    result.active = await projectActive(id);
     return result;
   }
   async function changes(input, prior) {
@@ -646,6 +670,7 @@ export async function openAgentWorkspace(options) {
     read,
     async persistNative(id, entries, messages = []) {
       guard();
+      const { convertToLlm } = await loadPiMessages();
       await conversation(id);
       await harness.commit(async (tx) => {
         const document = await tx.doc(DesktopResources, id);
@@ -653,7 +678,7 @@ export async function openAgentWorkspace(options) {
         for (const { message, triggerTurn } of messages)
           await tx.appendEntry(id, {
             kind: "desk.native-message",
-            model: triggerTurn ? [] : sdk.convertToLlm([message]),
+            model: triggerTurn ? [] : convertToLlm([message]),
             data: { nativeMessage: message },
           });
       }, context);
@@ -678,6 +703,9 @@ export async function openAgentWorkspace(options) {
     },
     async importNative(id, entries) {
       guard();
+      const { convertToLlm } = await loadPiMessages();
+      const { SessionManager, sessionEntryToContextMessages } =
+        await loadPiSessionManager();
       const selected = await conversation(id);
       const prior = (await workspace.transcript(id)).entries;
       const nativeHeader = entries.find((entry) => entry.type === "session");
@@ -698,7 +726,7 @@ export async function openAgentWorkspace(options) {
         )
       )
         throw new DeskError(409, "只能向空会话接管 Pi 记录");
-      const native = sdk.SessionManager.inMemory(undefined, undefined, entries),
+      const native = SessionManager.inMemory(undefined, undefined, entries),
         mapping = [];
       let through = 0;
       await selected.commit(async (tx) => {
@@ -716,12 +744,10 @@ export async function openAgentWorkspace(options) {
           }));
         const ids = new Map();
         for (const entry of branch) {
-          const sourceMessages = sdk.sessionEntryToContextMessages(entry);
-          const model = sdk
-            .convertToLlm(sourceMessages)
-            .filter((message) =>
-              ["user", "assistant", "toolResult"].includes(message.role),
-            );
+          const sourceMessages = sessionEntryToContextMessages(entry);
+          const model = convertToLlm(sourceMessages).filter((message) =>
+            ["user", "assistant", "toolResult"].includes(message.role),
+          );
           if (!model.length && entry.type !== "context_edit") continue;
           const draft = {
             kind:
@@ -748,8 +774,8 @@ export async function openAgentWorkspace(options) {
                 : {
                     target: ids.get(entry.targetId),
                     action: "replace",
-                    messages: sdk.convertToLlm(
-                      sdk.sessionEntryToContextMessages({
+                    messages: convertToLlm(
+                      sessionEntryToContextMessages({
                         ...native.getEntry(entry.targetId),
                         message: {
                           ...native.getEntry(entry.targetId)?.message,
@@ -768,6 +794,7 @@ export async function openAgentWorkspace(options) {
       return { through, mapping };
     },
     agent,
+    live,
     execute,
     install(extension) {
       guard();

@@ -45,6 +45,13 @@ try {
   );
   driver = await browserDriver(profile);
   const { call, evaluate, until } = driver;
+  // Count snapshot fetches from the page. Streaming text must arrive as delta
+  // events instead of making the page pull the whole chat snapshot per batch.
+  await call("Page.addScriptToEvaluateOnNewDocument", {
+    source: `window.__req={};const original=window.fetch;
+window.fetch=async(...args)=>{const path=new URL(String(args[0]),location.href).pathname;
+window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
+  });
   await call("Emulation.setDeviceMetricsOverride", {
     width: 1320,
     height: 860,
@@ -54,6 +61,10 @@ try {
   await call("Page.navigate", { url: app.url });
   await until(
     "document.querySelector('#connection-status')?.textContent==='Pi 已连接'",
+  );
+  assert(
+    ((await evaluate("window.__req['/api/state']")) ?? 0) >= 1,
+    "the snapshot counter must observe the initial state fetch",
   );
   assert(await evaluate("!!document.querySelector('#workspace-right')"));
   await evaluate(
@@ -123,6 +134,7 @@ try {
     await evaluate("document.querySelector('#prompt').value"),
     "new draft B",
   );
+  await evaluate("window.__req={}");
   await evaluate(
     "window.fetch=window.originalFetch;window.releasePrompt();new Promise(resolve=>setTimeout(resolve,0))",
   );
@@ -145,6 +157,11 @@ try {
   );
   await until(
     "document.querySelector('#messages').innerText.includes('Durable response') && document.querySelector('#stop-button').hidden===true",
+  );
+  const streamedFetches = (await evaluate("window.__req['/api/state']")) ?? 0;
+  assert(
+    streamedFetches <= 5,
+    `a streamed answer must not refetch the chat snapshot per batch (${streamedFetches})`,
   );
   await evaluate("document.querySelector('#agent-config-button').click()");
   await until("document.querySelector('#dialog').open");

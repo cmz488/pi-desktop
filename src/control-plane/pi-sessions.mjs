@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { stat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { embeddedPiSdk as sdk } from "../agent/pi-sdk.mjs";
+import { loadPiSessionManager } from "../agent/pi-sdk.mjs";
+
+/* Host-only module: the transcript projection is synchronous, so bind the
+ * session submodule once here instead of threading awaits through callers. */
+const { SessionManager, buildSessionProjection } = await loadPiSessionManager();
 import { DeskError } from "../config/config-store.mjs";
 import {
   projectMessage,
@@ -18,7 +22,7 @@ const identity = (path) => {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 };
 export function projectPiRecord(record, id) {
-  const manager = sdk.SessionManager.inMemory(
+  const manager = SessionManager.inMemory(
     record.header.cwd,
     undefined,
     record.entries,
@@ -26,7 +30,7 @@ export function projectPiRecord(record, id) {
   const branch = manager.getBranch(),
     projection = manager.buildSessionProjection();
   // Keep older messages visible in history while applying Pi's context edits.
-  const history = sdk.buildSessionProjection(
+  const history = buildSessionProjection(
     branch.map((entry) =>
       entry.type === "compaction"
         ? { ...entry, type: "custom", customType: "desktop-history-compaction" }
@@ -92,7 +96,7 @@ export function createPiSessions(agentDir) {
           Array.from({ length: Math.min(4, directories.length) }, async () => {
             while (position < directories.length) {
               const dir = directories[position++];
-              found.push(...(await sdk.SessionManager.listAll(dir)));
+              found.push(...(await SessionManager.listAll(dir)));
             }
           }),
         );
