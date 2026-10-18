@@ -13,6 +13,7 @@
 - [native-custom-context-review.md](native-custom-context-review.md)
 - [package-sidebar-review.md](package-sidebar-review.md)
 - [performance-check.md](performance-check.md)
+- [pi-audit-remediation.md](pi-audit-remediation.md)
 - [pi-boundary-deepening-review.md](pi-boundary-deepening-review.md)
 - [readme-before-organization.md](readme-before-organization.md)
 - [remote-access-review.md](remote-access-review.md)
