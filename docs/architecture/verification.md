@@ -98,3 +98,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 `test:workspace:browser` 纳入 `test/long-task-wait-browser-check.mjs`：默认 Host → worker → runtime 的真实前台任务在点击等待后再阻塞 16.5 秒，13 秒时仍未结束且没有通用中止或提前成功，最终回答提交后才返回。后续通过同 worker 的两个独立会话验证取消等待／总期限不误中止任务、408 只续同一目标且不重置预算、旧成功故意无视 abort 晚到也不影响另一会话。读模型返回 unsupported 时立即释放等待，能力隐藏不留下观察请求。时钟边界还验证 5 分钟预算、45 秒等待连接错误与普通 API 的 12 秒预算，以及全部出口的定时器回收。
 
 `test/task-waits.test.mjs` 用真实 HTTP 验证 408、断连归还配额、503 关闭、正常出口移除连接监听与到期时钟；`test/durable-task-scope.test.mjs` 用真实 Durable runtime 验证 32 项观察配额和物理断连后立即重用；`test/agent-workspace.test.mjs` 验证独立取消 Context 释放观察者而前台任务继续。完整调用与错误契约见 [任务契约](interfaces/task-graph.md)。
+
+## 工具契约与只读交接
+
+遇到参数 schema 不一致或 committed range 的只读审查交接时，先按[交接指南](../guides/review-handoff.md)固定输入并检查文件。`test/toolchain-contract-check.mjs` 使用显式的安装包／宿主路径，只做纯参数核验与临时产物／历史条件夹具，不加入默认产品测试依赖，不启动子代理。它对 E3 只提供条件解释，不验证实际历史事件已经修复；实际调查和边界阻塞保存在历史修复记录。

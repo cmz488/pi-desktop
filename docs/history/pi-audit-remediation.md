@@ -22,20 +22,20 @@
 
 ## 问题矩阵
 
-| 编号 | 发现与基线证据                                                                                                                | 状态                           |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| P1   | 默认 runtime 固定 `singleAgent: true`，合法 `fork` 返回 409；新浏览器夹具没有覆盖默认多进程路径                               | 已修复，见下文                 |
-| P2   | Q1/Q2/Q3 → 退回 Q2 → 继续 Q4 → 退回 Q4 后，Q1 的 entry id 塌缩到退回标记；从 Q1 分叉错误带入 Q2/Q4                            | 已修复，见下文                 |
-| P3   | A/B 各有真实后台任务；读取 A 的任务图包含 B，对 A 取消返回两个任务 id；以 B 为合法请求目标指定 A 的 taskId 也能取消           | 已修复，见下文                 |
-| P4   | Chromium 中在 A 首次确认后切 B，仍保留 A 的任务行及确认状态，第二次点击直接发取消 B 的命令                                    | 已修复，见下文                 |
-| P5   | 读模型返回 `supported: false`，工作台仍显示两个内置页                                                                         | 已修复，见下文                 |
-| P6   | 对 16.5 秒任务点等待，12008 ms 弹出通用中止，任务仍运行且回答尚未提交                                                         | 已修复，见下文                 |
-| S1   | 两个新增面板和后台夹具没有完整的接口／不变量／错误契约块                                                                      | 契约已补齐，待规范总复核       |
-| S2   | 分支树文档漏写 `entryId`、`preview`，`rewindTo` 的含义与投影不符                                                              | 字段已修正，待文档总复核       |
-| S3   | 两面板重复加载／节流／补刷骨架，身份失效处理分别维护（主观气味）                                                              | 已修复，见下文                 |
-| E1   | 调用使用无效的 `options.progress`，当前 schema 是 `includeProgress`／`chatProgress`；技能参考存在旧示例                       | 待纠正与核验                   |
-| E2   | 只读 reviewer 无法执行 Git 命令；仅提供 diff 命令、未交付可读 committed diff，触发主管求助后 detached                         | 待纠正与核验                   |
-| E3   | detached 后 status 找不到回执 id；另一路调用中断；延迟主管请求 reply 又找不到 pending request；尚无证据确定根因或确认任务停止 | 待诊断；需要越界时停止申请授权 |
+| 编号 | 发现与基线证据                                                                                                                | 状态                         |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| P1   | 默认 runtime 固定 `singleAgent: true`，合法 `fork` 返回 409；新浏览器夹具没有覆盖默认多进程路径                               | 已修复，见下文               |
+| P2   | Q1/Q2/Q3 → 退回 Q2 → 继续 Q4 → 退回 Q4 后，Q1 的 entry id 塌缩到退回标记；从 Q1 分叉错误带入 Q2/Q4                            | 已修复，见下文               |
+| P3   | A/B 各有真实后台任务；读取 A 的任务图包含 B，对 A 取消返回两个任务 id；以 B 为合法请求目标指定 A 的 taskId 也能取消           | 已修复，见下文               |
+| P4   | Chromium 中在 A 首次确认后切 B，仍保留 A 的任务行及确认状态，第二次点击直接发取消 B 的命令                                    | 已修复，见下文               |
+| P5   | 读模型返回 `supported: false`，工作台仍显示两个内置页                                                                         | 已修复，见下文               |
+| P6   | 对 16.5 秒任务点等待，12008 ms 弹出通用中止，任务仍运行且回答尚未提交                                                         | 已修复，见下文               |
+| S1   | 两个新增面板和后台夹具没有完整的接口／不变量／错误契约块                                                                      | 契约已补齐，待规范总复核     |
+| S2   | 分支树文档漏写 `entryId`、`preview`，`rewindTo` 的含义与投影不符                                                              | 字段已修正，待文档总复核     |
+| S3   | 两面板重复加载／节流／补刷骨架，身份失效处理分别维护（主观气味）                                                              | 已修复，见下文               |
+| E1   | 调用使用无效的 `options.progress`，当前 schema 是 `includeProgress`／`chatProgress`；技能参考存在旧示例                       | 已纠正并隔离核验，见下文     |
+| E2   | 只读 reviewer 无法执行 Git 命令；仅提供 diff 命令、未交付可读 committed diff，触发主管求助后 detached                         | 交接已纠正并隔离核验，见下文 |
+| E3   | detached 后 status 找不到回执 id；另一路调用中断；延迟主管请求 reply 又找不到 pending request；尚无证据确定根因或确认任务停止 | 未闭环；需原始日志或额外授权 |
 
 E1/E2 属于调用与交接问题，不自动归咎于产品代码；E3 也不能仅凭上游类似 changelog 就认定根因。上述工具调用未产出可用审查报告，不作为独立复核证据。
 
@@ -125,3 +125,24 @@ E1/E2 属于调用与交接问题，不自动归咎于产品代码；E3 也不�
 - 24 项隔离反向均命中行为断言：恢复原等待期限、加长所有普通 API、丢前端 signal、丢 workspace 取消 Context、丢 runtime signal、租约不触发、去容量、丢断连、漏清 timer／listener／slot、关闭不取消、去配置验证、不续租、身份变化不取消、显式取消不 abort、总期限不取消、采用晚到成功、漏撤总预算、续租重置预算、wait 目标不冻结、通用中止错误、提前返回终态、unsupported 不清等待。未把脚本／模块／语法错误或单纯进程超时当作失败证据。
 - 阶段回归：unit 354／354、Durable 32／32、workspace 25／25、check（90 个源文件）、格式、五套浏览器、SIGKILL 恢复及 npm 产物（175 个文件）均通过，日志前缀 `long-wait-full-*`。普通浏览器曾两次在既有 `.preview-resize` 指针断言失败；隔离诊断与随后未改代码的完整重跑通过，原因尚未证实，不将此前失败计为通过，也没有放宽该断言或修改无关产品代码。
 - 本会话 Standards 复核：新增 HTTP 观察模块有中文契约与独立职责，公开 Context API、命名期限、校验与全部出口清理，无依赖／外部包改动。Spec 复核：实际长任务、真实作用域与租约回收、取消观察与中止任务分离、迟到结果及另一会话保护，且未扩大远程权限或请求目标。
+
+### E1／E2：参数与只读交接纠正
+
+- E1 是调用契约错误，不是 Desktop 产品缺陷。已安装 `pi-subagents` 0.77.0 的 `src/extension/subagent-options.js` 先拒绝未知 options key；`schemas.js:211,231` 声明 `chatProgress` 为 `auto/off/live-card` 字符串、`includeProgress` 为 boolean。正确关闭片段为 `includeProgress:false, chatProgress:"off"`，不是 `progress:false`，也不是 `chatProgress:false`。`skills/pi-subagents/references/prompting-and-roles.md` 的 cleanup 示例仍含旧字段；不修改外部包，项目指南以实际 schema 为准。
+- E2 是父会话交接错误：前序本对话记录的 reviewer 已执行 `ls`、`watchdog_diff` 和 `contact_supervisor`，不能概括为“完全无法启动”。安装包 `agents/reviewer.md` 明确没有 Shell，并说明 `watchdog_diff` 不检查 committed ranges；正确交接是父会话先提供可读的 immutable artifact，而非仅给出 Git 命令。本轮没有重新启动 reviewer 或扩大其权限。
+- 新指南 `docs/guides/review-handoff.md` 约定完整 base／head SHA、范围、补丁、变更路径、摘要／字节数、两端源码快照、只读封存和读文件 preflight；源码上下文不能用变化后的当前工作树冒充旧 HEAD。缺少文件、身份不符或摘要不符时先补交接，不开始结论。
+- 独立验证 `test/toolchain-contract-check.mjs` 显式读取已安装包／宿主路径；扩展 peers 由该宿主解析，不安装或改写依赖。参数部分读取指南中的真实示例进行校验。交接部分重新从 Git 对象生成本次 10 个提交的材料，验证可读、同长度篡改／字节数错误／越界路径／身份错误被拒绝，以及补丁与上下文只读。只调用纯校验／解析函数和父会话的 Git／tar，不调用子代理工具或执行器。
+- 本次补丁身份：base `147eced3907e51ccd2135a7543ede085e676b131`，head `bc1ed7af74d2ea98fb1dcccf0c06b907b35f6714`，10 个提交，158215 bytes，SHA-256 `c8086df47ac910a63c0d2ba09f17ce888c9f4ee0a52589f229809667400565e1`。临时产物不是永久依赖，正式验证脚本可重建。
+- 9 项隔离反向核验：把指南恢复为旧 progress 字段，移除摘要、字节数、快照只读、manifest 版本、种类、base、head 或路径边界校验；均命中 AssertionError，而不是模块或运行环境错误。首次直接导入遇到未提供宿主 peer `typebox`，这是独立 Node 夹具的解析问题；改为显式宿主 peer 解析后再计入上述结果，没有修改 node_modules。
+
+- 本阶段核验：E1／E2 独立验证与 9 项反向断言通过；`npm test` 354／354、check（90 个源文件）、format、npm 产物（176 个文件）通过。它们不替代仍缺失的 E3 实际生命周期验收。
+- 本会话两轴复核：Standards 检查指南／历史分离、显式环境与隔离目录、未引入产品抽象或外部写入；Spec 检查 schema 字段类型、实际可读且固定身份的交接、不增加 reviewer 权限，以及 E3 的未知状态没有被当作完成或停止。
+
+### E3：调查边界与未闭环证据
+
+- **当前不宣称修复，不确认旧任务已经停止。** 原始 `/tmp/pi-review-bc1ed7a.mcg8d2/review.md` 与 `02bf8b81-9988-4128-954e-d57d6bc496d1` 的旧 meta／转录产物现已不存在；此前本对话记录的 `exitCode:-2`、acceptance pending 和 3 次工具调用也不是停止或完成证据。
+- 0.77.0 的源码可定位行为：`subagent-executor.js:3928,3951–3964` 记录前台结果并生成 detached 恢复提示；`run-id-resolver.js` 先看当前父会话的前台记录，再看 async／alias／nested 定位信息；`run-status.js:414–475` 没有可用定位时返回 `Async run not found`。仅凭这句话不能推断任务从未启动或已经停止。
+- 正式脚本在临时目录复现**条件路径**：内存中 detached 前台记录可查，`foreground-history.js` 的 compact／restore 仅接受 completed/failed/paused/stopped，因此在没有其他 async／nested 定位记录时，新状态不能恢复它；completed 对照可恢复，另一父会话仍保持隔离。**没有证据证明原始事件确实发生了这种状态重建或会话不匹配，不能把条件模型当成本次根因。**
+- 主管通道 `native-supervisor-channel.js:482–486` 对 pending Map 查不到 replyTo 时明确失败；成功 reply、请求清理与通道关闭均可能改变 pending，关闭路径会清 Map。它不证明子任务退出。另一路“Tool … interrupted and may have partially run”缺少原始调用／取消时序，无法与 detached 或 pending 消失建立因果链。
+- 本仓库不实现这些 run-id／foreground-history／supervisor 注册表，目前没有证据支持一个项目内适配修复；也不能排除上层编排或宿主生命周期的影响。修改上游持久化规则、移除父会话隔离或补造停止状态都不安全。当前需要原始工具回执、status 的准确参数与父会话身份、reload/中断/回复时间线及相关生命周期日志；若不足以判定，才考虑另行授权的隔离真实生命周期回归。
+- 因此触发目标的停下询问规则：E3 不计完成，工具链任务保持进行中；文档总复核与最终全量验收也尚未完成。后续若需真实子代理、原会话操作或外部源码修改，先由用户明确调整边界。纯条件夹具的退出 0 不是 E3 产品验收通过。
