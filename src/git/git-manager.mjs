@@ -3,9 +3,10 @@ import { promisify } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { realpath, readlink, lstat, access, open } from "node:fs/promises";
 import { constants } from "node:fs";
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve, relative, isAbsolute, join } from "node:path";
 import { DeskError } from "../config/config-store.mjs";
 import { layoutGitGraph } from "../shared/git-graph.mjs";
+import { forgetGitInfo } from "./workspace-info.mjs";
 
 const execute = promisify(execFile);
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -112,12 +113,20 @@ const redacted = (value) =>
 export async function getGitRepository(cwd) {
   const directory = await realpath(cwd);
   const probe = new GitRepository(directory);
-  const root = await probe.run(["rev-parse", "--show-toplevel"]);
+  const [toplevel, gitDirectory] = (
+    await probe.run(["rev-parse", "--show-toplevel", "--git-dir"])
+  )
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""));
+  const root = toplevel;
   const key = await realpath(root.replace(/\r?\n$/, ""));
   if (!repositories.has(key)) {
     if (repositories.size >= MAX_REPOSITORIES)
       throw new DeskError(429, "当前进程打开了过多 Git 仓库，请完成任务后重启");
-    repositories.set(key, new GitRepository(key));
+    repositories.set(
+      key,
+      new GitRepository(key, resolve(directory, gitDirectory || ".git")),
+    );
   }
   const repo = repositories.get(key);
   workspaces.set(resolve(cwd), repo);
@@ -126,8 +135,9 @@ export async function getGitRepository(cwd) {
   return repo;
 }
 class GitRepository {
-  constructor(root) {
+  constructor(root, gitDir = resolve(root, ".git")) {
     this.root = root;
+    this.gitDir = resolve(gitDir);
     this.pending = new Map();
     this.busy = false;
   }
@@ -252,55 +262,86 @@ class GitRepository {
     return { raw: raw.join("\0"), totals };
   }
   async state({ readOnly = false, fingerprintPaths } = {}) {
+    /* One porcelain v2 read supplies files, branch, HEAD and upstream, so a
+     * state read no longer spawns rev-parse, symbolic-ref and an extra
+     * for-each-ref just to label the branch. */
     const status = await this.run([
       "status",
-      "--porcelain=v1",
+      "--porcelain=v2",
+      "--branch",
       "-z",
       "--untracked-files=all",
     ]);
     const records = status.split("\0"),
       files = [];
+    let head = "",
+      branch = "",
+      upstreamFields = [];
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
       if (!record) continue;
-      const index = record[0],
-        worktree = record[1],
-        path = record.slice(3);
-      const originalPath =
-        index === "R" || index === "C" || worktree === "R" || worktree === "C"
-          ? records[++i]
-          : undefined;
+      if (record.startsWith("# branch.oid ")) {
+        const value = record.slice("# branch.oid ".length);
+        head = value === "(initial)" ? "" : value;
+        continue;
+      }
+      if (record.startsWith("# branch.head ")) {
+        const value = record.slice("# branch.head ".length);
+        branch = value === "(detached)" ? "" : value;
+        continue;
+      }
+      if (record.startsWith("# branch.upstream ")) {
+        const value = record.slice("# branch.upstream ".length);
+        const slash = value.indexOf("/");
+        if (slash > 0)
+          upstreamFields = [
+            value.slice(0, slash),
+            `refs/heads/${value.slice(slash + 1)}`,
+          ];
+        continue;
+      }
+      if (record.startsWith("# ")) continue;
+      const kind = record[0];
+      if (kind === "?" || kind === "!") {
+        files.push({
+          path: record.slice(2),
+          originalPath: undefined,
+          index: "?",
+          worktree: "?",
+          staged: false,
+          unstaged: kind === "?",
+        });
+        continue;
+      }
+      if (kind !== "1" && kind !== "2" && kind !== "u") continue;
+      const fields = record.split(" ");
+      const index = fields[1]?.[0] ?? ".",
+        worktree = fields[1]?.[1] ?? ".";
+      const path =
+        kind === "2"
+          ? fields.slice(9).join(" ")
+          : kind === "u"
+            ? fields.slice(10).join(" ")
+            : fields.slice(8).join(" ");
+      const originalPath = kind === "2" ? records[++i] : undefined;
       files.push({
         path,
         originalPath,
         index,
         worktree,
-        staged: index !== " " && index !== "?",
-        unstaged: worktree !== " " || index === "?",
+        staged: kind === "u" ? true : index !== ".",
+        unstaged: worktree !== ".",
       });
     }
-    const head = (
-      await this.run(["rev-parse", "--verify", "--quiet", "HEAD"], true)
-    ).trim();
-    const branch = (
-      await this.run(["symbolic-ref", "--quiet", "--short", "HEAD"], true)
-    ).trim();
-    const upstreamFields = branch
-      ? (
-          await this.run([
-            "for-each-ref",
-            "--format=%(upstream:remotename)%00%(upstream:remoteref)",
-            `refs/heads/${branch}`,
-          ])
-        )
-          .trim()
-          .split("\0")
-      : [];
     const upstream =
       upstreamFields[0] && upstreamFields[1]?.startsWith("refs/heads/")
         ? { remote: upstreamFields[0], ref: upstreamFields[1] }
         : null;
+    // Refs and the config fingerprint stay fresh on every read: another
+    // process can move a ref without touching the worktree, and a confirmation
+    // fingerprint must never come from a cached copy.
     const refs = await this.historyRefsRaw();
+    const config = await this.run(["config", "--null", "--list"]);
     const tags = refs
       .split("\n")
       .filter((line) => line.startsWith("refs/tags/"))
@@ -328,25 +369,47 @@ class GitRepository {
       .update(head)
       .update(refs)
       .digest("hex");
+    const remotes = [
+      ...new Set(
+        config
+          .split("\0")
+          .filter((chunk) =>
+            /^remote\.[^\n.]+\.[^.\n]+$/.test(chunk.split("\n")[0] ?? ""),
+          )
+          .map((chunk) => /^remote\.([^\n.]+)\./.exec(chunk.split("\n")[0])[1]),
+      ),
+    ].sort();
     const hash = createHash("sha256")
       .update(refs)
       .update(head)
       .update(branch)
-      .update(await this.run(["config", "--null", "--list"]))
+      .update(config)
       .update(status);
     const filesByPath = new Map(files.map((file) => [file.path, file]));
-    // One diff run per side supplies raw blob ids for the revision hash and the
-    // review totals. Whole patches are never generated, so large binaries stay
-    // cheap and cannot overflow the output buffer.
-    for (const [key, args] of [
-      ["unstaged", []],
-      ["staged", ["--cached"]],
-    ]) {
-      const facts = await this.diffFacts(args);
+    /* Raw blob ids supply the revision hash and review totals; whole patches are
+     * never generated, so large binaries stay cheap. A single diff against HEAD
+     * covers the common case where each file changed on one side only, and the
+     * per-side runs return only when one file changed on both sides. */
+    const bothSides = files.some((file) => file.staged && file.unstaged);
+    if (!bothSides && head) {
+      const facts = await this.diffFacts(["HEAD"]);
       hash.update(facts.raw);
       for (const [path, stats] of facts.totals) {
         const file = filesByPath.get(path);
-        if (file) (file.stats ??= {})[key] = stats;
+        if (!file) continue;
+        file.stats = { [file.staged ? "staged" : "unstaged"]: stats };
+      }
+    } else {
+      for (const [key, args] of [
+        ["unstaged", []],
+        ["staged", ["--cached"]],
+      ]) {
+        const facts = await this.diffFacts(args);
+        hash.update(facts.raw);
+        for (const [path, stats] of facts.totals) {
+          const file = filesByPath.get(path);
+          if (file) (file.stats ??= {})[key] = stats;
+        }
       }
     }
     let bytes = 0,
@@ -424,16 +487,11 @@ class GitRepository {
       hash.update(content);
     }
     const operations = [];
-    // One spawn for all markers; --git-path keeps linked worktrees correct.
-    const operationPaths = (
-      await this.run([
-        "rev-parse",
-        ...GIT_OPERATION_FILES.flatMap((name) => ["--git-path", name]),
-      ])
-    )
-      .split("\n")
-      .map((line) => line.replace(/\r$/, ""));
-    while (operationPaths.at(-1) === "") operationPaths.pop();
+    // Markers are read from the repository's own git dir, captured once when
+    // the repository was opened; no extra spawn per state read.
+    const operationPaths = GIT_OPERATION_FILES.map((name) =>
+      join(this.gitDir, name),
+    );
     for (const [index, name] of GIT_OPERATION_FILES.entries()) {
       const path = operationPaths[index];
       if (!path) {
@@ -441,7 +499,7 @@ class GitRepository {
         continue;
       }
       try {
-        await access(resolve(this.root, path));
+        await access(path);
         operations.push(name);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
@@ -481,7 +539,7 @@ class GitRepository {
       files,
       revision: hash.digest("hex"),
       busy: this.busy,
-      remotes: (await this.run(["remote"])).trim().split("\n").filter(Boolean),
+      remotes,
       // Reuse the ref listing instead of asking for heads a second time.
       branches: historyRefs
         .filter((ref) => ref.type === "branch")
@@ -953,6 +1011,8 @@ class GitRepository {
       await guard();
       const r = item.request;
       const args = mutationArgs(r, state);
+      // The header label is cached briefly; a write must clear it.
+      forgetGitInfo(this.root);
       try {
         const output = redacted(
           await this.run(
