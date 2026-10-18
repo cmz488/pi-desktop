@@ -167,7 +167,7 @@ export function createTaskPanel({
         node.dataset.status = task.status;
         node.style.setProperty("--task-depth", String(depth));
         node.append(
-          element("span", "task-panel-marker", task.background ? "◆" : "◆"),
+          element("span", "task-panel-marker", "◆"),
           element("span", "task-panel-label", kindLabel(task.kind)),
           element("span", "tag", statusLabel(task.status)),
         );
