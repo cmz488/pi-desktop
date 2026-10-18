@@ -14,6 +14,7 @@ import { createAgentBrowser } from "../agent/agent-browser.mjs";
 import { createInteractionStore } from "../agent/interaction-store.mjs";
 import { webCommands } from "../shared/pi-commands.mjs";
 import { projectMessage } from "../shared/conversation.mjs";
+import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { openNativeTranscript } from "../session/pi-session-storage.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
@@ -808,15 +809,24 @@ export async function startDurableDesk(options = {}) {
             ? (requestState.getStore()?.active?.id ?? root.agents[0]?.id)
             : Number(id);
         if (requested === undefined) throw new DeskError(422, "请选择 Agent");
-        // 在跑工具只在会话视图里；只为实际有实时任务的会话读一次轻量投影。
+        await workspace.agent(requested);
+        const scope = ownedConversationIds(requested, root.children ?? []);
+        const tasks = root.tasks.filter((task) =>
+          scope.has(task.conversationId),
+        );
+        // 只为范围内有实时任务的会话读轻量投影，不能把其他顶层会话的工具带进来。
         const tools = [];
         const seen = new Set();
-        for (const task of root.tasks) {
+        for (const task of tasks) {
           if (seen.has(task.conversationId)) continue;
           seen.add(task.conversationId);
-          const live = await workspace
-            .live(task.conversationId)
-            .catch(() => undefined);
+          let live;
+          try {
+            live = await workspace.live(task.conversationId);
+          } catch (error) {
+            // 任务图与轻量视图分开读取，期间被删除的会话不再有工具可展示；其他错误不能吞掉。
+            if (error.status !== 404) throw error;
+          }
           for (const call of live?.liveTools ?? [])
             if (call.status !== "done")
               tools.push({
@@ -828,8 +838,10 @@ export async function startDurableDesk(options = {}) {
         }
         return {
           sessionId: String(requested),
-          tasks: root.tasks,
-          conversations: root.children ?? [],
+          tasks,
+          conversations: (root.children ?? []).filter((row) =>
+            scope.has(row.id),
+          ),
           tools,
         };
       },

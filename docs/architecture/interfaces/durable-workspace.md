@@ -33,7 +33,7 @@ workspace.read(id?)        // async -> { agents: [摘要], recovery, tasks, ... 
                            //   agents 是每个会话的摘要（含 parent 分叉来源）；children 是被任务拥有的子会话；
                            //   tasks 是任务图（含 owner 与 waitingOn）；recovery 是本次打开时接管的待恢复任务
                            //   （无则 null）；tasks 是当前任务图
-workspace.live(id?)        // async -> projectActive(id, { transcript: false })：流式期间的轻量视图
+workspace.live(id?)        // async -> 流式期间的轻量视图；也可观察 owned 子会话，不授予写命令权限
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
 workspace.execute(command, input?)  // async -> 命令结果
 workspace.transcript(id)   // async -> { entries, ... }：Pi 消息形状的投影

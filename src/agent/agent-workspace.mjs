@@ -19,6 +19,7 @@ import {
   estimateMessageTokens,
 } from "@earendil-works/pi-ai/utils/estimate";
 import { projectMessage } from "../shared/conversation.mjs";
+import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
 import { loadPiMessages, loadPiSessionManager } from "./pi-sdk.mjs";
@@ -267,13 +268,29 @@ export async function openAgentWorkspace(options) {
   async function conversations() {
     return (await scanAll()).filter((row) => !row.owner);
   }
-  async function conversation(id) {
+  async function conversation(id, { allowOwned = false } = {}) {
     if (!Number.isSafeInteger(id) || id < 0)
       throw new DeskError(422, "Agent ID 无效");
     const found = await harness.conversation(id, context);
-    if (!found || !(await harness.snapshot(AgentProfile, id, context)))
+    const managed = await harness.snapshot(AgentProfile, id, context);
+    // 子会话没有 Desktop 配置文档，但任务面板仍需观察它的在跑工具；写命令不走这个例外。
+    const owned =
+      !managed && allowOwned
+        ? (await scanAll()).some((row) => row.id === id && row.owner)
+        : false;
+    if (!found || (!managed && !owned))
       throw new DeskError(404, "Agent 不存在");
     return found;
+  }
+  async function scopedTask(id, taskId) {
+    if (!Number.isSafeInteger(taskId) || taskId < 0)
+      throw new DeskError(422, "任务 id 无效");
+    const task = await harness.getTask(taskId, context);
+    const scope = ownedConversationIds(id, await scanAll());
+    // 越界与未知任务使用同一个错误，不能借任务 id 查询其他会话的工作。
+    if (!task || !scope.has(task.conversationId))
+      throw new DeskError(404, "任务不存在");
+    return task;
   }
   async function repairNativeContext(selected) {
     // 旧版导入把原生 UI 角色写进了模型历史。用 Durable 的编辑修复生效贡献；
@@ -362,8 +379,11 @@ export async function openAgentWorkspace(options) {
   // Agent 投影的轻量一半：足够便宜，可以每个流式窗口跑一次。`transcript` 会加上
   // 昂贵部分（每条已提交 entry 都过 projectMessage），所以只需要状态／流式片段／
   // 工具的调用者必须关掉它。
-  async function projectActive(id, { transcript: withTranscript = true } = {}) {
-    const selected = await conversation(id);
+  async function projectActive(
+    id,
+    { transcript: withTranscript = true, allowOwned = false } = {},
+  ) {
+    const selected = await conversation(id, { allowOwned });
     const view = await selected.viewState(context);
     try {
       const live = view.value.docs["pi.live"] ?? {};
@@ -440,7 +460,7 @@ export async function openAgentWorkspace(options) {
   }
   async function live(id) {
     guard();
-    return projectActive(id, { transcript: false });
+    return projectActive(id, { transcript: false, allowOwned: true });
   }
   async function read(id) {
     guard();
@@ -751,10 +771,7 @@ export async function openAgentWorkspace(options) {
     if (command === "wait") {
       // 等待：给定 taskId 时等那个任务结束；否则等该会话空闲。两者都只观察，不改变任务。
       if (input.taskId !== undefined) {
-        if (!Number.isSafeInteger(input.taskId))
-          throw new DeskError(422, "任务 id 无效");
-        if (!(await harness.getTask(input.taskId, context)))
-          throw new DeskError(404, "任务不存在");
+        await scopedTask(selected.id, input.taskId);
         await harness.waitForTask(input.taskId, context);
         return {
           id: selected.id,
@@ -768,16 +785,16 @@ export async function openAgentWorkspace(options) {
     if (command === "cancel") {
       // 取消：taskId 指定单个任务；background 只取消后台任务；否则取消该会话当前的工作。
       if (input.taskId !== undefined) {
-        if (!Number.isSafeInteger(input.taskId))
-          throw new DeskError(422, "任务 id 无效");
+        await scopedTask(selected.id, input.taskId);
         await harness.abortTask(input.taskId, context);
         return { id: selected.id, taskId: input.taskId, cancelled: true };
       }
       if (input.background === true) {
         // 只取消后台任务：按任务图里的 background 标记逐个中止，不等前台工作结束
         // （Durable 的 abortConversation(background) 会等到会话空闲，对界面是阻塞风险）。
+        const scope = ownedConversationIds(selected.id, await scanAll());
         const background = Object.values(graph.value.tasks).filter(
-          (task) => task.background,
+          (task) => task.background && scope.has(task.conversationId),
         );
         await Promise.all(
           background.map((task) => harness.abortTask(task.id, context)),
