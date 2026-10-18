@@ -45,7 +45,6 @@ export function createTailscaleFunnel({
   directory,
   runtime = createTailscaleRuntime({ binary, directory }),
 } = {}) {
-  const childEnvironment = directNetworkEnvironment();
   return {
     prepare: async (signal) => {
       const status = await runtime.prepare(signal);
@@ -142,7 +141,7 @@ export function createTailscaleFunnel({
               signal,
               timeout: 8000,
               maxBuffer: 1024 * 1024,
-              env: childEnvironment,
+              env: directNetworkEnvironment(),
             })
           ).stdout,
         );
@@ -152,7 +151,7 @@ export function createTailscaleFunnel({
               signal,
               timeout: 8000,
               maxBuffer: 1024 * 1024,
-              env: childEnvironment,
+              env: directNetworkEnvironment(),
             })
           ).stdout || "{}",
         );
@@ -197,7 +196,7 @@ export function createTailscaleFunnel({
         {
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
-          env: childEnvironment,
+          env: directNetworkEnvironment(),
         },
       );
       let stopped = false,
@@ -302,7 +301,7 @@ export function createTailscaleFunnel({
                   signal,
                   timeout: 8000,
                   maxBuffer: 1024 * 1024,
-                  env: childEnvironment,
+                  env: directNetworkEnvironment(),
                 })
               ).stdout,
             );

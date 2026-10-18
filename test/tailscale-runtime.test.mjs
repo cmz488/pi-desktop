@@ -122,7 +122,8 @@ test("daemon interruption removes a published QR and recovery returns to a fresh
     "../src/remote/remote-access.mjs"
   );
   let listener,
-    closes = 0;
+    closes = 0,
+    starts = 0;
   let state = { phase: "running", backendState: "Running" };
   const access = createRemoteAccess({
     targetUrl: () => "http://127.0.0.1:1/",
@@ -133,6 +134,7 @@ test("daemon interruption removes a published QR and recovery returns to a fresh
         return () => {};
       },
       async start() {
+        starts++;
         return {
           url: "https://pi-phone.test.ts.net:8443/",
           close: async () => closes++,
@@ -151,8 +153,10 @@ test("daemon interruption removes a published QR and recovery returns to a fresh
   await until(() => closes === 1);
   state = { phase: "running", backendState: "Running" };
   listener();
-  assert.equal(access.read().phase, "off");
+  await until(() => access.read().phase === "ready" && starts === 2);
+  assert(access.read().scanUrl);
   await access.close();
+  assert.equal(closes, 2, "old and recovered tunnels must both close");
 });
 
 test("a system daemon without login permission falls back to an independently authorized userspace daemon", async (t) => {

@@ -834,6 +834,8 @@ function closeSidebar() {
 }
 async function showView(next) {
   if (!titles[next]) return;
+  if (state?.capabilities?.remote === true && !["workspace"].includes(next))
+    next = "workspace";
   const changed = view !== next;
   view = next;
   if (runtimePrefix)
@@ -2782,6 +2784,10 @@ async function refreshOnce(snapshot) {
     !state?.capabilities?.readOnly && snapshot.capabilities?.readOnly;
   const enteringSession = state?.sessionId !== snapshot.sessionId;
   state = snapshot;
+  document.body.classList.toggle(
+    "remote-client",
+    state?.capabilities?.remote === true,
+  );
   state.messages = snapshot.messages?.map(
     (row) => messageDetails.get(messageDetailKey(row))?.value ?? row,
   );
@@ -3802,7 +3808,7 @@ document.addEventListener("click", async (event) => {
         renderSettings();
         break;
       case "sidebar":
-        if (runtimePrefix) {
+        if (runtimePrefix && state?.capabilities?.remote !== true) {
           desktopMessage("toggle-sidebar");
           break;
         }
@@ -3837,6 +3843,13 @@ document.addEventListener("click", async (event) => {
         await cancelInteraction();
         break;
       case "new-session":
+        if (state?.host === "durable" && state?.capabilities?.remote === true) {
+          await api("/api/new-session", {});
+          await refresh();
+          await showView("workspace");
+          $("#prompt").focus();
+          break;
+        }
         if (state?.host === "durable") {
           await openDurableAgent();
           break;

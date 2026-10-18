@@ -17,6 +17,20 @@ import { workspaceIndex } from "../shared/lazy-data.mjs";
 
 const assets = publicAssets("workspace");
 
+const remoteWorkspaceCommands = new Set([
+  "conversation.create",
+  "agent.rename",
+  "agent.pin",
+  "agent.archive",
+  "agent.restore",
+  "agent.policy",
+  "agent.prompt",
+  "agent.resume",
+  "agent.start",
+  "agent.stop",
+  "agent.restart",
+]);
+
 async function body(request) {
   const chunks = [];
   let size = 0;
@@ -311,6 +325,21 @@ export async function startDesktopHost(options = {}) {
         request.method === "POST"
       ) {
         const input = await body(request);
+        if (
+          request.headers["x-pi-remote-client"] === "1" &&
+          !remoteWorkspaceCommands.has(input.command)
+        )
+          throw new DeskError(
+            403,
+            "远程连接仅管理会话，不修改项目、Agent 主机配置或共享设置",
+          );
+        // Remote callers may create a session in their selected project but
+        // must not supply an arbitrary host cwd.
+        if (
+          request.headers["x-pi-remote-client"] === "1" &&
+          input.command === "conversation.create"
+        )
+          delete input.cwd;
         const run = () => supervisor.execute(input.command, input);
         sendJson(
           response,

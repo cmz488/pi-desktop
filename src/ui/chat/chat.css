@@ -4937,3 +4937,15 @@ body.dark {
     flex-wrap: wrap;
   }
 }
+
+/* Remote phone keeps the chat session drawer reachable without restoring the
+ * local settings chrome. The drawer is already an overlay below 760px. */
+@media (max-width: 760px) {
+  body.remote-client.desktop-embedded .sidebar {
+    display: flex !important;
+  }
+  body.remote-client.desktop-embedded [data-action="sidebar"],
+  body.remote-client.desktop-embedded [data-action="new-session"] {
+    display: inline-flex !important;
+  }
+}

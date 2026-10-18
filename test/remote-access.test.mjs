@@ -420,6 +420,7 @@ async function fixture(t) {
     capabilities: {
       prompt: true,
       canWrite: true,
+      remote: true,
       requestContext: true,
     },
     async requestContext(req, res, run) {

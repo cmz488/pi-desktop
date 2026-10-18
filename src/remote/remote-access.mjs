@@ -64,11 +64,13 @@ export function createRemoteAccess({
   const sessions = new Map(),
     proxies = new Set();
   const changed = () => onChange();
-  let runtimeRecovering = false;
+  let runtimeRecovering = false,
+    autoResume = false;
   const unsubscribe = funnel.onRuntimeChange?.(() => {
     const runtime = funnel.runtimeState?.();
     if (phase === "ready" && runtime?.phase !== "running") {
       runtimeRecovering = true;
+      autoResume = true;
       controller?.abort();
       phase = "error";
       error = "Tailscale 连接中断，正在恢复进程。恢复后请重新开启扫码连接。";
@@ -80,6 +82,24 @@ export function createRemoteAccess({
       runtimeRecovering = false;
       phase = "off";
       error = "";
+      changed();
+      if (autoResume) {
+        autoResume = false;
+        const previous = pending;
+        const resume = Promise.resolve(stopping)
+          .then(async () => {
+            await previous?.catch(() => {});
+            if (closed || stopping || phase !== "off") return;
+            controller = new AbortController();
+            phase = "starting";
+            changed();
+            pending = start(controller.signal);
+            await pending;
+          })
+          .catch(() => {});
+        void resume;
+      }
+      return;
     }
     changed();
   });
@@ -218,6 +238,19 @@ export function createRemoteAccess({
     }
     const expires = sessions.get(token);
     // A phone can operate Pi, but cannot publish or mint another remote credential.
+    const scopedPath = url.pathname.replace(/^\/agents\/[a-f0-9-]{36}/, "");
+    // Remote clients keep chat, attachments, file previews and Git. Settings,
+    // package management, extension resources and browser control stay on the
+    // computer; reject them here so hidden entries are not a UI-only guard.
+    if (
+      /^\/api\/(?:settings|plugins?|plugin-config|plugin-resources|packages?(?:\/update-all|-catalog|-details|-updates)?|marketplace|skills?|skill|mcp(?:-action)?|providers?|provider(?:-remove)?|auth-(?:start|logout)|default-model|reload|reload-extensions|personality|agent|command|workspace\/detail)(?:\/|$)/.test(
+        scopedPath,
+      )
+    )
+      return json(res, 403, {
+        error:
+          "远程连接仅保留会话、附件、文件预览与 Git；请在本机管理设置和扩展。",
+      });
     if (/^(?:\/agents\/[a-f0-9-]{36})?\/api\/remote$/.test(url.pathname)) {
       if (req.method !== "GET")
         return json(res, 403, { error: "请在电脑管理远程连接" });
@@ -392,6 +425,10 @@ export function createRemoteAccess({
     read,
     async execute(action) {
       if (closed) throw new DeskError(409, "远程宿主已关闭");
+      if (["prepare", "start", "stop"].includes(action)) {
+        runtimeRecovering = false;
+        autoResume = false;
+      }
       if (action === "prepare") {
         if (stopping) await stopping;
         if (closed) throw new DeskError(409, "远程宿主已关闭");
@@ -445,6 +482,8 @@ export function createRemoteAccess({
     },
     async close() {
       closed = true;
+      runtimeRecovering = false;
+      autoResume = false;
       stopping ??= stop().finally(() => {
         stopping = undefined;
       });

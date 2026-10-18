@@ -1791,3 +1791,43 @@ body.chat-shell.desktop-embedded {
     font-size: calc(20px * var(--ui-font-scale));
   }
 }
+
+/* Remote clients keep the session, file and Git surfaces, not local settings. */
+body.remote-client .main-nav [data-view="extensions"],
+body.remote-client .main-nav [data-view="mcp"],
+body.remote-client .main-nav [data-view="marketplace"],
+body.remote-client .settings-nav,
+body.remote-client #settings-shell,
+body.remote-client #agent-config-button,
+body.remote-client #view-extensions,
+body.remote-client [data-view="general"],
+body.remote-client [data-view="plugins"],
+body.remote-client [data-view="providers"],
+body.remote-client [data-view="skills"],
+body.remote-client [data-view="mcp"],
+body.remote-client [data-view="marketplace"],
+body.remote-client [data-view="appearance"],
+body.remote-client [data-view="remote"],
+body.remote-client [data-view="personality"],
+body.remote-client [data-view="extensions"] {
+  display: none !important;
+}
+body.remote-client .workspace-view-switch {
+  display: none !important;
+}
+
+@media (max-width: 720px) {
+  #composer {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .main-nav button,
+  .settings-nav button,
+  .panel-shortcut,
+  .panel-file-row,
+  #composer button {
+    min-height: 44px;
+  }
+  #messages {
+    overscroll-behavior-y: contain;
+  }
+}

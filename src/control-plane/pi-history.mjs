@@ -15,6 +15,7 @@ export async function openPiHistory({ agent, read, agentDir }) {
     embeddedUI: true,
     capabilities: {
       sessions: false,
+      remote: false,
       newSession: false,
       switchSession: false,
       sessionCommand: false,

@@ -345,6 +345,7 @@ export async function startDurableDesk(options = {}) {
       agentDir,
       capabilities: {
         sessions: true,
+        remote: true,
         newSession: true,
         switchSession: true,
         sessionCommand: true,
@@ -699,7 +700,10 @@ export async function startDurableDesk(options = {}) {
           cwd: agent.cwd,
           running: !agent.idle,
         })),
-      newSession: create,
+      newSession: async (input) => {
+        const result = await create(input);
+        return { ...result, sessionId: String(result.id) };
+      },
       async sessionCommand(args) {
         const command = parseSessionsCommand(args);
         if (command.action === "new") {

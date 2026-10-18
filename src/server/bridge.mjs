@@ -430,6 +430,7 @@ export function createDeskBridge(input) {
         ...visible,
         capabilities: {
           ...(visible.capabilities ?? {}),
+          remote: request.headers["x-pi-remote-client"] === "1",
           sessions:
             visible.capabilities?.sessions ?? host.capabilities.sessions,
           reload: visible.capabilities?.reload ?? host.capabilities.reload,
@@ -499,6 +500,8 @@ export function createDeskBridge(input) {
       json(response, 200, { rows: host.snapshot().commands ?? [] });
       return;
     }
+    if (url.pathname === "/api/remote" && !host.capabilities.remote)
+      throw new DeskError(404, "当前 Desktop 宿主未启用远程连接");
     if (url.pathname === "/api/remote" && request.method === "GET") {
       json(
         response,

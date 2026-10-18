@@ -149,6 +149,7 @@ export default function piDesktop(pi: ExtensionAPI) {
         })),
       capabilities: {
         sessions: true,
+        remote: true,
         reload: true,
         auth: false,
         marketplace: true,
@@ -319,6 +320,7 @@ export default function piDesktop(pi: ExtensionAPI) {
       autoPort: !process.env.PI_DESK_PORT,
       capabilities: {
         sessions: true,
+        remote: true,
         newSession: true,
         switchSession: true,
         sessionCommand: true,

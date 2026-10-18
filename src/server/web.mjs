@@ -650,6 +650,7 @@ export async function startWebSlot(options = {}) {
         ),
       capabilities: {
         sessions: true,
+        remote: true,
         reload: true,
         auth: true,
         marketplace: true,
@@ -735,6 +736,7 @@ export async function startWebSlot(options = {}) {
     agentDir,
     capabilities: {
       sessions: true,
+      remote: true,
       newSession: true,
       switchSession: true,
       sessionCommand: false,

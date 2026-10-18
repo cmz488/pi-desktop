@@ -777,3 +777,16 @@ body.sidebar-collapsed:not(.runtime-active) .mobile-header {
     animation: workspace-surface-in 260ms var(--ease-jelly);
   }
 }
+
+/* Remote clients keep project/session navigation but not host management. */
+body.remote-client #extensions-entry,
+body.remote-client #skill-center,
+body.remote-client #settings,
+body.remote-client #add-project {
+  display: none !important;
+}
+@media (max-width: 720px) {
+  body.remote-client.runtime-active .mobile-header {
+    display: flex;
+  }
+}

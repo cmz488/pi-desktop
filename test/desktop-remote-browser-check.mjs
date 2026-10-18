@@ -156,6 +156,18 @@ try {
     join(f.cwd, "remote-preview.txt"),
     "PHONE_SELECTED_FILE_ONLY",
   );
+  await writeFile(
+    join(f.cwd, "remote-image.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n0kAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  await writeFile(join(f.cwd, "remote-large.txt"), "L".repeat(600 * 1024));
+  await writeFile(
+    join(f.cwd, "remote-binary.bin"),
+    Buffer.from([0, 1, 2, 3, 0, 255]),
+  );
   const agent = await f.command("conversation.create", {
     name: "Phone project agent",
     projectId: project.id,
@@ -244,6 +256,37 @@ try {
     false,
   );
   slowPairing = false;
+  await until("document.body.classList.contains('remote-client')");
+  assert.equal(
+    await evaluate(
+      "['extensions-entry','skill-center','settings','add-project'].every((id)=>getComputedStyle(document.getElementById(id)).display==='none')",
+    ),
+    true,
+    "desktop remote hides local workspace management entries",
+  );
+  assert.equal(
+    await evaluate(
+      "getComputedStyle(document.querySelector('.mobile-header')).display!=='none'",
+    ),
+    true,
+    "desktop remote keeps the navigation header reachable",
+  );
+  assert.equal(
+    await evaluate(
+      `${doc}.body.querySelector('#agent-config-button') ? getComputedStyle(${doc}.body.querySelector('#agent-config-button')).display==='none' : true`,
+    ),
+    true,
+    "remote phone cannot open Agent host configuration",
+  );
+  await evaluate(`${doc}.querySelector('[data-action=sidebar]').click()`);
+  await until(`${doc}.body.classList.contains('sidebar-open')`);
+  assert(
+    await evaluate(
+      `(()=>{const s=${doc}.querySelector('#sessions');const r=s.getBoundingClientRect();return r.width>100&&r.height>0;})()`,
+    ),
+    "remote phone exposes a tappable session list",
+  );
+  await evaluate(`${doc}.querySelector('.sidebar-dismiss').click()`);
   await call("Network.setUserAgentOverride", {
     userAgent:
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
@@ -273,6 +316,17 @@ try {
     (await f.call("/api/remote")).tunnel.devices,
     1,
     "preview changes and rescans reuse the phone cookie",
+  );
+  assert.equal(
+    await evaluate(
+      `(async()=> (await fetch('/agents/${agent.id}/api/settings')).status)()`,
+    ),
+    403,
+    "remote settings stay on the computer",
+  );
+  assert.equal(
+    await evaluate(`${doc}.body.classList.contains('remote-client')`),
+    true,
   );
   assert(
     await evaluate(
@@ -311,6 +365,22 @@ try {
     requests.get(`/agents/${agent.id}/api/files`),
     2,
     "phone loads just one directory and its selected file",
+  );
+  await evaluate(
+    `${doc}.querySelector('[data-tree-path="remote-image.png"]').click()`,
+  );
+  await until(`${doc}.querySelector('.panel-file-image')`);
+  await evaluate(
+    `${doc}.querySelector('[data-tree-path="remote-large.txt"]').click()`,
+  );
+  await until(
+    `${doc}.querySelector('.panel-content')?.innerText.includes('文件超过预览上限')`,
+  );
+  await evaluate(
+    `${doc}.querySelector('[data-tree-path="remote-binary.bin"]').click()`,
+  );
+  await until(
+    `${doc}.querySelector('.panel-content')?.innerText.includes('不是可预览')`,
   );
   await evaluate(`${doc}.querySelector('[aria-label="收起右侧边栏"]').click()`);
   slowPolling = true;
@@ -375,7 +445,7 @@ try {
     (await f.call(`/agents/${home.id}/api/state`)).messages.length,
     0,
   );
-  await evaluate(`${doc}.querySelector('[data-action=sidebar]').click()`);
+  await evaluate("document.querySelector('#navigation-toggle').click()");
   await until("document.body.classList.contains('navigation-open')");
   await evaluate(
     `document.querySelector('[data-agent-id="${home.id}"]').click()`,
@@ -387,13 +457,6 @@ try {
   await until(
     `document.querySelector('#runtime').dataset.owner===${JSON.stringify(home.id)} && ${doc}?.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
   );
-  await evaluate(
-    `${doc}.querySelector('.settings-nav [data-view=remote]').click()`,
-  );
-  await until(
-    `${doc}.querySelector('#network-status').textContent==='远程已连接'`,
-  );
-  assert(await evaluate(`${doc}.querySelector('#connection-actions').hidden`));
   for (const path of ["/api/remote", `/agents/${home.id}/api/remote`])
     assert.equal(
       await evaluate(
@@ -401,7 +464,8 @@ try {
       ),
       403,
     );
-  for (const width of [320, 360, 390]) {
+  await evaluate(`${doc}.querySelector('[data-view=workspace]').click()`);
+  for (const width of [320, 360, 390, 430]) {
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height: 844,
@@ -414,7 +478,33 @@ try {
         `${doc}.documentElement.scrollWidth<=${doc}.defaultView.innerWidth`,
       ),
     );
+    assert(
+      await evaluate(
+        `(()=>{const p=${doc}.querySelector('#prompt');const r=p.getBoundingClientRect();return r.height>=28&&r.bottom<=${doc}.defaultView.innerHeight+1;})()`,
+      ),
+      `desktop remote composer ${width}px`,
+    );
+    assert(
+      await evaluate(
+        `(()=>{const c=${doc}.defaultView.getComputedStyle(${doc}.querySelector('#composer'));const b=${doc}.defaultView.getComputedStyle(${doc}.querySelector('#send-button'));return parseFloat(c.paddingBottom)>=12&&parseFloat(b.minHeight)>=40;})()`,
+      ),
+      `desktop remote safe area and touch target ${width}px`,
+    );
   }
+  assert.equal(
+    await evaluate(
+      `(async()=> (await fetch('/api/workspace/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:'project.save',cwd:'/tmp'})})).status)()`,
+    ),
+    403,
+    "remote cannot add arbitrary projects",
+  );
+  assert.equal(
+    await evaluate(
+      `(async()=> (await fetch('/api/workspace/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:'conversation.create',projectId:${JSON.stringify(project.id)}})})).status)()`,
+    ),
+    200,
+    "remote can create a session in the selected project",
+  );
   await f.call("/api/remote", { action: "rotate" });
   assert.equal(
     await evaluate("fetch('/api/workspace').then(r=>r.status)"),
@@ -422,7 +512,7 @@ try {
   );
   assert.equal(driver.errors.length, 0, driver.errors.join("\n"));
   console.log(
-    "Desktop phone acceptance passed: real QR decoding, HTTPS cookie, selected project, isolated Pi messages, session switching/reload, 320/360/390px and revocation.",
+    "Desktop phone acceptance passed: real QR decoding, HTTPS cookie, selected project, isolated Pi messages, session switching/reload, 320/360/390/430px, remote session drawer and revocation.",
   );
 } finally {
   driver?.close();

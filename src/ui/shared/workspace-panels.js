@@ -760,6 +760,9 @@ export function createWorkspacePanels({
       if (generation !== intent) return;
       if (value && value.kind !== "directory")
         throw new Error("此路径不是目录");
+      // The file document and its tree share the same bounded directory read;
+      // reuse it instead of issuing a second remote request for the root.
+      if (value) tree.cache.set(path, value.entries ?? []);
       const tab = {
         id: "files",
         kind: "files",

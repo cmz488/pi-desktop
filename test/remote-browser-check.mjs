@@ -245,14 +245,7 @@ try {
     "br",
   );
   assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"));
-  await evaluate(`window.originalFetch = window.fetch;
-    window.heldListings = [];
-    window.fetch = (...args) => new URL(args[0], location.href).pathname === '/api/plugins'
-      ? new Promise(resolve => window.heldListings.push(resolve))
-      : window.originalFetch(...args);`);
-  await evaluate("document.querySelector('[data-view=plugins]').click()");
-  await until("window.heldListings.length > 0");
-  await evaluate("document.querySelector('.settings-back').click()");
+  await evaluate("document.querySelector('[data-view=workspace]').click()");
   faux.setResponses([
     fauxAssistantMessage(
       "This answer streams through the authenticated tunnel into the mobile browser.",
@@ -262,7 +255,6 @@ try {
     "const box=document.querySelector('#prompt');box.value='message from phone';box.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#composer').requestSubmit()",
   );
   await until("!document.querySelector('#stop-button').hidden");
-  await until("window.heldListings.length > 0");
   await until(
     "document.querySelector('#messages').textContent.includes('This answer streams through') && document.querySelector('#stop-button').hidden",
     { timeoutMs: 20000 },
@@ -277,9 +269,6 @@ try {
     await evaluate("document.querySelector('#connection-status').textContent"),
     "Pi 已连接",
   );
-  await evaluate(`window.fetch = window.originalFetch;
-    window.heldListings.forEach(resolve => resolve(new Response(JSON.stringify({error:'fixture listing unavailable'}), {status:503})));
-    window.heldListings = [];`);
   assert.equal(
     await evaluate("document.querySelector('#connection-status').textContent"),
     "Pi 已连接",
@@ -303,6 +292,46 @@ try {
   });
   await until(
     "document.querySelector('#connection-status')?.textContent==='Pi 已连接'",
+  );
+  assert.equal(
+    await evaluate(
+      "getComputedStyle(document.querySelector('#agent-config-button')).display==='none'",
+    ),
+    true,
+    "remote phone cannot open Agent host configuration",
+  );
+  for (const path of [
+    "/api/plugins",
+    "/api/providers",
+    "/api/packages/update-all",
+    "/api/settings",
+    "/api/agent",
+    "/api/command",
+    "/api/reload-extensions",
+  ])
+    assert.equal(
+      await evaluate(
+        `(async()=> (await fetch(${JSON.stringify(path)})).status)()`,
+      ),
+      403,
+      `remote clients cannot access ${path}`,
+    );
+  assert(
+    await evaluate(
+      "getComputedStyle(document.querySelector('#view-extensions')).display==='none'",
+    ),
+    "remote extension workbench is hidden even by hash view",
+  );
+  assert.equal(
+    await evaluate("document.body.classList.contains('remote-client')"),
+    true,
+  );
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('[data-view=plugins],[data-view=extensions],[data-view=remote]')].some((node)=>getComputedStyle(node).display!=='none')",
+    ),
+    false,
+    "remote hides local settings and extension entries",
   );
   assert.equal(
     await evaluate("document.querySelector('#prompt').value"),
@@ -348,14 +377,8 @@ try {
   await until(
     "document.querySelector('#session-title').textContent==='Phone agent'",
   );
-  await evaluate("document.querySelector('[data-view=remote]').click()");
-  await until(
-    "document.querySelector('#network-status').textContent==='远程已连接'",
-  );
-  assert(
-    await evaluate("document.querySelector('#connection-actions').hidden"),
-  );
-  for (const width of [320, 360, 390]) {
+  await evaluate("document.querySelector('[data-view=workspace]').click()");
+  for (const width of [320, 360, 390, 430]) {
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height: 844,
@@ -366,13 +389,35 @@ try {
       await evaluate("document.documentElement.scrollWidth<=innerWidth"),
       `remote layout ${width}px`,
     );
+    assert(
+      await evaluate(
+        "(()=>{const p=document.querySelector('#prompt');const r=p.getBoundingClientRect();return r.height>=28&&r.bottom<=innerHeight+1;})()",
+      ),
+      `remote composer ${width}px`,
+    );
+    assert(
+      await evaluate(
+        "(()=>{const c=getComputedStyle(document.querySelector('#composer'));const b=getComputedStyle(document.querySelector('#send-button'));return parseFloat(c.paddingBottom)>=12&&parseFloat(b.minHeight)>=40;})()",
+      ),
+      `remote safe area and touch target ${width}px`,
+    );
   }
+  assert.notEqual(
+    await evaluate("(async()=> (await fetch('/api/git')).status)()"),
+    403,
+    "Git remains available to remote clients",
+  );
   assert.equal(
     await evaluate(
       "(async () => (await fetch('/api/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rotate'})})).status)()",
     ),
     403,
   );
+  const created = await evaluate(
+    "(async()=>{const r=await fetch('/api/new-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const j=await r.json();return [r.status,j.sessionId]})()",
+  );
+  assert.equal(created[0], 200, "remote can create a session");
+  assert(created[1], "remote new-session returns its Agent id");
   const fresh = await post("rotate");
   assert.equal(
     await evaluate("(async () => (await fetch('/api/state')).status)()"),

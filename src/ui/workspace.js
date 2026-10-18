@@ -1238,6 +1238,15 @@ window.addEventListener("pageshow", (event) => {
   if (event.persisted) wakeWorkspace();
 });
 navigator.connection?.addEventListener("change", wakeWorkspace);
+async function detectRemoteClient() {
+  try {
+    const info = await api("/api/remote");
+    if (info?.remoteClient) document.body.classList.add("remote-client");
+  } catch {
+    /* A local workspace may not expose remote management; keep desktop chrome. */
+  }
+}
+await detectRemoteClient();
 navigation(false);
 await refresh().catch((error) => notice(error.message));
 setInterval(() => {

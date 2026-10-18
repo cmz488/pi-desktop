@@ -20,6 +20,7 @@ function optionalMethod(input, key) {
 
 export const HOST_CAPABILITY_KEYS = Object.freeze([
   "sessions",
+  "remote",
   "newSession",
   "switchSession",
   "sessionCommand",
