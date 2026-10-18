@@ -4,6 +4,21 @@ import assert from "node:assert/strict";
 // The coding SDK is one large module graph, and a host that never needs its
 // namespace must not pay for it. This file is isolated so nothing else loads it
 // first; the assertions cover the lazy-binding contract itself.
+test("the worker module graph does not load the SDK namespace", async () => {
+  const sdk = await import("../src/agent/pi-sdk.mjs");
+  // Importing the whole worker graph must not pull the SDK namespace: the
+  // binding is still the placeholder that fails loudly when used.
+  await import("../src/server/durable-server.mjs");
+  await import("../src/agent/durable-resources.mjs");
+  await import("../src/agent/native-runtime.mjs");
+  await import("../src/session/pi-session-storage.mjs");
+  assert.equal(
+    typeof sdk.embeddedPiSdk.VERSION,
+    "function",
+    "the embedded namespace must stay unloaded after the graph is imported",
+  );
+});
+
 test("Pi SDK bindings stay lazy, memoized and loud before loading", async () => {
   const sdk = await import("../src/agent/pi-sdk.mjs");
 
