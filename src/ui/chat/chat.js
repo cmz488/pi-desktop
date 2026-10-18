@@ -130,6 +130,7 @@ async function loadMessageDetails(ids) {
     const index = messageRows.indexOf(row);
     if (index >= 0) messageRows[index] = detail;
   }
+  detailsVersion++;
   if (owner === state?.sessionId) renderMessages(messageRows);
 }
 
@@ -1442,6 +1443,141 @@ function renderExtensionRail(cards) {
   list.replaceChildren();
   for (const card of cards) appendMessage(card, list, { rail: true });
 }
+/* Keyed reconciliation for the transcript. A full refresh used to rebuild every
+ * row (~0.5 ms per row), so a state_changed refresh on a long conversation cost
+ * tens of milliseconds. Rows are grouped exactly the way appendMessage merges
+ * assistant turns, and a group whose signature did not change keeps its node:
+ * its fold state, its scroll offsets and its loaded details stay untouched. */
+const renderedGroups = new Map();
+let activeCallsVersion = 0;
+/* Loaded details arrive out of band; the renderer bumps this so the affected
+ * rows are rebuilt even though their projected shape barely changes. */
+let detailsVersion = 0;
+/* A cheap size fingerprint of the raw rows. The keyed path only trusts its own
+ * signatures when nothing else changed; otherwise it rebuilds, because some
+ * rendered content (a tool card's result body) is not in the projected row. */
+let lastRowsFingerprint = "";
+function rowSignature(row) {
+  const blocks = row.blocks ?? [];
+  return [
+    row.role,
+    row.lazy ? "l" : "",
+    row.streaming ? "s" : "",
+    row.currentActivity ? "a" : "",
+    row.extensionState ? "e" : "",
+    row.isError ? "!" : "",
+    row.stopReason ?? "",
+    row.error ? 1 : 0,
+    row.detailRevision ?? "",
+    row.lazy || row.detailRevision ? detailsVersion : "",
+    (row.text ?? "").length,
+    blocks
+      .map((block) => {
+        // Folded activity blocks keep their content in `entries`, so a
+        // fingerprint of the entries is part of the row signature too.
+        const entries = (block.entries ?? [])
+          .map((entry) => {
+            // Folded activity content lives in the entry's sources, so the
+            // fingerprint follows their text instead of just their count.
+            const sources = (entry.sources ?? [])
+              .map(
+                (source) =>
+                  `${source.id ?? ""}:${source.text?.length ?? 0}:${source.streaming ? 1 : 0}:${source.arguments?.length ?? 0}`,
+              )
+              .join("*");
+            return `${entry.kind ?? ""}/${entry.text?.length ?? 0}/${entry.arguments?.length ?? 0}/${entry.thinking?.length ?? 0}/${sources}/${JSON.stringify(entry).length}`;
+          })
+          .join(",");
+        // A tool card renders the row that carries its result, so that row is
+        // part of the fingerprint even though it is not in this group.
+        const paired =
+          block.type === "toolCall"
+            ? messageRows.find(
+                (row) =>
+                  row.role === "toolResult" && row.toolCallId === block.id,
+              )
+            : undefined;
+        const result = paired
+          ? `${paired.lazy ? "L" : ""}/${(paired.text ?? "").length}/${paired.isError ? 1 : 0}`
+          : block.result
+            ? `${block.result.text?.length ?? 0}/${block.result.isError ? 1 : 0}/${block.result.lazy ? "L" : ""}`
+            : "";
+        return `${block.type}:${block.text?.length ?? 0}:${block.arguments?.length ?? 0}:${block.id ?? ""}:${block.name ?? ""}:${entries}:${result}:${block.lazy ? "L" : ""}`;
+      })
+      .join("|"),
+    blocks.some((block) => block.type === "activity") ? activeCallsVersion : "",
+  ].join("~");
+}
+function groupRows(rows) {
+  const groups = [];
+  for (const row of rows) {
+    const assistant = row.role !== "user";
+    const standalone = row.extensionState === true || !!row.extensionView;
+    const merges =
+      assistant && !standalone && groups.length && groups.at(-1).assistant;
+    if (merges) groups.at(-1).rows.push(row);
+    else groups.push({ key: "", signature: "", assistant, rows: [row] });
+  }
+  return groups.map((group) => ({
+    ...group,
+    key: `row:${group.rows[0].id}:${group.rows.length}`,
+    signature: group.rows.map(rowSignature).join("~"),
+  }));
+}
+function renderGroup(group) {
+  const holder = document.createElement("div");
+  for (const row of group.rows) appendMessage(row, holder);
+  if (holder.children.length !== 1) return undefined;
+  const node = holder.firstElementChild;
+  node.dataset.rowKey = group.key;
+  return node;
+}
+function rowsFingerprint() {
+  let size = messageRows.length;
+  for (const row of messageRows)
+    size += (row.text?.length ?? 0) + JSON.stringify(row.blocks ?? []).length;
+  return String(size);
+}
+function applyKeyedRows(items) {
+  const node = $("#messages");
+  const groups = groupRows(items);
+  const fingerprint = rowsFingerprint();
+  const mismatch =
+    groups.some(
+      (group) => renderedGroups.get(group.key)?.signature !== group.signature,
+    ) === false && fingerprint !== lastRowsFingerprint;
+  lastRowsFingerprint = fingerprint;
+  if (mismatch) return false;
+  const keys = new Set(groups.map((group) => group.key));
+  for (const [key, entry] of [...renderedGroups])
+    if (!keys.has(key) || !node.contains(entry.node)) {
+      entry.node.remove();
+      renderedGroups.delete(key);
+    }
+  let index = 0;
+  for (const group of groups) {
+    let entry = renderedGroups.get(group.key);
+    if (entry && entry.signature !== group.signature) {
+      entry.node.remove();
+      renderedGroups.delete(group.key);
+      entry = undefined;
+    }
+    if (!entry) {
+      const created = renderGroup(group);
+      if (!created) return false;
+      entry = { node: created, signature: group.signature };
+      renderedGroups.set(group.key, entry);
+    }
+    const current = node.children[index];
+    if (current !== entry.node) node.insertBefore(entry.node, current ?? null);
+    if (group.rows.some((row) => row.id === "streaming"))
+      streaming = entry.node;
+    index++;
+  }
+  for (let extra = node.children.length - 1; extra >= index; extra--)
+    node.children[extra].remove();
+  return true;
+}
 function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
   const node = $("#messages");
   messageRows = rows ?? [];
@@ -1452,6 +1588,7 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
     );
     return;
   }
+  const wasSwitching = conversationSwitching;
   conversationSwitching = false;
   const nearBottom =
     node.scrollHeight - node.scrollTop - node.clientHeight < 100;
@@ -1459,22 +1596,32 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
   rememberDisclosures();
   rememberFoldScroll();
   streaming = null;
+  /* A keyed refresh patches the transcript in place; it must not clear the
+   * DOM first or every group would rebuild. */
+  const keyedEligible =
+    !liveOnly && !enter && !wasSwitching && !state?.initializing;
   if (liveOnly) {
     // Streaming changes only the current assistant turn. Rebuild that turn so
     // merged thinking/activity groups cannot duplicate or lose persisted parts.
+    renderedGroups.clear();
     $(".empty-conversation")?.remove();
     for (const card of node.querySelectorAll(":scope > [data-extension-card]"))
       card.remove();
     if (node.lastElementChild?.classList.contains("assistant-turn"))
       node.lastElementChild.remove();
-  } else node.replaceChildren();
+  } else if (!keyedEligible) {
+    renderedGroups.clear();
+    node.replaceChildren();
+  }
   if (
     !messageRows.length &&
     !state?.streamingMessage &&
     !state?.streamingText &&
     state?.idle !== false
-  )
+  ) {
+    renderedGroups.clear();
     node.innerHTML = `<div class="empty-conversation"><span class="pi-mark">${piLogo}</span><h1>今天，想一起做些什么？</h1><p>写代码、理清思路，或继续上次的工作。</p><div class="empty-actions"><button class="outline-button" data-view="providers">配置模型</button><button class="outline-button" data-view="plugins">管理扩展</button></div></div>`;
+  }
   const streamingMessage =
     state?.streamingMessage ??
     (state?.streamingText
@@ -1517,26 +1664,37 @@ function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
   );
   if (lastItemIsCurrentActivity) lastTimelineItem.currentActivity = true;
   renderExtensionRail(timeline.filter(isExtensionCard));
-  for (const message of timeline) {
-    if (isExtensionCard(message)) continue;
-    const output = appendMessage(message);
-    if (message.id === "streaming" && output) streaming = output;
-  }
+  const items = timeline.filter((message) => !isExtensionCard(message));
+  const hasStreamingRow = items.some((row) => row.id === "streaming");
+  const hasActivityRow = items.some((row) =>
+    row.blocks?.some((block) => block.type === "activity"),
+  );
   if (
     state &&
     !state.idle &&
     !state.initializing &&
-    !streaming &&
-    !node.querySelector('.context-activity[data-running="true"]')
+    !hasStreamingRow &&
+    !hasActivityRow
   ) {
     // Waiting and empty provider chunks use the same folded presentation as
     // actual thinking/tools; never append a second, standalone status label.
-    appendMessage({
+    items.push({
       id: "activity:pending",
       role: "assistant",
       currentActivity: true,
       blocks: [{ type: "activity", entries: [] }],
     });
+  }
+  if (keyedEligible && items.length && applyKeyedRows(items)) {
+    // Nodes were reused; `streaming` was assigned for the streaming group.
+  } else {
+    renderedGroups.clear();
+    lastRowsFingerprint = rowsFingerprint();
+    if (!liveOnly && items.length) node.replaceChildren();
+    for (const message of items) {
+      const output = appendMessage(message);
+      if (message.id === "streaming" && output) streaming = output;
+    }
   }
   if (enter) animateConversationEnter(node);
   restoreFoldScroll();
@@ -2951,6 +3109,7 @@ function applyRecord(record) {
     renderLiveConversation();
   } else if (record.kind === "tool_update") {
     activeCalls.set(record.data.id, record.data);
+    activeCallsVersion++;
     state.operation =
       record.data.status === "running" ? `执行 ${record.data.name}…` : "";
     renderMessages(messageRows);
