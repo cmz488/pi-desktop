@@ -569,6 +569,8 @@ export async function startDurableDesk(options = {}) {
             url.searchParams.get("view") !== "chat"
               ? await gitInfo(active.cwd)
               : null,
+          // 定点重启的可见性：本次打开时接管的待恢复任务（追加字段）。
+          recovery: result.recovery ?? null,
           projectTrusted:
             !options.readOnly && (nativeInfo?.projectTrusted ?? true),
           capabilities: {

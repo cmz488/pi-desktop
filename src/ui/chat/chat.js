@@ -2985,8 +2985,13 @@ async function refreshOnce(snapshot) {
   $("#session-title").textContent = state.name;
   $("#selected-model").textContent = selected?.name ?? "选择模型";
   composerModelPicker.update();
+  // 定点重启后，待恢复任务在就绪状态旁显式标出；恢复完毕即消失。
+  const recoveryNote =
+    (state.recovery?.outstanding ?? 0) > 0
+      ? ` · 已从检查点恢复 ${state.recovery.outstanding} 项`
+      : "";
   $("#run-status").innerHTML =
-    `<span class="dot"></span>${esc(state.initializing ? "加载扩展…" : state.operation || state.workingMessage || (state.capabilities?.nativeHistory ? "会话记录" : state.idle ? "就绪" : "运行中"))}`;
+    `<span class="dot"></span>${esc(state.initializing ? "加载扩展…" : state.operation || state.workingMessage || (state.capabilities?.nativeHistory ? "会话记录" : state.idle ? "就绪" : "运行中"))}${esc(recoveryNote)}`;
   $("#context-usage").textContent =
     state.usage?.tokens == null
       ? "上下文 —"

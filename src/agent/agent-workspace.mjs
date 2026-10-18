@@ -103,6 +103,7 @@ function contextUsage(view, contextWindow) {
  * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
  *   persistNative, importNative, install, subscribe, close }`；options、命令表、
  *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
+ * `read()` 额外返回 `recovery`（本次打开时接管的待恢复任务及实时状态，无则 null）。
  * 不变量：单 writer（proper-lockfile 独占 + SQLite）；先 commit 再显示；每次调用先过
  *   `guard()`；`read` 是全量摘要、`live` 跳过 transcript；每会话一份 agent 文档。
  * 错误：DeskError(404／409／422) 表达“不存在”“存储被占用或宿主已关闭”“参数无效”。
@@ -152,6 +153,31 @@ export async function openAgentWorkspace(options) {
     closePromise,
     compromised,
     ownerReady = false;
+  let interrupted = [],
+    resumedAt = "";
+  const recoveryTask = (task) => ({
+    id: task.id,
+    kind: task.kind,
+    conversationId: task.conversationId,
+    background: !!task.background,
+    statusAtOpen: task.state.status,
+  });
+  /* 恢复状态是追加式的读模型：记录新宿主接管时看到的待恢复任务，并按当前任务图汇报每项
+   * 是否仍在进行，供 /api/state 与界面展示；没有待恢复工作时为 null。 */
+  function recoveryStatus() {
+    if (!interrupted.length) return null;
+    const live = graph.value.tasks;
+    const tasks = interrupted.map((task) => ({
+      ...task,
+      status: live[task.id] ? live[task.id].state.status : "done",
+    }));
+    return {
+      resumedAt,
+      count: tasks.length,
+      outstanding: tasks.filter((task) => task.status !== "done").length,
+      tasks,
+    };
+  }
   const listeners = new Set();
   const notify = (event) => {
     for (const listener of listeners) {
@@ -209,6 +235,10 @@ export async function openAgentWorkspace(options) {
       context,
     );
     graph = await harness.taskGraph(context);
+    // 上一次 owner（崩溃或关闭）留下的工作：重启后运行中的任务以 pending 出现，
+    // 而本进程还没创建任何任务，所以此刻图里的每个节点都是待恢复工作。
+    interrupted = Object.values(graph.value.tasks).map(recoveryTask);
+    resumedAt = new Date().toISOString();
   } catch (error) {
     if (harness) await harness.close(context);
     else await storage?.close?.(context);
@@ -437,6 +467,7 @@ export async function openAgentWorkspace(options) {
         status: task.state.status,
         background: !!task.background,
       })),
+      recovery: recoveryStatus(),
       active: null,
     };
     if (id === undefined) return result;

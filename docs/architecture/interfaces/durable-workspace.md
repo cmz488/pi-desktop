@@ -29,7 +29,9 @@ export async function openAgentWorkspace(options); // -> workspace
 workspace 表面：
 
 ```js
-workspace.read(id?)        // async -> { agents: [摘要] }：每个会话的 agent 摘要（模型、用量、状态）
+workspace.read(id?)        // async -> { agents: [摘要], recovery, tasks, ... }：
+                           //   agents 是每个会话的摘要；recovery 是本次打开时接管的待恢复任务
+                           //   （无则 null）；tasks 是当前任务图
 workspace.live(id?)        // async -> projectActive(id, { transcript: false })：流式期间的轻量视图
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
 workspace.execute(command, input?)  // async -> 命令结果
@@ -39,6 +41,17 @@ workspace.importNative(id, entries)                  // 导入原生树（归档
 workspace.install(extension)                         // 运行期装入 Durable 扩展
 workspace.subscribe(listener)                        // -> unsubscribe；变更通知
 workspace.close()                                    // 释放 Harness、锁与资源
+```
+
+`read()` 的 `recovery` 形状（追加字段，不影响既有消费方）：
+
+```js
+{
+  resumedAt,    // 新宿主接管待恢复工作的时刻（ISO 8601）
+  count,        // 接管的任务数
+  outstanding,  // 其中仍未结束的任务数（恢复完成后归零）
+  tasks: [{ id, kind, conversationId, background, statusAtOpen, status }],
+}
 ```
 
 `execute` 的命令表：
@@ -61,7 +74,7 @@ workspace.close()                                    // 释放 Harness、锁与�
 - **提交先于显示**：任何可见状态都必须先经过 commit；`subscribe` 的监听者只看到已提交的变更。
 - **`read` 与 `live` 的差别是契约的一部分**：`read` 是全量摘要（供快照），`live` 不带 transcript（供流式期间的增量视图，见 01 性能深化）。
 - **每个会话一份 agent 文档**：模型、思考级别、扩展名、工具名、cwd 存在 Durable 文档里（不是进程内存），因此重启后一致。
-- **`fork` 产生独立会话**：新会话有独立 `usage` 与独立 transcript；分叉后必须修复原生上下文（`repairNativeContext`），避免继承父会话的旧贡献。
+- **恢复是追加式读模型**：打开时记录任务图里的待恢复任务（重启后运行中的任务显示为 `pending`），之后按当前任务图汇报每项是否结束；没有待恢复工作时为 `null`。它不改变 transcript，也不重发已提交且不依赖中断工作的条目。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
 
 ## 顺序约束
@@ -98,3 +111,4 @@ workspace.close()                                    // 释放 Harness、锁与�
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
+- 定点重启：`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）在回答生成与工具调用两种中断点分别 SIGKILL 宿主，断言恢复可见、回答只提交一次、已提交的生成不被重发、未安全重放的工具不重复执行。

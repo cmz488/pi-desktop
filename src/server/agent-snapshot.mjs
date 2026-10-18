@@ -87,6 +87,8 @@ export function createAgentSnapshot(input = {}) {
     stats,
     metrics: input.metrics ?? usageMetrics(stats),
     git: input.git ?? null,
+    // 恢复信息：本次接管时未完成的 Durable 任务（追加字段，无待恢复工作时为 null）。
+    recovery: input.recovery ?? null,
     model: input.model ?? null,
     thinkingLevel: input.thinkingLevel ?? "off",
     thinkingEditable: input.thinkingEditable === true,

@@ -44,6 +44,27 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 性能深化专项由 `test/durable-delta.test.mjs`（流式回答只发增量、一次回答的工作区读取 ≤ 20、空闲 revision 探测 0 次完整读取）、`test/pi-sdk-lazy.test.mjs`（Pi SDK 懒加载、memoize、未加载时明确报错、启动关键子模块可单独加载）、Git 专项（`repo.read()` 子进程收敛、写入指纹与一次性确认不变）、`test/bridge.test.mjs`（revision 端点的 supported/unsupported 契约）与 `test/remote-lazy.test.mjs`（桌面宿主的 workspace revision 位）覆盖。`test/durable-browser-check.mjs` 另断言流式回答期间 `/api/state` 取整份快照不超过 5 次，`test/conversation-timeline-browser-check.mjs` 覆盖增量渲染后的折叠、懒详情与滚动保持。前后测量数字见 [性能记录](../history/performance-check.md)。
 
+## Durable 定点重启与恢复
+
+`npm run test:durable:recovery`（`test/durable-recovery-check.mjs` + `test/durable-recovery-worker.mjs`）用同一个 faux 夹具跑三次：一次不中断的对照运行、一次在回答生成流式中途 SIGKILL、一次在两个工具调用在途时 SIGKILL。每次中断后等待被杀死进程的租约到期（约 10.5 s）再重开同一 SQLite。
+
+本机实测（一组固定夹具）：
+
+| 场景                        | provider 请求 | 转录条目 | 用量 tokens | recovery                |
+| --------------------------- | ------------- | -------- | ----------- | ----------------------- |
+| 对照（不中断）              | 2             | 6        | 2306        | null                    |
+| 中断生成（中断前 + 恢复后） | 2 + 1         | 7        | 1490 → 3863 | 1 项，outstanding 1 → 0 |
+| 中断工具（中断前 + 恢复后） | 1 + 1         | 6        | 1490 → 3085 | 3 项，outstanding 2 → 0 |
+
+断言：重开后 `read().recovery` 非空、至少一个任务以 `pending` 出现且 `resumedAt` 是时间戳；恢复完成后 `outstanding` 归零、`count` 保持不变；回答文本只出现一次；带工具调用的已提交生成不再被请求（恢复进程只发一次请求）；可安全重放的工具在崩溃后重跑，而一次性副作用不重跑并以错误结果出现在转录中。`/api/state` 的同名字段与聊天页状态旁的“已从检查点恢复 N 项”提示是同一读模型；`test/desktop-process-recovery.test.mjs` 在 `npm test` 内守住该字段的存在。
+
+上游语义与限制（本地实测，非官方承诺）：
+
+- **至少一次**：中断的回合会被重新发起；被中断的尝试会留下标记条目（生成场景是一条空 assistant 条目，工具场景是错误结果条目），已提交且不依赖中断工作的条目不会被重发。
+- **用量**：中断尝试与恢复尝试都计入 `pi.usage`，因此恢复后的会话用量高于未中断的对照；已提交的生成不会被重复记账。
+- **租约**：被杀死进程的锁需要约 10 秒过期，期间第二个 writer 被拒绝（`DeskError(409, "Agent 存储正在被另一个宿主占用")`）；优雅 `close()` 在前台任务在途时会等待，因此不属于中断。
+- **不可控**：真正的中断只能由进程死亡产生，进程内无法模拟；该验证因此不在 `npm test` 的快速套件里，而是独立命令。
+
 ## 契约与规范的验证
 
 接口契约（[docs/architecture/interfaces/](../architecture/interfaces/README.md)）每条都必须在“可执行证据”里指向测试或命令；新增或改变契约时必须同时补上断言，未登记的对外行为不算契约。运行归属与两条 seam 见 [边界文档](../architecture/pi-boundary.md)。
