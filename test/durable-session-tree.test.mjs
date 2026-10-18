@@ -183,6 +183,35 @@ test(
         "the abandoned answer is not replayed into the new context",
       );
 
+    // 退回后每条消息仍指向它原本的 entry：从消息触发的操作不会落到退回标记上。
+    const rewoundFirst = afterRewind.messages.find(
+      (row) => row.text === "第一轮",
+    );
+    assert.equal(
+      rewoundFirst?.entryId,
+      firstEntry.entryId,
+      "a replayed message keeps its original entry id",
+    );
+    assert.notEqual(
+      rewoundFirst?.entryId,
+      rewound.entryId,
+      "replayed messages do not collapse onto the rewind marker",
+    );
+    const fromFirst = await call("/api/command", {
+      command: "fork",
+      id: agentId,
+      entryId: rewoundFirst.entryId,
+    });
+    const fromFirstState = await state(fromFirst.id);
+    assert.ok(
+      fromFirstState.messages.some((row) => row.text === "第一轮"),
+      "the fork from a replayed message keeps the earlier context",
+    );
+    assert.ok(
+      !fromFirstState.messages.some((row) => row.text === "第二轮"),
+      "the fork from a replayed message stops at that message",
+    );
+
     // 退回后继续：新回合从该点继续，只提交一份回答。
     const fourth = await turn("第四轮", answers[3]);
     assert.equal(

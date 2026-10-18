@@ -302,6 +302,21 @@ export async function openAgentWorkspace(options) {
     Object.values(graph.value.tasks).some(
       (task) => task.conversationId === id && !task.background,
     );
+  /* 一条 entry 在界面里贡献的消息：custom 原生消息算一条，其余取模型消息里可展示的角色。
+   * `projectActive` 与退回标记的“消息原点”必须用同一条规则，否则退回后每条消息会指向标记
+   * 而不是它原本的 entry。 */
+  const contributed = (entry) =>
+    (entry.data?.nativeMessage?.role === "custom"
+      ? [entry.data.nativeMessage]
+      : (entry.model ?? [])
+    ).filter((message) =>
+      ["user", "assistant", "toolResult", "custom"].includes(message.role),
+    );
+  /* 退回点之前每个可见消息原本属于哪个 entry，用于让界面上的消息动作仍指向原条目。 */
+  const prefixOrigins = (entries, entryId) =>
+    entries
+      .filter((entry) => entry.id <= entryId)
+      .flatMap((entry) => contributed(entry).map(() => entry.id));
   async function summary(conversation) {
     const [agent, profile] = await Promise.all([
       conversation.agent(context),
@@ -363,21 +378,12 @@ export async function openAgentWorkspace(options) {
         ...(withTranscript
           ? {
               messages: entries.flatMap((entry) =>
-                (entry.data?.nativeMessage?.role === "custom"
-                  ? [entry.data.nativeMessage]
-                  : (entry.model ?? [])
-                )
-                  .filter((message) =>
-                    ["user", "assistant", "toolResult", "custom"].includes(
-                      message.role,
-                    ),
-                  )
-                  .map((message, index) => ({
-                    ...projectMessage(message, `${entry.id}:${index}`),
-                    entryId: entry.id,
-                    stopReason: message.stopReason,
-                    error: message.errorMessage,
-                  })),
+                contributed(entry).map((message, index) => ({
+                  ...projectMessage(message, `${entry.id}:${index}`),
+                  entryId: entry.data?.origins?.[index] ?? entry.id,
+                  stopReason: message.stopReason,
+                  error: message.errorMessage,
+                })),
               ),
             }
           : {}),
@@ -693,6 +699,12 @@ export async function openAgentWorkspace(options) {
         (entry) => entry.id === input.entryId,
       );
       if (!known) throw new DeskError(404, "退回位置不存在");
+      // 退回后上下文由标记携带，但界面上的每条消息仍要指向它原本的 entry，否则从消息触发的
+      // 退回／分叉会落到标记上（等于整个前缀）。数量对不上时不写原点，安全地退回标记 id。
+      const origins = prefixOrigins(
+        (await workspace.transcript(selected.id)).entries,
+        input.entryId,
+      );
       const marker = await selected.commit(
         (tx) =>
           tx.appendEntry(selected.id, {
@@ -701,7 +713,10 @@ export async function openAgentWorkspace(options) {
             model: input.messages.filter(
               (message) => message.role !== "system",
             ),
-            data: { rewindTo: input.entryId },
+            data: {
+              rewindTo: input.entryId,
+              ...(origins.length === input.messages.length ? { origins } : {}),
+            },
           }),
         context,
       );

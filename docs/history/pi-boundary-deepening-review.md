@@ -1,0 +1,43 @@
+# 边界与两项深化的代码审查（0.26.16）
+
+## 范围与方法
+
+- **基点**：`a5e9fdf`（上一轮结束）；被审提交：`a5e9fdf..264a208` 共 8 个提交（`git diff --stat`：35 文件、+2352/−178，含文献与源码）。
+- **方法**：按 `code-review` 技能的两轴——标准轴（是否遵守仓库记录的编码标准 + Fowler 气味基线）与规格轴（是否忠实实现起点规格）。两轴结论分开记录，不互相排序。
+- **偏差说明**：技能要求在并行子代理里分别跑两轴；本机 pi-subagents 无法启动后台子代理（`Background children require a supported standalone Pi host`），因此两轴在同一会话内顺次完成。这不改变判据，只影响隔离度。
+- **规格来源**：`.pi/goals/archived/goal_2026101811095030_mvd4v944-f767ff.md`（上一轮目标契约：目标、成功标准、边界、约束、验证契约）。
+- **标准来源**：`docs/guides/code-style.md`（该轮自己的规范）、`CONTRIBUTING.md`、`AGENTS.md`、`docs/architecture/interfaces/README.md`（契约模板）、`docs/architecture/pi-boundary.md`（边界规则 R1–R4），加 Fowler 气味基线。
+- 工具已覆盖的项（prettier、`tsc --noEmit`、`scripts/check-source.mjs`）不重复报告。
+
+## 标准轴
+
+1. **重复的菜单机制（Medium，主观判断）**：`src/ui/chat/chat.js` 现有三套菜单实现——上下文选择器增强（`.context-menu` listbox）、Git 的 `<details class="git-more-menu">`、以及上一轮新增的消息菜单（`.message-menu`）。气味：Duplicated Code。建议把“打开／定位／外部点击与 Esc 关闭”收敛成一个 helper，在分支树 UI 落地时一并做（本轮后续任务会再增加会话栏菜单，届时统一）。
+2. **投影规则重复（Medium，已修）**：退回标记要靠“投影后每条消息对应哪个 entry”才能保住原点，这条规则原先只写在 `projectActive` 里；修复把规则抽成同一处的 `contributed(entry)`，投影与原点的计数因此不会再各自漂移（见规格轴第 1 条）。
+3. **文档与实现不一致（Low，已修）**：`docs/architecture/interfaces/durable-workspace.md` 写“没有待恢复工作时为 `null`”，而实现只在**打开时任务图为空**时为 `null`；重启后待恢复工作已全部结束（`outstanding` 为 0）仍会报告 `count`/`resumedAt`。已改为按实现描述，并说明界面只在 `outstanding > 0` 时提示。
+4. 范围内其余改动符合规范：10 个模块的中文契约块、中文错误消息、接口与实现分离（契约在 `docs/architecture/interfaces/`、实现原因在源码）、边界规则 R1–R4 未见违反；新增测试都带可执行断言。
+
+## 规格轴
+
+1. **退回后消息的原点丢失（High，已修）**：`desk.rewind` 标记承载退回前缀，投影里每条前缀消息的 `entryId` 都指向标记自身，于是界面上从消息触发的「退回到此消息／从此消息分叉」实际作用于**整个前缀**——例如退回后从“第一轮”分叉会连带“第二轮”。规格要求“可从任意 entry 退回……与从任意 entry 分支／克隆”，因此这是实现弱于承诺。
+   **修复**：标记在写入时记录 `origins`（每条前缀消息原本的 entry id，仅当数量与模型上下文一致时写入，否则安全回退到标记 id），投影用 `origins[index] ?? entry.id`。新增两条断言（“被重放的消息保留原 entry id”“从被重放的消息分叉停在该处”），并做了敏感性验证：把投影改回 `entry.id` 时该测试失败（pass 0 / fail 1）。
+2. **恢复语义的“usage 只记一次”（Low，已在文档如实记录）**：上游对中断回合是至少一次——中断尝试与恢复尝试都计入用量，只有已提交且不依赖中断工作的条目不被重发。规格措辞与上游语义有差距，已在 `verification.md` 与 `guides/sessions.md` 写明。
+3. **“TUI 侧看到同一棵树”（Low，已记录）**：以 Pi JSONL 的结构断言（parent id、活跃分支、被放弃路径）代替真实 TUI 运行，属于合理代理，已如实标注。
+4. **范围外行为：无**。未发现未要求的改动；`pi-boundary.md` 的 Backlog 两项（子代理与任务图管理、Pi 工具/扩展面板深化）确实未实现，符合该轮规格。
+
+## 修复与验证证据
+
+| 修复                | 严重度 | 文件                                                                                                                    | 证据                                                                          |
+| ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 退回后消息原点      | High   | `src/agent/agent-workspace.mjs`（`contributed()`、`prefixOrigins()`、`desk.rewind` 的 `origins`、`projectActive` 回退） | `test/durable-session-tree.test.mjs` 两条新断言；敏感性验证（撤销映射即失败） |
+| `recovery` 语义文档 | Low    | `docs/architecture/interfaces/durable-workspace.md`                                                                     | 与实现逐条对齐；界面提示条件写明                                              |
+
+验证（修复后）：`npm test` 306/306、`npm run test:durable` 29/29、`npm run check`（82 源文件）、`npm run format:check` 全绿；`npm run test:durable:browser`（Chromium：项目创建、草稿隔离、后台流式、配置、320/360/390px）通过。
+
+## 增量复核（本轮后续提交）
+
+本轮后续改动（分支树读模型、会话栏右键菜单、扩展工作台两个面板、管理操作）完成后再做一次标准/规格两轴复核，并在此节追加结论；已预记的风险点：会话栏菜单与消息菜单的重复机制（标准轴第 1 条），以及新面板在远程只读形态下的裁剪规则（规格轴，属新目标的标准）。
+
+## 优先修复清单（按顺序）
+
+1. 退回后消息原点（High，已修）
+2. 重复的菜单机制（Medium，计划与分支树 UI 一并收敛）
