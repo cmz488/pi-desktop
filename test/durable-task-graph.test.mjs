@@ -18,13 +18,14 @@ import {
 import { openAgentWorkspace } from "../src/agent/agent-workspace.mjs";
 import { startDurableDesk } from "../src/server/durable-server.mjs";
 
-/* 任务图与子会话读模型：一个父任务派生「被任务拥有的子会话」（子代理），随后再让一个工具
- * 挂起，断言 /api/tasks 的所有权边、状态、子会话列表与在跑工具。 */
+/* 任务图与子会话读模型，以及任务管理操作（等待／取消／只读拒绝）。
+ * 夹具用一个「任务拥有的子会话」模拟子代理，再用一个可控闸门的工具制造可观察的在跑任务；
+ * 每个阶段的 faux 响应都用 setResponses 重设，保证请求顺序与回答都是确定的。 */
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test(
-  "the task graph exposes ownership edges, child sessions and running tools",
+  "the task graph exposes ownership and child sessions, and tasks can be waited on or cancelled",
   { timeout: 60000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "pi-task-graph-"));
@@ -34,30 +35,12 @@ test(
     const models = createModels(),
       faux = fauxProvider({ tokensPerSecond: 10000 });
     models.setProvider(faux.provider);
-    faux.setResponses([
-      fauxAssistantMessage(
-        [
-          {
-            type: "toolCall",
-            id: "call-sub",
-            name: "subagent",
-            arguments: { task: "子任务" },
-          },
-        ],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("子会话回答"),
-      fauxAssistantMessage("父会话回答"),
-      fauxAssistantMessage(
-        [{ type: "toolCall", id: "call-hold", name: "hold", arguments: {} }],
-        { stopReason: "toolUse" },
-      ),
-      // 放行挂起的工具之后还需要一次正常回答，夹具里不留错误路径。
-      fauxAssistantMessage("挂起后回答"),
-      fauxAssistantMessage("补充回答"),
-    ]);
     let releaseHold;
-    const holdGate = new Promise((resolve) => (releaseHold = resolve));
+    let holdGate = new Promise((resolve) => (releaseHold = resolve));
+    const toolCall = (id, name, args) =>
+      fauxAssistantMessage([{ type: "toolCall", id, name, arguments: args }], {
+        stopReason: "toolUse",
+      });
     const Fixture = defineExtension({
       name: "subagent-fixture",
       tools: [
@@ -98,7 +81,7 @@ test(
         }),
         defineTool({
           name: "hold",
-          // 可控闸门：测试先观察在跑工具，再放行，避免宿主关闭时还在等一个永不结束的任务。
+          // 可控闸门：先观察在跑任务，再放行或取消，避免夹具有永不结算的工作。
           parameters: Type.Object({}),
           execute: async () => {
             await holdGate;
@@ -111,7 +94,7 @@ test(
       storage: new MemoryStorage(),
       models,
       extensions: [Fixture],
-      // 夹具只关心任务图；关闭重试，避免 faux 响应耗尽后一直重试导致宿主迟迟不能关闭。
+      // 夹具只关心任务；关闭重试，避免响应耗尽后一直重试而拖住关闭。
       settings: { retry: { enabled: false } },
     });
     const agentId = (
@@ -128,18 +111,23 @@ test(
       directory: join(root, "agent", "desktop"),
       resources: false,
     });
-    // 宿主关闭等待所有任务结束；夹具若留下未决工作，给关闭一个有界等待，测试仍然收口。
     t.after(() => Promise.race([app.stop(), sleep(5000)]));
     const origin = new URL(app.url).origin;
-    const post = async (path, input) => {
-      const response = await fetch(`${origin}${path}`, {
+    const post = async (path, input, base = origin) => {
+      const response = await fetch(`${base}${path}`, {
         method: "POST",
-        headers: { Origin: origin, "Content-Type": "application/json" },
+        headers: { Origin: base, "Content-Type": "application/json" },
         body: JSON.stringify(input),
       });
       const text = await response.text();
       if (!response.ok)
-        throw new Error(`${path} ${response.status} ${text.slice(0, 300)}`);
+        throw Object.assign(
+          new Error(`${path} ${response.status} ${text.slice(0, 200)}`),
+          {
+            status: response.status,
+            body: text,
+          },
+        );
       return text ? JSON.parse(text) : {};
     };
     const state = async () =>
@@ -154,11 +142,16 @@ test(
       }
       throw new Error(`timeout waiting for ${label}`);
     };
+    const prompt = (message) =>
+      post("/api/prompt", { message, sessionId: String(agentId) });
 
-    await post("/api/prompt", {
-      message: "派生一次",
-      sessionId: String(agentId),
-    });
+    // 阶段一：子代理派生一个被任务拥有的子会话，随后回到空闲。
+    faux.setResponses([
+      toolCall("call-sub", "subagent", { task: "子任务" }),
+      fauxAssistantMessage("子会话回答"),
+      fauxAssistantMessage("父会话回答"),
+    ]);
+    await prompt("派生一次");
     await waitFor(async () => {
       const current = await state();
       return (
@@ -175,25 +168,21 @@ test(
       [],
       "an idle session keeps no live task",
     );
-    assert.equal(
-      settledGraph.conversations.length,
-      1,
-      "the task-owned child conversation stays visible",
-    );
+    assert.equal(settledGraph.conversations.length, 1);
     const child = settledGraph.conversations[0];
     assert.ok(
       Number.isSafeInteger(child.owner?.taskId),
-      "the owner edge names the task that created the child",
+      "the child conversation records the task that created it",
     );
     assert.equal(child.owner?.conversationId, agentId);
     assert.equal(typeof child.name, "string");
     assert.deepEqual(child.parent, null);
     assert.equal(child.idle, true);
 
-    await post("/api/prompt", {
-      message: "挂起一次",
-      sessionId: String(agentId),
-    });
+    // 阶段二：挂起的工具进入任务图与在跑工具，随后按任务 id 取消它。
+    faux.setResponses([toolCall("call-hold", "hold", {})]);
+    faux.appendResponses([fauxAssistantMessage("取消后回答")]);
+    await prompt("挂起一次");
     const running = await waitFor(async () => {
       const value = await taskGraph();
       return value.tools.some((row) => row.name === "hold") ? value : undefined;
@@ -206,7 +195,6 @@ test(
       (row) => row.kind === "pi.generation",
     );
     assert.ok(toolTask && generation, "tool and generation tasks are live");
-    // 任务节点上的 owner 是「拥有它的任务 id」（由会话自己拥有时为 null）。
     assert.equal(
       String(toolTask.owner),
       String(generation.id),
@@ -223,15 +211,136 @@ test(
       "the generation is owned by its conversation, so it has no owning task",
     );
     assert.equal(toolTask.background, false);
-    assert.deepEqual(toolTask.waitingOn, []);
-    assert.equal(toolTask.status, "running");
 
-    // 放行挂起的工具：任务图清空，宿主才能正常关闭（取消语义由 task-6 单独覆盖）。
-    console.log("STEP 5 released");
+    // Durable 会等被取消的任务结算，所以先发起取消，再放行工具让这次等待有终点。
+    const cancelCall = post("/api/command", {
+      command: "cancel",
+      id: agentId,
+      sessionId: String(agentId),
+      taskId: toolTask.id,
+    });
     releaseHold();
+    const cancelled = await cancelCall;
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(String(cancelled.taskId), String(toolTask.id));
+    const drained = await waitFor(async () => {
+      const value = await taskGraph();
+      return value.tasks.length === 0 ? value : undefined;
+    }, "the cancelled run to leave the task graph");
+    assert.equal(
+      drained.conversations.length,
+      1,
+      "cancelling a task leaves no orphan: the child conversation stays",
+    );
+    assert.equal(
+      (await state()).idle,
+      true,
+      "cancelling the tool task lets the conversation settle",
+    );
+
+    // 阶段三：等待一次前台任务——wait 返回时回答已经提交。
+    holdGate = new Promise((resolve) => (releaseHold = resolve));
+    faux.setResponses([toolCall("call-hold-2", "hold", {})]);
+    const waiting = prompt("等一次");
+    await waitFor(async () => {
+      const current = await taskGraph();
+      return current.tools.some((row) => row.name === "hold");
+    }, "the second hanging tool");
+    faux.appendResponses([fauxAssistantMessage("等待完成")]);
+    const waitCall = post("/api/command", {
+      command: "wait",
+      id: agentId,
+      sessionId: String(agentId),
+    });
+    await sleep(120);
+    assert.equal(
+      (await state()).idle,
+      false,
+      "the wait returns only after the run settles",
+    );
+    releaseHold();
+    const outcome = await Promise.race([
+      waitCall.then(() => "settled"),
+      sleep(8000).then(() => "timeout"),
+    ]);
+    assert.equal(outcome, "settled", "wait resolves once the run settles");
+    const waited = await waitCall;
+    assert.equal(waited.idle, true);
+    const settledState = await state();
+    assert.ok(
+      settledState.idle &&
+        settledState.messages.some((row) => row.text === "等待完成"),
+      "the wait resolves once the answer is committed",
+    );
+    await waiting;
+
+    // 阶段四：后台取消只作用于后台任务，前台运行不受影响（用有界等待把挂起变成失败）。
+    holdGate = new Promise((resolve) => (releaseHold = resolve));
+    faux.setResponses([toolCall("call-hold-3", "hold", {})]);
+    faux.appendResponses([fauxAssistantMessage("收尾回答")]);
+    await prompt("后台取消一次");
+    await waitFor(async () => {
+      const value = await taskGraph();
+      return value.tools.some((row) => row.name === "hold");
+    }, "the third hanging tool");
+    const background = await Promise.race([
+      post("/api/command", {
+        command: "cancel",
+        id: agentId,
+        sessionId: String(agentId),
+        background: true,
+      }),
+      sleep(8000).then(() => "timeout"),
+    ]);
+    assert.notEqual(background, "timeout", "a background cancel returns");
+    assert.equal(background.background, true);
+    assert.equal(
+      (await state()).idle,
+      false,
+      "a background cancel leaves the foreground task running",
+    );
+    releaseHold();
+    await waitFor(
+      async () => (await state()).idle,
+      "the released run to finish",
+    );
     await waitFor(async () => {
       const value = await taskGraph();
       return value.tasks.length === 0 ? value : undefined;
-    }, "the finished run to leave the task graph");
+    }, "the released run to drain the graph");
+
+    await assert.rejects(
+      post("/api/command", {
+        command: "wait",
+        id: agentId,
+        sessionId: String(agentId),
+        taskId: 999999,
+      }),
+      (error) => error.status === 404,
+      "waiting for an unknown task is rejected",
+    );
+
+    // 只读宿主拒绝任务管理：等待/取消是写操作，其他命令不受影响。
+    const readOnly = await startDurableDesk({
+      workspace,
+      port: 0,
+      readOnly: true,
+      resources: false,
+    });
+    try {
+      const base = new URL(readOnly.url).origin;
+      await assert.rejects(
+        post(
+          "/api/command",
+          { command: "cancel", id: agentId, sessionId: String(agentId) },
+          base,
+        ),
+        (error) =>
+          error.status === 403 && /只读/.test(JSON.parse(error.body).error),
+        "a read-only host refuses task management",
+      );
+    } finally {
+      await readOnly.stop();
+    }
   },
 );

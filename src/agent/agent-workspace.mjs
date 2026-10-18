@@ -748,6 +748,56 @@ export async function openAgentWorkspace(options) {
       );
       return { id: selected.id, entryId: marker.id, rewindTo: input.entryId };
     }
+    if (command === "wait") {
+      // 等待：给定 taskId 时等那个任务结束；否则等该会话空闲。两者都只观察，不改变任务。
+      if (input.taskId !== undefined) {
+        if (!Number.isSafeInteger(input.taskId))
+          throw new DeskError(422, "任务 id 无效");
+        if (!(await harness.getTask(input.taskId, context)))
+          throw new DeskError(404, "任务不存在");
+        await harness.waitForTask(input.taskId, context);
+        return {
+          id: selected.id,
+          taskId: input.taskId,
+          idle: !foreground(selected.id),
+        };
+      }
+      await selected.waitForIdle(context);
+      return { id: selected.id, idle: true };
+    }
+    if (command === "cancel") {
+      // 取消：taskId 指定单个任务；background 只取消后台任务；否则取消该会话当前的工作。
+      if (input.taskId !== undefined) {
+        if (!Number.isSafeInteger(input.taskId))
+          throw new DeskError(422, "任务 id 无效");
+        await harness.abortTask(input.taskId, context);
+        return { id: selected.id, taskId: input.taskId, cancelled: true };
+      }
+      if (input.background === true) {
+        // 只取消后台任务：按任务图里的 background 标记逐个中止，不等前台工作结束
+        // （Durable 的 abortConversation(background) 会等到会话空闲，对界面是阻塞风险）。
+        const background = Object.values(graph.value.tasks).filter(
+          (task) => task.background,
+        );
+        await Promise.all(
+          background.map((task) => harness.abortTask(task.id, context)),
+        );
+        return {
+          id: selected.id,
+          cancelled: true,
+          background: true,
+          tasks: background.map((task) => task.id),
+          idle: !foreground(selected.id),
+        };
+      }
+      await selected.abort(context);
+      return {
+        id: selected.id,
+        cancelled: true,
+        background: false,
+        idle: !foreground(selected.id),
+      };
+    }
     throw new DeskError(404, "不支持的 Agent 操作");
   }
   async function close() {

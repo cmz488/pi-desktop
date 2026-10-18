@@ -37,6 +37,8 @@ const commands = new Set([
   "compact",
   "fork",
   "rewind",
+  "wait",
+  "cancel",
 ]);
 async function body(request) {
   let length = 0;
@@ -716,6 +718,12 @@ export async function startDurableDesk(options = {}) {
           const input = await body(request);
           if (!commands.has(input.command))
             throw new DeskError(404, "不支持的 Agent 操作");
+          // 只读宿主不提供任务管理（等待/取消）：它们是写操作；其他命令不受影响。
+          // 远程客户端仍按各自的路径裁剪规则处理（取消自己的任务属于允许的远程动作）。
+          if (options.readOnly && ["wait", "cancel"].includes(input.command))
+            throw new DeskError(403, "只读会话不提供任务管理操作");
+          // 只读宿主不提供任务管理（等待/取消）：它们是写操作；其他命令不受影响。
+          // 远程客户端仍按各自的路径裁剪规则处理（取消自己的任务属于允许的远程动作）。
           if (options.singleAgent && ["create", "fork"].includes(input.command))
             throw new DeskError(409, "请在 Desktop 项目栏创建独立 Agent");
           if (
