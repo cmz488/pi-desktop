@@ -33,17 +33,17 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 ```js
 {
-  (id,
-    parentId,
-    type,
-    role,
-    customType,
-    label,
-    rewindTo,
-    active,
-    leaf,
-    branchPoint,
-    children);
+  id,
+  parentId,
+  type,
+  role,
+  customType,
+  label,
+  rewindTo,     // 该节点是不是某次退回的落点
+  active,       // 是否在当前活跃路径上
+  leaf,         // 是否是当前叶子
+  branchPoint,  // 是否有多个子节点
+  children,     // 子节点数量
 }
 ```
 
@@ -97,4 +97,4 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 - `test/durable-session-tree.test.mjs`：原生 parent 链与 leaf、分支点、被放弃路径不在活跃路径上、`rewinds` 记录退回目标、`branches` 列出全部分支且 `forkOf` 指向同一来源、无原生转录的会话返回 `native: null`。
 - `test/bridge.test.mjs`：未声明能力的宿主返回 `supported: false`；声明后按 `id` 传参且只调用一次。
-- `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（39 个键）。
+- `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（40 个键）。
