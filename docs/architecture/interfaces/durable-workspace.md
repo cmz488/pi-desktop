@@ -97,3 +97,4 @@ workspace.close()                                    // 释放 Harness、锁与�
 - `test/durable-features.test.mjs`：会话、工具、权限、归档与重启语义。
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

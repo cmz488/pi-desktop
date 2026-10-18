@@ -91,3 +91,4 @@ host.require(name, message); // 返回操作函数；没有对应操作时抛 De
 - `test/target-guard.test.mjs`：会话切换、`ready` 与 `requireSession` 的 409 行为。
 - `test/bridge.test.mjs`：bridge 只按声明调用操作（未声明即 501）。
 - 全量：`npm test`。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

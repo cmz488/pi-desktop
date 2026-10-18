@@ -104,3 +104,4 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 - `test/pi-permissions.test.mjs`：审批模式与权限钩子。
 - `test/agent-browser.test.mjs`：`agent_browser` 工具经资源会话可用。
 - `test/pi-sdk-lazy.test.mjs`：导入 worker 模块图不会加载 SDK 命名空间（资源会话按需创建）。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

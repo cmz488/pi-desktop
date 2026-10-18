@@ -89,3 +89,4 @@ export async function scopedMcpCredentials(agentDir, entry = sdkEntry, sdk);    
 - `test/pi-sdk.test.mjs`：入口解析、`checkPiSdk` 具名导出校验、PATH 与内嵌两条路径。
 - `test/pi-sdk-lazy.test.mjs`：三个子模块各自加载、懒命名空间的失败语义、导入 worker 模块图不会加载命名空间。
 - 深路径存在性：`grep -oE '"\./[a-z/.-]+\.js"' src/agent/pi-sdk.mjs` 应与上表一致；由 task-5 的契约测试逐条断言。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

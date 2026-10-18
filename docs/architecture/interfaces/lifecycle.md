@@ -85,3 +85,4 @@ class DeskError extends Error { status }
 - `test/session-manager.test.mjs`、`test/sessions-command.test.mjs`（`npm run test:sessions`）。
 - `test/config-store.test.mjs`：revision 栅栏与锁冲突。
 - `test/remote-lazy.test.mjs`：`revision()` 作为轮询入口的形状。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

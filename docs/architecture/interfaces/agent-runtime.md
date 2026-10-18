@@ -68,3 +68,4 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 - `test/desktop-process-recovery.test.mjs`、`test/durable-recovery-check.mjs`：进程重启与恢复路径（`npm run test:durable:recovery`）。
 - `test/desktop-control-plane.test.mjs`：Supervisor 的 spawn／就绪／停止（`npm run test:workspace`）。
 - 全量：`npm test`。
+- 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
