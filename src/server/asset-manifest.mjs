@@ -24,6 +24,7 @@ export const sharedAssets = new Map([
     ["src/ui/shared/extension-workbench.js", javascript],
   ],
   ["/branch-tree-panel.js", ["src/ui/shared/branch-tree-panel.js", javascript]],
+  ["/task-panel.js", ["src/ui/shared/task-panel.js", javascript]],
   ["/design-tokens.css", ["src/ui/design-tokens.css", "text/css"]],
   ["/chat-shell.css", ["src/ui/chat/chat-shell.css", "text/css"]],
   ["/dsh-icons.mjs", ["src/ui/shared/dsh-icons.mjs", javascript]],

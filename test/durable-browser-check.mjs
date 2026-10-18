@@ -11,7 +11,7 @@ import {
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { openAgentWorkspace } from "../src/agent/agent-workspace.mjs";
 import { startDurableDesk } from "../src/server/durable-server.mjs";
-import { browserDriver } from "./durable-browser-driver.mjs";
+import { browserDriver, pause } from "./durable-browser-driver.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "pi-durable-browser-"));
 let app, browser, driver;
@@ -496,6 +496,125 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
       `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-abandoned'))`,
     ),
     "the tree still distinguishes the abandoned path after a rewind from a node",
+  );
+  // 任务与子代理面板：空态、等待、两步确认取消与切 Agent 跟随（都用真实的在跑任务观察）。
+  const taskRows = "#view-extensions [data-task-id]";
+  const toolRow = "[data-task-panel] [data-tool-name=bash]";
+  await evaluate(
+    `document.querySelector('[data-extension-key="desktop:task-panel"]').click()`,
+  );
+  await until("!!document.querySelector('[data-task-panel]')");
+  await until("!!document.querySelector('.task-panel-empty')");
+  assert(
+    await evaluate("!!document.querySelector('.task-panel-empty')"),
+    "an idle agent shows the task panel's empty state",
+  );
+  const bashCall = (id, command) =>
+    fauxAssistantMessage(
+      [{ type: "toolCall", id, name: "bash", arguments: { command } }],
+      { stopReason: "toolUse" },
+    );
+
+  // 等待：面板上的等待按钮触发 wait，返回时回答已经提交、面板回到空态。
+  faux.setResponses([
+    bashCall("call-bash-wait", "sleep 4"),
+    fauxAssistantMessage("等待后的回答"),
+  ]);
+  await evaluate(
+    "document.querySelector('#prompt').value='等一个任务';document.querySelector('#composer').requestSubmit()",
+  );
+  await until(`!!document.querySelector('${toolRow}')`, { timeoutMs: 20000 });
+  const waitButton = await evaluate(
+    "document.querySelector('#view-extensions [data-task-action^=wait]')?.dataset.taskAction ?? ''",
+  );
+  assert(waitButton.startsWith("wait:"), "the task row offers a wait action");
+  await evaluate(
+    `document.querySelector('[data-task-action="${waitButton}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#messages').innerText.includes('等待后的回答') && document.querySelector('#stop-button').hidden===true",
+    { timeoutMs: 20000 },
+  );
+  await until("!!document.querySelector('.task-panel-empty')", {
+    timeoutMs: 20000,
+  });
+
+  // 取消：第一步只进入待确认状态，第二步才发出命令，随后任务图清空。
+  faux.setResponses([bashCall("call-bash-cancel", "sleep 6")]);
+  await evaluate(
+    "document.querySelector('#prompt').value='跑一个长命令';document.querySelector('#composer').requestSubmit()",
+  );
+  await until(`!!document.querySelector('${toolRow}')`, { timeoutMs: 20000 });
+  assert(
+    await evaluate(`document.querySelectorAll('${taskRows}').length>=1`),
+    "the running tool shows up as a live task row",
+  );
+  const cancelButton = await evaluate(
+    "document.querySelector('#view-extensions [data-task-action^=cancel]')?.dataset.taskAction ?? ''",
+  );
+  assert(
+    cancelButton.startsWith("cancel:"),
+    "the task row offers a cancel action",
+  );
+  await evaluate(
+    `document.querySelector('[data-task-action="${cancelButton}"]').click()`,
+  );
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-task-action="${cancelButton}"]').dataset.armed`,
+    ),
+    "true",
+    "the first click only arms the cancel",
+  );
+  assert(
+    await evaluate(`document.querySelectorAll('${taskRows}').length>=1`),
+    "an armed cancel does not touch the task yet",
+  );
+  await evaluate(
+    `document.querySelector('[data-task-action="${cancelButton}"]').click()`,
+  );
+  await until("document.querySelector('#stop-button').hidden===true", {
+    timeoutMs: 20000,
+  });
+  await until("!!document.querySelector('.task-panel-empty')", {
+    timeoutMs: 20000,
+  });
+  assert.equal(
+    await evaluate(`document.querySelectorAll('${taskRows}').length`),
+    0,
+    "cancelling the tool task drains the panel",
+  );
+
+  // 切换 Agent：工作台切换会话会重置选中页面（既有行为），重新打开面板后要看到
+  // Agent B 自己的在跑任务，才算面板真的跟随了当前会话。
+  const secondAgent = (await workspace.read()).agents.find(
+    (agent) => agent.name === "Agent B",
+  ).id;
+  await evaluate(
+    `document.querySelector('[data-session-id="${secondAgent}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent==='Agent B'",
+  );
+  faux.setResponses([bashCall("call-bash-b", "sleep 5")]);
+  await evaluate(
+    "document.querySelector('#prompt').value='B 的任务';document.querySelector('#composer').requestSubmit()",
+  );
+  await evaluate(
+    `document.querySelector('[data-extension-key="desktop:task-panel"]').click()`,
+  );
+  await until("!!document.querySelector('[data-task-panel]')");
+  await until(`!!document.querySelector('${toolRow}')`, { timeoutMs: 20000 });
+  assert.equal(
+    await evaluate("document.querySelector('.task-panel')?.dataset.taskPanel"),
+    String(secondAgent),
+    "the panel follows the selected agent",
+  );
+  await evaluate(
+    `document.querySelector('[data-session-id="${first}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent==='Agent A'",
   );
   assert.deepEqual(driver.errors, []);
   console.log(

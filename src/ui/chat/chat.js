@@ -2,6 +2,7 @@ import { createComposerModelPicker } from "./composer-model-picker.js";
 import { createWorkspacePanels } from "./workspace-panels.js";
 import { createExtensionWorkbench } from "./extension-workbench.js";
 import { createBranchTreePanel } from "./branch-tree-panel.js";
+import { createTaskPanel } from "./task-panel.js";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createSessionConnection, openSessionStream } from "./connection.mjs";
 import { createSessionInventories } from "./session-inventories.mjs";
@@ -3244,8 +3245,9 @@ async function refreshOnce(snapshot) {
       running: !agent.idle,
     }));
     renderSessions();
-    // 分支树面板只做节流读取；不在这里直接拉取（见分支树面板的刷新）。
+    // 两个内置面板只做节流读取；不在这里直接拉取（见各自的刷新实现）。
     void branchTree.refresh();
+    void taskPanel.refresh();
   } else void refreshSessions().catch((error) => toast(error.message));
 }
 function applyRecord(record) {
@@ -6337,10 +6339,17 @@ const branchTree = createBranchTreePanel({
     await refresh();
   },
 });
+/* 内置「任务与子代理」页：读取 /api/tasks，操作复用同一命令路径（取消需要两步确认）。 */
+const taskPanel = createTaskPanel({
+  fetchTasks: (id) => api(`/api/tasks?id=${encodeURIComponent(id)}`),
+  command: (input) => api("/api/command", input),
+  toast: (message) => toast(message),
+  currentSession: () => state?.sessionId ?? "",
+});
 extensionWorkbench = createExtensionWorkbench({
   root: $("#view-extensions"),
   registry: extensionAdapterRegistry,
-  builtinPages: [branchTree],
+  builtinPages: [branchTree, taskPanel],
   sanitize: (html) => DOMPurify.sanitize(html),
   loadDetails: loadMessageDetails,
   onError: toast,

@@ -5094,3 +5094,89 @@ body.dark {
 .branch-tree-branch.active {
   border-color: var(--accent);
 }
+
+/* 任务与子代理面板：任务树（缩进）、在跑工具与子会话列表。 */
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.task-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-panel-header small,
+.task-panel-note,
+.task-panel-empty,
+.task-panel-row small {
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+}
+.task-panel-empty,
+.task-panel-note {
+  margin: 0;
+}
+.task-panel-actions,
+.task-panel-row-actions {
+  display: flex;
+  gap: 4px;
+}
+.task-panel-tree,
+.task-panel-list {
+  display: flex;
+  flex-direction: column;
+}
+.task-panel-list strong {
+  font-size: var(--text-ui-sm);
+  margin-bottom: 4px;
+}
+.task-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px calc(6px + var(--task-depth, 0) * 14px);
+  border-left: 2px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--text-ui-sm);
+}
+.task-panel-row:hover {
+  background: var(--hover);
+}
+.task-panel-row[data-status="running"] {
+  border-left-color: var(--accent);
+}
+.task-panel-row[data-armed="true"] {
+  border-left-color: var(--danger);
+}
+.task-panel-marker {
+  width: 12px;
+  text-align: center;
+  color: var(--accent);
+}
+.task-panel-label {
+  white-space: nowrap;
+}
+.task-panel-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-panel-row-actions {
+  margin-left: auto;
+}
+.task-panel-row-actions button {
+  padding: 2px 8px;
+  font-size: var(--text-ui-xs);
+  opacity: 0.75;
+}
+.task-panel-row:hover .task-panel-row-actions button,
+.task-panel-row-actions button[data-armed="true"],
+.task-panel-row-actions button:focus-visible {
+  opacity: 1;
+}
+.task-panel-row-actions button[data-armed="true"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}

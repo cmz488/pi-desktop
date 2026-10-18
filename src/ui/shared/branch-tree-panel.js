@@ -30,6 +30,7 @@ export function createBranchTreePanel({
   let error = "";
   let loading = false;
   let lastLoaded = 0;
+  let pending = false;
   let container;
   let repaint;
   let retry;
@@ -252,10 +253,15 @@ export function createBranchTreePanel({
 
   async function load({ force = false } = {}) {
     const sessionId = session();
-    if (!sessionId || loading) return;
-    // 状态刷新会频繁触发：节流读取，避免把只读面板变成轮询器；被节流时稍后补一次，
-    // 否则面板可能一直停在空态（只有节流触发过、没有后续刷新）。
+    if (!sessionId) return;
+    // 状态刷新会频繁触发：进行中或刚读过时记下待刷新，结束后补一次，
+    // 否则切会话后的那次刷新可能被丢掉，面板停在旧会话或空态。
+    if (loading) {
+      pending = true;
+      return;
+    }
     if (!force && Date.now() - lastLoaded < 1500) {
+      pending = true;
       clearTimeout(retry);
       retry = setTimeout(() => void load({ force: true }), 1600);
       return;
@@ -270,6 +276,10 @@ export function createBranchTreePanel({
     } finally {
       loading = false;
       render();
+      if (pending) {
+        pending = false;
+        void load({ force: true });
+      }
     }
   }
 

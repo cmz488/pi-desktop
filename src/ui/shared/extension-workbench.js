@@ -62,6 +62,7 @@ export function createExtensionWorkbench({
   const loadAttempts = new Map();
   let pages = [],
     owner,
+    renderedOwner,
     selected,
     signature = "",
     loading,
@@ -304,8 +305,11 @@ export function createExtensionWorkbench({
         ...projectExtensionPages(registry, rows, { sessionId }),
       ];
       const nextSignature = JSON.stringify(next);
-      if (nextSignature === signature) return;
+      // 会话切换时页面清单可能完全一样，但内置页要看的是新会话，必须重画。
+      const ownerChanged = renderedOwner !== owner;
+      if (nextSignature === signature && !ownerChanged) return;
       signature = nextSignature;
+      renderedOwner = owner;
       pages = next;
       if (!pages.some((row) => row.key === selected)) selected = pages[0]?.key;
       empty.hidden = pages.length > 0;
