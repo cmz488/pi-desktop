@@ -1249,12 +1249,39 @@ async function detectRemoteClient() {
 await detectRemoteClient();
 navigation(false);
 await refresh().catch((error) => notice(error.message));
+/* The index poll asks for a cheap revision first; every third tick refreshes
+ * anyway so a missed bit can only delay an update, never lose it. */
+let revisionSupported,
+  workspaceRevision,
+  pollTick = 0;
+async function catalogChanged() {
+  pollTick++;
+  if (revisionSupported === false) return true;
+  try {
+    const value = await api("/api/revision");
+    if (!value?.supported) {
+      revisionSupported = false;
+      return true;
+    }
+    revisionSupported = true;
+    if (value.workspace === undefined) return true;
+    const changed = value.workspace !== workspaceRevision;
+    workspaceRevision = value.workspace;
+    return changed || pollTick % 3 === 0;
+  } catch {
+    return true;
+  }
+}
 setInterval(() => {
   if (
-    !document.hidden &&
-    navigator.onLine !== false &&
-    !authorizationExpired &&
-    !workspaceRequests
+    document.hidden ||
+    navigator.onLine === false ||
+    authorizationExpired ||
+    workspaceRequests
   )
-    void refresh().catch((error) => notice(error.message));
+    return;
+  void (async () => {
+    if (!(await catalogChanged())) return;
+    await refresh();
+  })().catch((error) => notice(error.message));
 }, 2000);

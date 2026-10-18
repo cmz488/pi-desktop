@@ -317,6 +317,17 @@ export function createSupervisor(store, options) {
         });
       });
     },
+    /* Polling clients ask this first: the catalog revision plus the in-memory
+     * process states, without the per-agent session-file stat that read() does. */
+    async revision() {
+      const catalog = await store.read();
+      const processesFingerprint = [...processes.entries()]
+        .map(([id, state]) => `${id}:${state.status}:${state.pid ?? ""}`)
+        .join(",");
+      return {
+        workspace: `${catalog.revision}:${processesFingerprint}`,
+      };
+    },
     async read() {
       void discover().catch(() => {});
       const catalog = await store.read();

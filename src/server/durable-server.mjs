@@ -386,6 +386,7 @@ export async function startDurableDesk(options = {}) {
         canDeferConfiguration: true,
         settingsChanged: true,
         gitChanged: false,
+        revision: true,
         route: true,
         requestContext: true,
       },
@@ -446,6 +447,14 @@ export async function startDurableDesk(options = {}) {
             ))
         )
           throw new DeskError(403, "写入需要同源 JSON 请求");
+        if (url.pathname === "/api/revision") {
+          /* A polling probe answers from the state the host already holds: no
+           * transcript sync, no workspace read and no resource host wake-up. */
+          return requestState.run(
+            { active: undefined, native: undefined },
+            run,
+          );
+        }
         const metadataOnly =
           request.method === "GET" &&
           !["/api/state", "/api/message-detail"].includes(url.pathname);
@@ -699,6 +708,26 @@ export async function startDurableDesk(options = {}) {
           return true;
         }
         return false;
+      },
+      /* Cheap change bits for polling clients: everything here comes from
+       * memory, so an idle probe never rebuilds a projection. */
+      revision: () => {
+        // Read the request state directly: a probe runs without an active
+        // agent, and native() would reject that on purpose.
+        const host = requestState.getStore()?.native;
+        return {
+          workspace: root.agents
+            .map(
+              (agent) =>
+                `${agent.id}:${agent.revision}:${agent.idle ? 1 : 0}:${agent.pendingConfiguration ? 1 : 0}`,
+            )
+            .join(","),
+          interactions: `${auth.version()}:${host?.execute("interactions.version") ?? 0}`,
+          resources: (host?.execute("mcpRegistered") ?? [])
+            .map((row) => row.name)
+            .sort()
+            .join(","),
+        };
       },
       listSessions: async () =>
         (await workspace.read()).agents.map((agent) => ({

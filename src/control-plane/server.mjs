@@ -293,6 +293,13 @@ export async function startDesktopHost(options = {}) {
         } else throw new DeskError(405, "请求方式不支持");
         return;
       }
+      if (url.pathname === "/api/revision" && request.method === "GET") {
+        sendJson(response, 200, {
+          supported: true,
+          ...(await supervisor.revision()),
+        });
+        return;
+      }
       if (await serve(request, response, url.pathname)) return;
       if (url.pathname === "/api/workspace" && request.method === "GET") {
         const catalog = await supervisor.read();

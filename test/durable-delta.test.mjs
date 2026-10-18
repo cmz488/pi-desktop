@@ -148,3 +148,45 @@ test("a streamed answer publishes deltas without rebuilding the workspace per co
     "delta windows must use the cheap live projection",
   );
 });
+test("an idle revision probe answers from memory without rebuilding state", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-durable-revision-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cwd = join(root, "project");
+  await mkdir(cwd);
+  const models = createModels(),
+    faux = fauxProvider();
+  models.setProvider(faux.provider);
+  const workspace = await openAgentWorkspace({
+    storage: new MemoryStorage(),
+    models,
+  });
+  let reads = 0;
+  const read = workspace.read;
+  workspace.read = async (id) => {
+    reads++;
+    return read(id);
+  };
+  const app = await startDurableDesk({ workspace, port: 0 });
+  t.after(() => app.stop());
+  const origin = new URL(app.url).origin;
+  const created = await (
+    await fetch(`${origin}/api/command`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command: "create",
+        cwd,
+        name: "Idle",
+        model: { provider: faux.provider.id, modelId: faux.models[0].id },
+      }),
+    })
+  ).json();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  reads = 0;
+  const first = await (await fetch(`${origin}/api/revision`)).json();
+  const second = await (await fetch(`${origin}/api/revision`)).json();
+  assert.equal(first.supported, true);
+  assert.equal(first.workspace, second.workspace);
+  assert.equal(reads, 0, "an idle probe must not rebuild the workspace");
+  assert(first.workspace.includes(`${created.id}:`));
+});

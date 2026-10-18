@@ -3124,11 +3124,48 @@ $("#interaction-form").addEventListener("change", (event) => {
   }
 });
 let interactionPoll;
+/* Polling asks for a cheap revision first. A host that cannot answer cheaply
+ * reports unsupported and the page keeps its previous behaviour; every third
+ * tick still refreshes so a missed bit can only delay, never lose, an update. */
+let revisionSupported,
+  interactionRevision,
+  resourceRevision,
+  pollTick = 0;
+async function revisionChanged(kind) {
+  pollTick++;
+  if (revisionSupported === false) return true;
+  try {
+    const value = await api("/api/revision");
+    if (!value?.supported) {
+      revisionSupported = false;
+      return true;
+    }
+    revisionSupported = true;
+    const bit = value[kind];
+    if (bit === undefined) return true;
+    const previous =
+      kind === "interactions" ? interactionRevision : resourceRevision;
+    if (kind === "interactions") interactionRevision = bit;
+    else resourceRevision = bit;
+    return previous !== bit || pollTick % 3 === 0;
+  } catch {
+    return true;
+  }
+}
 function pollInteractions() {
   if (!live || !connected || !hostFocused || document.hidden) return;
-  interactionPoll ??= refreshInteractions().finally(() => {
-    interactionPoll = undefined;
-  });
+  interactionPoll ??= (async () => {
+    try {
+      if (!(await revisionChanged("interactions"))) return;
+      await refreshInteractions();
+    } catch (error) {
+      // A failed fetch must not be hidden behind an unchanged revision.
+      interactionRevision = undefined;
+      throw error;
+    } finally {
+      interactionPoll = undefined;
+    }
+  })();
   return interactionPoll;
 }
 async function refreshInteractions() {
@@ -6029,8 +6066,11 @@ async function boot() {
   );
   setInterval(() => pollInteractions(), 1200);
   setInterval(() => {
-    if (connected && !document.hidden && view === "mcp")
-      loadMcp().catch((error) => toast(error.message));
+    if (!connected || document.hidden || view !== "mcp") return;
+    void (async () => {
+      if (!(await revisionChanged("resources"))) return;
+      await loadMcp();
+    })().catch((error) => toast(error.message));
   }, 1500);
 }
 boot().catch((error) => {

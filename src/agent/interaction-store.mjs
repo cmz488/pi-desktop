@@ -9,6 +9,13 @@ import {
 // Auth and extension dialogs are host interactions, never transcript events.
 export function createInteractionStore(onChange = () => {}) {
   const jobs = new Map();
+  // Cheap change counter: hosts compare it instead of listing every job to
+  // find out whether a polling client needs the full list.
+  let version = 0;
+  const notify = () => {
+    version++;
+    onChange();
+  };
   function start(label, run) {
     const job = {
       id: randomUUID(),
@@ -18,23 +25,23 @@ export function createInteractionStore(onChange = () => {}) {
       controller: new AbortController(),
     };
     jobs.set(job.id, job);
-    onChange();
+    notify();
     const interaction = {
       signal: job.controller.signal,
       notify: (event) => {
         job.events.push(event);
         job.events = job.events.slice(-12);
-        onChange();
+        notify();
       },
       prompt: (prompt) =>
         new Promise((resolve, reject) => {
           const promptId = randomUUID();
           job.prompt = { ...prompt, signal: undefined, id: promptId };
-          onChange();
+          notify();
           const finish = (value, error) => {
             cleanup();
             if (job.prompt?.id === promptId) delete job.prompt;
-            onChange();
+            notify();
             if (error) reject(error);
             else resolve(value);
           };
@@ -72,7 +79,7 @@ export function createInteractionStore(onChange = () => {}) {
       .finally(() => {
         delete job.answer;
         delete job.prompt;
-        onChange();
+        notify();
       });
     return job.id;
   }
@@ -139,6 +146,7 @@ export function createInteractionStore(onChange = () => {}) {
     cancelAll: () => {
       for (const job of jobs.values()) job.controller.abort();
     },
+    version: () => version,
     get running() {
       return [...jobs.values()].some((job) => job.status === "running");
     },

@@ -602,6 +602,19 @@ export function createDeskBridge(input) {
       });
       return;
     }
+    if (url.pathname === "/api/revision" && request.method === "GET") {
+      /* A polling client asks this first; a host that cannot answer cheaply
+       * reports unsupported and the client keeps its previous behaviour. */
+      const value = host.capabilities.revision
+        ? await state.revision()
+        : undefined;
+      json(
+        response,
+        200,
+        value ? { supported: true, ...value, seq } : { supported: false, seq },
+      );
+      return;
+    }
     if (url.pathname === "/api/interactions" && request.method === "GET") {
       json(response, 200, {
         rows: host.capabilities.interactions

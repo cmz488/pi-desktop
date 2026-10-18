@@ -214,3 +214,15 @@ test("directory indexes never upload nested file contents; clicking one file rea
   );
   assert.equal(unchanged.status, 304);
 });
+test("the desktop host answers a cheap workspace revision for polling clients", async (t) => {
+  const f = await desktopFixture();
+  t.after(() => f.close());
+  const first = await f.call("/api/revision");
+  assert.equal(first.supported, true);
+  assert(typeof first.workspace === "string" && first.workspace.length > 0);
+  const second = await f.call("/api/revision");
+  assert.equal(second.workspace, first.workspace);
+  await f.command("conversation.create", { projectId: null });
+  const third = await f.call("/api/revision");
+  assert.notEqual(third.workspace, first.workspace);
+});

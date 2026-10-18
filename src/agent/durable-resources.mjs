@@ -515,7 +515,7 @@ export function createDurableResources({
           });
         if (action.startsWith("interactions.")) {
           const method = action.slice("interactions.".length);
-          if (!["list", "reply"].includes(method))
+          if (!["list", "reply", "version"].includes(method))
             throw new DeskError(404, "资源交互操作无效");
           return capabilities.interactions[method](...args);
         }

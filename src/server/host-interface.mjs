@@ -46,6 +46,7 @@ export const HOST_CAPABILITY_KEYS = Object.freeze([
   "btw",
   "settings",
   "canSaveSettings",
+  "revision",
   "projectTrusted",
   "canWrite",
   "canEditShared",
@@ -131,6 +132,9 @@ export function createHostInterface(input = {}) {
     },
     get gitChanged() {
       return optionalMethod(input, "gitChanged");
+    },
+    get revision() {
+      return optionalMethod(input, "revision");
     },
   };
   const sessions = {

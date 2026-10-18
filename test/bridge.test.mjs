@@ -526,3 +526,24 @@ test("effective settings are projected only when the settings capability is decl
     "dark",
   );
 });
+
+test("revision probing is explicit about unsupported hosts and cheap when declared", async (t) => {
+  const plain = await fixture(t);
+  const unsupported = await (await plain.request("/api/revision")).json();
+  assert.equal(unsupported.supported, false);
+  assert.equal(typeof unsupported.seq, "number");
+
+  let calls = 0;
+  const declared = await fixture(t, {
+    capabilities: { revision: true },
+    revision: () => {
+      calls++;
+      return { workspace: "a:1", interactions: "2", resources: "" };
+    },
+  });
+  const value = await (await declared.request("/api/revision")).json();
+  assert.equal(value.supported, true);
+  assert.equal(value.workspace, "a:1");
+  assert.equal(value.interactions, "2");
+  assert.equal(calls, 1);
+});
