@@ -38,6 +38,7 @@ export const HOST_CAPABILITY_KEYS = Object.freeze([
   "switchSession",
   "sessionCommand",
   "sessionTree",
+  "tasks",
   "canManageSessions",
   "packageManagement",
   "packageUpdates",
@@ -166,6 +167,12 @@ export function createHostInterface(input = {}) {
       return optionalMethod(input, "sessionTree");
     },
   };
+  const tasks = {
+    /* 任务图与子会话：只读快照，写操作仍走命令。 */
+    get list() {
+      return optionalMethod(input, "tasks");
+    },
+  };
   const resources = {
     get skills() {
       return optionalMethod(input, "skillInventory");
@@ -253,6 +260,7 @@ export function createHostInterface(input = {}) {
     switchSession: () => sessions.switch,
     sessionCommand: () => sessions.command,
     sessionTree: () => sessions.tree,
+    tasks: () => tasks.list,
     packageAction: () => resources.packageAction,
     packageUpdates: () => resources.packageUpdates,
     packageRoot: () => resources.packageRoot,
@@ -280,6 +288,7 @@ export function createHostInterface(input = {}) {
   const host = {
     state,
     sessions,
+    tasks,
     resources,
     models,
     prompt,

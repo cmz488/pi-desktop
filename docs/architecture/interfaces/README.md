@@ -27,6 +27,8 @@
 
 | [分支树读模型](session-tree.md) | `src/server/durable-server.mjs`、`src/session/pi-session-storage.mjs`、`src/agent/agent-workspace.mjs` | `GET /api/tree` 与 `sessionTree` capability：分叉来源、原生 parent 链与 leaf、分支点与被放弃路径 | `test/durable-session-tree.test.mjs`、`test/bridge.test.mjs`、`test/boundary-contracts.test.mjs` |
 
+| [任务图与子会话](task-graph.md) | `src/server/durable-server.mjs`、`src/agent/agent-workspace.mjs` | `GET /api/tasks` 与 `tasks` capability：任务所有权、等待关系、子会话列表与在跑工具 | `test/durable-task-graph.test.mjs`、`test/boundary-contracts.test.mjs` |
+
 形状测试（`test/boundary-contracts.test.mjs`）只断言接口形状、能力集、深路径与命令表：重命名或删掉其中一项就会失败；行为语义仍由各自的专项测试覆盖。
 
 ## 使用方式

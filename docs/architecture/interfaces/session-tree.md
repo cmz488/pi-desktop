@@ -2,7 +2,7 @@
 
 ## 位置与职责
 
-- `src/agent/agent-workspace.mjs`：分叉时把来源写进会话文档（`forkOf`），`read()` 的会话摘要带出该字段。
+- `src/agent/agent-workspace.mjs`：`read()` 的会话摘要带出 Durable 会话记录的 `parent`（`{ conversationId, at }`）作为分叉来源，不在会话文档里另存副本。
 - `src/session/pi-session-storage.mjs` 的 `tree()`：把 Pi 原生会话树投影成只读结构（父子、活跃路径、leaf、分支点）。
 - `src/server/durable-server.mjs` 的 `sessionTree` 宿主实现 + `src/server/bridge.mjs` 的 `GET /api/tree`：把两者合成一个只读读模型。
 
@@ -50,7 +50,7 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 ## 不变量
 
 - **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变（本任务只新增端点，`read()` 的 `agents[]` 追加 `forkOf`）。
-- **每个分支都是独立会话**：`branches[].id` 就是会话栏里的会话 id；`forkOf` 来自会话文档，重启后仍可读，不依赖原生文件。
+- **每个分支都是独立会话**：`branches[].id` 就是会话栏里的会话 id；`forkOf` 来自 Durable 的会话记录 `parent`，重启后仍可读，不依赖原生文件。
 - **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。
 - **活跃/放弃由 `active` 表达**：`active === true` 的节点在活跃路径上（leaf 必然在其中）；其余节点是被放弃的路径，仍保留在树里。
 - **分支点**：`branchPoint` 表示该节点有多个子条目（退回会制造一个）。

@@ -32,14 +32,7 @@ const AgentProfile = defineDoc({
   scope: "conversation",
   history: "rewindable",
   fork: "asOf",
-  initial: () => ({
-    name: "Agent",
-    revision: 1,
-    shellPath: "",
-    shellEnv: {},
-    // 分叉来源：{ conversationId, entryId }；不是分叉出来的会话为 null。
-    forkOf: null,
-  }),
+  initial: () => ({ name: "Agent", revision: 1, shellPath: "", shellEnv: {} }),
 });
 const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const text = (value, limit, label) => {
@@ -257,17 +250,22 @@ export async function openAgentWorkspace(options) {
   const guard = () => {
     if (closed || compromised) throw new DeskError(409, "Agent 宿主已关闭");
   };
-  async function conversations() {
+  /* 一次扫描拿到全部会话记录：顶层会话（含 ownerless 分支）与子会话共用同一份记录，
+   * parent/owner 是 Durable 自己的关系字段，界面不再依赖会话文档里的副本。 */
+  async function scanAll() {
     return harness.commit(async (tx) => {
       const rows = [];
       let cursor;
       do {
         const page = await tx.scanConversations({}, 200, cursor);
-        rows.push(...page.items.filter((row) => !row.owner));
+        rows.push(...page.items);
         cursor = page.next;
       } while (cursor !== undefined);
       return rows;
     }, context);
+  }
+  async function conversations() {
+    return (await scanAll()).filter((row) => !row.owner);
   }
   async function conversation(id) {
     if (!Number.isSafeInteger(id) || id < 0)
@@ -346,7 +344,6 @@ export async function openAgentWorkspace(options) {
       environmentKeys: Object.keys(profile?.shellEnv ?? {}),
       nativeInitialized: !!profile?.nativeInitialized,
       nativeDefaults: profile?.nativeDefaults !== false,
-      forkOf: profile?.forkOf ?? null,
       idle: !foreground(conversation.id),
     };
   }
@@ -447,13 +444,29 @@ export async function openAgentWorkspace(options) {
   }
   async function read(id) {
     guard();
-    const records = await conversations();
+    const records = await scanAll();
     const agents = [];
     for (const record of records) {
+      if (record.owner) continue;
       if (await harness.snapshot(AgentProfile, record.id, context))
-        agents.push(
-          await summary(await harness.conversation(record.id, context)),
-        );
+        agents.push({
+          ...(await summary(await harness.conversation(record.id, context))),
+          // 分叉来源取自会话记录：顶层会话也可能是从更早的会话分叉来的。
+          parent: record.parent ?? null,
+        });
+    }
+    /* 子会话：被任务拥有的会话（子代理）等非顶层会话；顶层会话见 agents。 */
+    const children = [];
+    for (const record of records) {
+      if (!record.owner) continue;
+      const profile = await harness.snapshot(AgentProfile, record.id, context);
+      children.push({
+        id: record.id,
+        name: profile?.name ?? `会话 ${record.id}`,
+        parent: record.parent ?? null,
+        owner: record.owner,
+        idle: !foreground(record.id),
+      });
     }
     const available = (await models.getAvailable()).map((model) => ({
       provider: model.provider,
@@ -480,7 +493,12 @@ export async function openAgentWorkspace(options) {
         kind: task.kind,
         status: task.state.status,
         background: !!task.background,
+        // 所有权边：父任务；null 表示由会话自己拥有。
+        owner: task.owner ?? null,
+        // waiting 时等待的任务 id；其余状态为空数组。
+        waitingOn: task.state.on ?? [],
       })),
+      children,
       recovery: recoveryStatus(),
       active: null,
     };
@@ -686,11 +704,6 @@ export async function openAgentWorkspace(options) {
           init: async (tx, id) => {
             const profile = await tx.doc(AgentProfile, id);
             profile.name += " · 分支";
-            // 记录分叉来源：分支树的父子关系不依赖原生文件，重启后仍可读。
-            profile.forkOf = {
-              conversationId: selected.id,
-              entryId: input.entryId,
-            };
             profile.revision++;
           },
         },

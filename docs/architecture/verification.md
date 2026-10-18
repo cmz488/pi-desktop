@@ -75,6 +75,8 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：树行、活跃/已放弃标记、唯一 leaf 与徽标、折叠子树后行数减少、刷新后折叠状态保持、再从节点创建分支（切到新会话）与从节点退回后树仍区分被放弃路径。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
 
+任务图与子会话读模型由 `GET /api/tasks`（capability `tasks`）提供：`test/durable-task-graph.test.mjs` 用真实子代理夹具断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具进入 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation` 与 `waitingOn` 关系。
+
 分支树读模型由 `GET /api/tree`（capability `sessionTree`）提供：Durable 侧给出分叉来源与会话 id，原生侧给出 parent 链与 leaf；`test/durable-session-tree.test.mjs` 断言分支点、被放弃路径不在活跃路径上、`forkOf` 与 branches 一致、无原生转录时为 `null`，`test/bridge.test.mjs` 断言未声明能力的宿主返回 `supported: false`。
 
 已知限制：退回需要该 Agent 的原生转录（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionContext`）从原生日志取得，Desktop 不自行实现上下文推导。

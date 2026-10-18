@@ -427,6 +427,7 @@ export async function startDurableDesk(options = {}) {
         gitChanged: false,
         revision: true,
         sessionTree: true,
+        tasks: true,
         route: true,
         requestContext: true,
       },
@@ -790,6 +791,40 @@ export async function startDurableDesk(options = {}) {
             .join(","),
         };
       },
+      /* 任务图与子会话读模型：任务（所有权、等待关系、后台标记）、被任务拥有的子会话，以及
+       * 正在运行的工具。只读；界面用它画任务与子代理面板，操作另走 /api/command。 */
+      tasks: async (id) => {
+        root = await workspace.read();
+        const requested =
+          id === undefined || id === null
+            ? (requestState.getStore()?.active?.id ?? root.agents[0]?.id)
+            : Number(id);
+        if (requested === undefined) throw new DeskError(422, "请选择 Agent");
+        // 在跑工具只在会话视图里；只为实际有实时任务的会话读一次轻量投影。
+        const tools = [];
+        const seen = new Set();
+        for (const task of root.tasks) {
+          if (seen.has(task.conversationId)) continue;
+          seen.add(task.conversationId);
+          const live = await workspace
+            .live(task.conversationId)
+            .catch(() => undefined);
+          for (const call of live?.liveTools ?? [])
+            if (call.status !== "done")
+              tools.push({
+                conversationId: task.conversationId,
+                callId: call.callId,
+                name: call.name,
+                status: call.status,
+              });
+        }
+        return {
+          sessionId: String(requested),
+          tasks: root.tasks,
+          conversations: root.children ?? [],
+          tools,
+        };
+      },
       /* 分支树读模型：本会话在 Durable 侧的 id 与分叉来源、原生树的 parent 链与 leaf、退回标记
        * 位置，以及从本会话分叉出去的分支（每个分支都是独立会话）。只读；本宿主未绑定原生转录
        * 时 native 为 null，界面据此只显示 Durable 侧信息。 */
@@ -801,13 +836,20 @@ export async function startDurableDesk(options = {}) {
             : Number(id);
         if (requested === undefined) throw new DeskError(422, "请选择 Agent");
         const agent = await workspace.agent(requested);
+        const record = root.agents.find((row) => row.id === agent.id);
         const nativeTree =
           transcriptAgentId === agent.id ? (transcript?.tree() ?? null) : null;
         const entries = (await workspace.transcript(agent.id)).entries;
         return {
           sessionId: String(agent.id),
           name: agent.name,
-          forkOf: agent.forkOf ?? null,
+          // 分叉来源取自 Durable 的会话记录（parent = { conversationId, at }）。
+          forkOf: record?.parent
+            ? {
+                conversationId: record.parent.conversationId,
+                entryId: record.parent.at,
+              }
+            : null,
           leaf: nativeTree?.leafId ?? null,
           native: nativeTree,
           rewinds: entries
@@ -817,11 +859,14 @@ export async function startDurableDesk(options = {}) {
               rewindTo: entry.data?.rewindTo ?? null,
             })),
           branches: root.agents
-            .filter((row) => row.forkOf?.conversationId === agent.id)
+            .filter((row) => row.parent?.conversationId === agent.id)
             .map((row) => ({
               id: String(row.id),
               name: row.name,
-              forkOf: row.forkOf,
+              forkOf: {
+                conversationId: row.parent.conversationId,
+                entryId: row.parent.at,
+              },
               idle: row.idle,
             })),
         };
