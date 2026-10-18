@@ -1,6 +1,6 @@
 {
   "name": "pi-desktop-extension",
-  "version": "0.26.15",
+  "version": "0.26.16",
   "description": "Pi Desktop: multi-project Electron and web workspace for Pi Durable agents",
   "type": "module",
   "license": "MIT",
