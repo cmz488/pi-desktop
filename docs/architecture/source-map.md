@@ -31,6 +31,8 @@
 
 [Pi Durable 与 Pi SDK 的边界](pi-boundary.md) 固定两个运行时的归属：执行 seam 是 `src/control-plane/agent-runtime.mjs` 的 `AgentRuntime`，能力 seam 是 `src/agent/durable-resources.mjs` 里的 Pi 资源会话。新增行为先判断归属，再决定改哪一侧；跨边界的改动必须经过这两条 seam。
 
+归档位置同时受代码规范约束：调用者视角的契约写在 `docs/architecture/interfaces/`，实现原因写在源码注释，命名与术语见 [代码与文档规范](../guides/code-style.md)。
+
 ## 迁移范围
 
 此次只整理归属与路径，没有顺手拆分聊天大文件、改写 Pi 执行链或删除兼容模式。旧文献原文保存在历史／参考目录。后续提取行为时，应让调用者和测试通过同一 interface 验证，避免增加 shallow 转发 module。

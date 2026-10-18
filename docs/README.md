@@ -5,6 +5,7 @@
 ## 使用指南
 
 - [安装与启动](guides/getting-started.md)
+- [代码与文档规范](guides/code-style.md)
 - [项目、Pi 会话与归档](guides/sessions.md)
 - [配置、人格和原生资源](guides/configuration.md)
 - [远程手机连接](guides/remote-access.md)

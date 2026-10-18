@@ -43,3 +43,9 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 远程连接回归还覆盖：远程文件目录索引复用（文本、图片、大文件、二进制）、远程设置／插件／Agent 配置接口拒绝、远程新建会话/会话管理/文件/Git 保留、Tailscale 子进程无代理环境与守护进程有界重启。手机远程浏览器在 320／360／390／430px 的会话页验证无横向溢出、输入区可见、安全区 padding 与 44px 触控目标；桌面远程外层工作区隐藏设置、扩展、技能和添加项目入口，但保留导航按钮与聊天会话抽屉，远程 Git 路由保持可用。
 
 性能深化专项由 `test/durable-delta.test.mjs`（流式回答只发增量、一次回答的工作区读取 ≤ 20、空闲 revision 探测 0 次完整读取）、`test/pi-sdk-lazy.test.mjs`（Pi SDK 懒加载、memoize、未加载时明确报错、启动关键子模块可单独加载）、Git 专项（`repo.read()` 子进程收敛、写入指纹与一次性确认不变）、`test/bridge.test.mjs`（revision 端点的 supported/unsupported 契约）与 `test/remote-lazy.test.mjs`（桌面宿主的 workspace revision 位）覆盖。`test/durable-browser-check.mjs` 另断言流式回答期间 `/api/state` 取整份快照不超过 5 次，`test/conversation-timeline-browser-check.mjs` 覆盖增量渲染后的折叠、懒详情与滚动保持。前后测量数字见 [性能记录](../history/performance-check.md)。
+
+## 契约与规范的验证
+
+接口契约（[docs/architecture/interfaces/](../architecture/interfaces/README.md)）每条都必须在“可执行证据”里指向测试或命令；新增或改变契约时必须同时补上断言，未登记的对外行为不算契约。运行归属与两条 seam 见 [边界文档](../architecture/pi-boundary.md)。
+
+代码与文档规范（[代码与文档规范](../guides/code-style.md)）本轮不引入自动检查器：靠评审清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
