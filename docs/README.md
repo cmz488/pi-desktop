@@ -14,6 +14,7 @@
 ## 当前设计
 
 - [架构说明](architecture/README.md)
+- [Pi Durable 与 Pi SDK 的边界](architecture/pi-boundary.md)
 - [源码地图](architecture/source-map.md)
 - [验证说明与已知限制](architecture/verification.md)
 - [架构深化验收（0.26.12）](history/architecture-deepening-review.md)

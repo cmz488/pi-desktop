@@ -45,4 +45,4 @@ Git 的 `read()` 返回 `limits` 和 `permittedActions`，页面只渲染服务�
 
 发布资产 module 统一公共 URL、磁盘文件与每种页面所需资源。各 Host 和预览只选择对应资产集合；压缩、ETag、HEAD 和缓存沿用统一 handler。目录可变，公共 URL 保持兼容。npm 检查从真实 tarball 验证资源闭包与完整文献，公开资产白名单不包含会话、配置或源码目录的任意文件。
 
-源码职责见 [源码地图](source-map.md)，验证与限制见 [验证说明](verification.md)。历史取舍、旧设计和上游研究保存在 [文献入口](../README.md)。
+源码职责见 [源码地图](source-map.md)，运行边界见 [Pi Durable 与 Pi SDK 的边界](pi-boundary.md)，验证与限制见 [验证说明](verification.md)。历史取舍、旧设计和上游研究保存在 [文献入口](../README.md)。
