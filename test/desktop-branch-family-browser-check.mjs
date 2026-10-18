@@ -52,10 +52,10 @@ try {
     "d.querySelector('#connection-status')?.textContent === 'Pi 已连接'",
   );
   await chat(
-    "d.querySelector('#prompt').value='family question'; d.querySelector('#composer').requestSubmit()",
+    "d.querySelector('#prompt').value='Q1'; d.querySelector('#composer').requestSubmit()",
   );
   await chatUntil(
-    "d.querySelector('#messages').textContent.includes('answer: family question') && d.querySelector('#stop-button').hidden",
+    "d.querySelector('#messages').textContent.includes('answer: Q1') && d.querySelector('#stop-button').hidden",
   );
   const source = await chat(
     "return d.querySelector('#sessions .session.active').dataset.sessionId",
@@ -127,8 +127,58 @@ try {
   );
   assert.deepEqual(driver.errors, []);
   assert.equal(f.requests.length, 1, "分叉没有重新调用模型或重放源回答");
+  const submit = async (message) => {
+    await chat(
+      `d.querySelector('#prompt').value=${JSON.stringify(message)}; d.querySelector('#composer').requestSubmit()`,
+    );
+    await chatUntil(
+      `d.querySelector('#messages').textContent.includes(${JSON.stringify(`answer: ${message}`)}) && d.querySelector('#stop-button').hidden`,
+    );
+  };
+  const messageCommand = async (entryId, command) => {
+    await chat(
+      `d.querySelector('#messages [data-entry-id="${entryId}"]').dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true, clientX:80, clientY:80}))`,
+    );
+    await chatUntil("!!d.querySelector('.message-menu')");
+    await chat(
+      `d.querySelector('.message-menu [data-command=${command}]').click()`,
+    );
+  };
+  await submit("Q2");
+  const q2 = (await snapshot(source)).messages.find((row) => row.text === "Q2");
+  await submit("Q3");
+  await messageCommand(q2.entryId, "rewind");
+  await chatUntil("!d.querySelector('#messages').textContent.includes('Q3')");
+  await submit("Q4");
+  const q4 = (await snapshot(source)).messages.find((row) => row.text === "Q4");
+  await messageCommand(q4.entryId, "rewind");
+  await chatUntil(
+    "!d.querySelector('#messages').textContent.includes('answer: Q4')",
+  );
+  const q1 = before.messages.find((row) => row.text === "Q1");
+  assert.equal(
+    await chat(
+      "return Number(d.querySelector('#messages [data-entry-id]').dataset.entryId)",
+    ),
+    q1.entryId,
+    "第二次退回后可见 Q1 仍带原始消息目标",
+  );
+  await messageCommand(q1.entryId, "fork");
+  await chatUntil(
+    `d.querySelectorAll('#sessions [data-session-id]').length === 4 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(source)}`,
+  );
+  await chatUntil("d.querySelector('#token-total').textContent === 'Token 0'");
+  const replayFork = await chat(
+    "return d.querySelector('#sessions .session.active').dataset.sessionId",
+  );
+  assert.deepEqual(
+    (await snapshot(replayFork)).messages.map((row) => row.text),
+    ["Q1"],
+  );
+  assert.equal(f.requests.length, 4, "两次退回和再次分叉均不重放模型");
+  assert.deepEqual(driver.errors, []);
   console.log(
-    "Default Desktop branch browser passed: sidebar/tree forks, native branches, independent usage, unchanged source and session switching.",
+    "Default Desktop branch browser passed: sidebar/tree forks, native identity, independent usage, unchanged source, switching and Q1/Q2/Q3 → rewind Q2 → Q4 → rewind Q4 → fork Q1.",
   );
 } finally {
   driver?.close();

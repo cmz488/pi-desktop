@@ -103,6 +103,12 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契约](lifecycle.md)。
 
+## 退回上下文与来源
+
+`openNativeTranscript` 句柄追加同步只读方法 `rewindContext(entryId)`，返回 `{ messages, origins: number[] } | undefined`；消息使用 Pi 的 `buildSessionProjection` 推导，并从同一投影的 `sourceEntry` 关联 Durable 原点。目标未导出时为 `undefined`，不能识别来源时为 409。旧 `rewindMessages(entryId)` 仍返回消息列表。
+
+`origins` 仅对应可见的 user／assistant／toolResult／custom 贡献，不把摘要或 system 计入索引。一次 Durable 贡献导出多条原生消息时，它们共享该贡献的 entry id。HTTP `rewind` 输入不变；Host 自行取得消息和来源，不能信任客户端伪造的上下文。提交参数与原生角色的规范化见 [Durable workspace 契约](durable-workspace.md)。
+
 ## 性能特征
 
 - 每次调用读一次 `workspace.read()`（全量摘要）与一次 `transcript(id)` 条目扫描；原生树来自内存中的 SessionManager，不读盘。
@@ -116,3 +122,5 @@ Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契�
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（40 个键）。
 
 默认模式的补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。
+
+多次退回的来源、重启与再次分叉见 `test/durable-rewind-origins.test.mjs`；原生编辑／压缩／批量贡献的来源投影见 `test/native-rewind-context.test.mjs`。默认浏览器验收也覆盖两次退回后从可见 Q1 分叉，不能带入 Q2/Q4。

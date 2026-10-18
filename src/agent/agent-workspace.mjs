@@ -324,21 +324,26 @@ export async function openAgentWorkspace(options) {
     Object.values(graph.value.tasks).some(
       (task) => task.conversationId === id && !task.background,
     );
-  /* 一条 entry 在界面里贡献的消息：custom 原生消息算一条，其余取模型消息里可展示的角色。
-   * `projectActive` 与退回标记的“消息原点”必须用同一条规则，否则退回后每条消息会指向标记
-   * 而不是它原本的 entry。 */
+  /* Pi 的 UI 角色已规范成 LLM 消息，界面贡献不能再从 model 反推，否则会丢卡片或显示摘要。
+   * `projectActive` 与退回的“消息原点”必须沿用同一条规则，避免过滤后发生索引错位。 */
   const contributed = (entry) =>
-    (entry.data?.nativeMessage?.role === "custom"
-      ? [entry.data.nativeMessage]
-      : (entry.model ?? [])
+    (Array.isArray(entry.data?.nativeMessages)
+      ? entry.data.nativeMessages
+      : entry.data?.nativeMessage?.role === "custom"
+        ? [entry.data.nativeMessage]
+        : (entry.model ?? [])
     ).filter((message) =>
       ["user", "assistant", "toolResult", "custom"].includes(message.role),
     );
-  /* 退回点之前每个可见消息原本属于哪个 entry，用于让界面上的消息动作仍指向原条目。 */
+  // 兼容未提供原生来源的直接调用方；复杂历史无法对齐时必须拒绝，不能伪装成标记来源。
   const prefixOrigins = (entries, entryId) =>
     entries
       .filter((entry) => entry.id <= entryId)
-      .flatMap((entry) => contributed(entry).map(() => entry.id));
+      .flatMap((entry) =>
+        contributed(entry).map(
+          (_, index) => entry.data?.origins?.[index] ?? entry.id,
+        ),
+      );
   async function summary(conversation) {
     const [agent, profile] = await Promise.all([
       conversation.agent(context),
@@ -741,27 +746,44 @@ export async function openAgentWorkspace(options) {
         throw new DeskError(422, "退回位置无效");
       if (!Array.isArray(input.messages) || input.messages.length > 2000)
         throw new DeskError(422, "退回上下文无效");
-      const known = (await workspace.transcript(selected.id)).entries.some(
-        (entry) => entry.id === input.entryId,
+      const { entries } = await workspace.transcript(selected.id);
+      const known = new Set(entries.map((entry) => entry.id));
+      if (!known.has(input.entryId)) throw new DeskError(404, "退回位置不存在");
+      const messages = input.messages.filter(
+        (message) => message.role !== "system",
       );
-      if (!known) throw new DeskError(404, "退回位置不存在");
-      // 退回后上下文由标记携带，但界面上的每条消息仍要指向它原本的 entry，否则从消息触发的
-      // 退回／分叉会落到标记上（等于整个前缀）。数量对不上时不写原点，安全地退回标记 id。
-      const origins = prefixOrigins(
-        (await workspace.transcript(selected.id)).entries,
-        input.entryId,
-      );
+      const origins =
+        input.origins === undefined
+          ? prefixOrigins(entries, input.entryId)
+          : input.origins;
+      if (
+        !Array.isArray(origins) ||
+        origins.some((id) => !Number.isSafeInteger(id) || id < 0)
+      )
+        throw new DeskError(422, "退回消息来源无效");
+      if (origins.length !== contributed({ model: messages }).length)
+        throw new DeskError(409, "退回消息来源不一致，请重新读取会话");
+      if (origins.some((id) => !known.has(id)))
+        throw new DeskError(404, "退回消息来源不存在");
+      // 默认宿主传入 Pi 活跃投影的原点；旧调用无法对齐时拒绝，不能丢掉映射。
+      // Pi 的摘要／custom 是 UI 角色，Durable model 只接受 LLM 消息；原始贡献只供界面投影。
+      const { convertToLlm } = await loadPiMessages();
+      const nativeMessages = messages.some(
+        (message) =>
+          !["user", "assistant", "toolResult"].includes(message.role),
+      )
+        ? messages
+        : undefined;
       const marker = await selected.commit(
         (tx) =>
           tx.appendEntry(selected.id, {
             kind: "desk.rewind",
             head: "self",
-            model: input.messages.filter(
-              (message) => message.role !== "system",
-            ),
+            model: convertToLlm(messages),
             data: {
               rewindTo: input.entryId,
-              ...(origins.length === input.messages.length ? { origins } : {}),
+              origins,
+              ...(nativeMessages ? { nativeMessages } : {}),
             },
           }),
         context,

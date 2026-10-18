@@ -57,16 +57,16 @@ workspace.close()                                    // 释放 Harness、锁与�
 
 `execute` 的命令表：
 
-| 命令        | 输入                        | 语义                                                                                     |
-| ----------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `create`    | `{ patch, profile }`        | 新建会话；未指定扩展时用 registry 当前安装集                                             |
-| `send`      | `{ id, message, ... }`      | 提交一次 input；run 结束时回答作为 entry 落盘                                            |
-| `abort`     | `{ id }`                    | 中止当前 run，队列中的消息保留                                                           |
-| `compact`   | `{ id, ... }`               | 触发压缩（插入 summary entry，原 entry 保留）                                            |
-| `configure` | `{ id, patch }`             | 修改该会话的 agent 文档（模型／思考级别／扩展／工具）                                    |
-| `fork`      | `{ id, entryId }`           | 从某个 entry 分叉出**新的会话**，名称追加"· 分支"                                        |
-| `rewind`    | `{ id, entryId, messages }` | 退回：追加 `desk.rewind` 头部标记，其 `model` 就是退回点之前的模型上下文；原条目全部保留 |
-| 其他        | —                           | `DeskError(404, "不支持的 Agent 操作")`                                                  |
+| 命令        | 输入                                  | 语义                                                                                     |
+| ----------- | ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `create`    | `{ patch, profile }`                  | 新建会话；未指定扩展时用 registry 当前安装集                                             |
+| `send`      | `{ id, message, ... }`                | 提交一次 input；run 结束时回答作为 entry 落盘                                            |
+| `abort`     | `{ id }`                              | 中止当前 run，队列中的消息保留                                                           |
+| `compact`   | `{ id, ... }`                         | 触发压缩（插入 summary entry，原 entry 保留）                                            |
+| `configure` | `{ id, patch }`                       | 修改该会话的 agent 文档（模型／思考级别／扩展／工具）                                    |
+| `fork`      | `{ id, entryId }`                     | 从某个 entry 分叉出**新的会话**，名称追加"· 分支"                                        |
+| `rewind`    | `{ id, entryId, messages, origins? }` | 退回：追加 `desk.rewind` 头部标记，其 `model` 就是退回点之前的模型上下文；原条目全部保留 |
+| 其他        | —                                     | `DeskError(404, "不支持的 Agent 操作")`                                                  |
 
 ## 不变量
 
@@ -80,6 +80,8 @@ workspace.close()                                    // 释放 Harness、锁与�
 - **`fork` 记录来源**：Durable 在会话记录里保存 `parent { conversationId, at }`，`read()` 的会话摘要把它作为 `parent` 带出，因此分支树在重启后仍能读出父子关系（界面读模型见 [分支树契约](session-tree.md)）。
 - **`fork` 产生独立会话**：新会话有独立 `usage` 与独立 transcript；分叉后必须修复原生上下文（`repairNativeContext`），避免继承父会话的旧贡献。
 - **`rewind` 只改上下文起点，不删历史**：`desk.rewind` 是头部标记（`head: "self"`），Durable 内核因此把模型上下文重建为该标记携带的消息（退回点之前的前缀），其后的条目不再进入上下文；原生日志的 leaf 移动由会话模块用 Pi 的 `branch()` 在同一文件里完成。前缀消息由 Host 用 Pi 自己的推导从原生日志取得，命令本身不自行推导上下文。
+- **退回来源必须可对齐**：Host 从同一个 Pi 投影同时取得消息与 `origins: number[]`，按可见 `user`／`assistant`／`toolResult`／`custom` 顺序排列，不包含 UI 摘要和 system。来源必须是该会话的已知 entry；原点与标记原子提交，不能因数量不符就省略映射。直接调用方的简单旧调用仍兼容，不能对齐的复杂历史返回 409，不再伪装成标记来源。
+- **模型与 UI 角色分离**：退回消息通过 Pi `convertToLlm` 写入 model；有摘要／custom 等原生角色时，原始贡献保存在同一标记的只读 UI 数据里，卡片与消息原点不会因规范化而丢失。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
 
 ## 顺序约束
@@ -96,6 +98,9 @@ workspace.close()                                    // 释放 Harness、锁与�
 | `options.models` 缺失，或上游形状变化（`Harness.open`／`createRegistry` 不是函数） | `Error("Pi Durable 公开接口不兼容")`                               |
 | 已有 writer 持有锁（`proper-lockfile` 报 `ELOCKED`）                               | `DeskError(409, "Agent 存储正在被另一个宿主占用")`，不降级为共享写 |
 | `fork` 的 `entryId` 不是安全整数                                                   | `DeskError(422, "分叉位置无效")`                                   |
+| 退回 `origins` 非数组或包含非法 id                                                 | `DeskError(422, "退回消息来源无效")`                               |
+| 退回来源与可见消息数量不一致                                                       | `DeskError(409, "退回消息来源不一致，请重新读取会话")`             |
+| 退回来源不属于该会话的已知条目                                                     | `DeskError(404, "退回消息来源不存在")`                             |
 | 未知命令                                                                           | `DeskError(404, "不支持的 Agent 操作")`                            |
 | 生命周期已结束（`close()` 后调用）                                                 | `guard()` 抛 `DeskError(409, "Agent 宿主已关闭")`                  |
 | 会话 ID 不是非负安全整数                                                           | `DeskError(422, "Agent ID 无效")`                                  |
@@ -118,3 +123,5 @@ workspace.close()                                    // 释放 Harness、锁与�
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
 - 会话树与分叉来源：`test/durable-session-tree.test.mjs`；任务图与子会话：`test/durable-task-graph.test.mjs` —— 分叉（独立会话与独立用量）与退回（上下文重建到该点、被放弃的回合仍在存储与原生日志里、JSONL 的 parent id 与 active entry 一致）。
 - 定点重启：`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）在回答生成与工具调用两种中断点分别 SIGKILL 宿主，断言恢复可见、回答只提交一次、已提交的生成不被重发、未安全重放的工具不重复执行。
+
+- 多次退回来源：`test/durable-rewind-origins.test.mjs`（默认 Host／worker 的两次退回、Q1 再分叉、重启、原生 parent／leaf、压缩后续跑的真实请求）；`test/native-rewind-context.test.mjs`（批量贡献、编辑、压缩、custom 的 Pi 来源投影）；`test/agent-workspace.test.mjs`（参数拒绝不落部分标记、LLM 规范化与 UI 卡片保持）。`test:workspace:browser` 用消息右键完成同一 Q1/Q2/Q3 → 退回 Q2 → Q4 → 退回 Q4 → 分叉 Q1 流程。

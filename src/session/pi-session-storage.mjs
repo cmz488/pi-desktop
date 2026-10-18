@@ -16,12 +16,23 @@ import { join, dirname, relative, isAbsolute, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { DatabaseSync } from "node:sqlite";
 import { embeddedSdkEntry, loadPiSessionManager } from "../agent/pi-sdk.mjs";
+import { DeskError } from "../config/config-store.mjs";
+
+/**
+ * 原生会话存储：Durable 转录的 Pi 互操作导出与原生文件的可恢复归档。
+ *
+ * 接口：目录／摘要／记录 helper、`openNativeTranscript`、`openSessionArchives`；
+ *   句柄的 `rewindContext` 与错误约束见 docs/architecture/interfaces/session-tree.md
+ *   及 lifecycle.md；`rewindMessages` 保留仅取消息的兼容入口。
+ * 不变量：Durable 是唯一状态真相；原生消息与导出检查点原子发布；退回的活跃路径、
+ *   编辑和压缩由 Pi 投影决定，归档先保全 SQLite 记录，不覆盖冲突文件。
+ * 错误：路径越界、占用／摘要冲突、大小／格式无效抛 DeskError；文件系统错误原样抛出。
+ */
 
 /* The transcript and archive paths only need the session-manager submodule.
  * Capture it once so the synchronous archive readers keep their contract. */
 let sessionSdk;
 const sessionModule = async () => (sessionSdk ??= await loadPiSessionManager());
-import { DeskError } from "../config/config-store.mjs";
 
 const { getDefaultSessionDir } = await import(
   new URL("./core/session-manager.js", embeddedSdkEntry)
@@ -497,6 +508,40 @@ export async function openNativeTranscript({
       }
       return metadata;
     }
+    const rewindContext = (entryId) => {
+      const native = mapping.get(entryId);
+      if (native === undefined || !manager.getEntry(native)) return undefined;
+      const entries = manager.getEntries();
+      const byId = new Map(entries.map((entry) => [entry.id, entry]));
+      const projection = sdk.buildSessionProjection(entries, native, byId);
+      const origins = new Map([...mapping].map(([id, key]) => [key, id]));
+      // mapping 保留每个 Durable 条目的首个原生条目；同一贡献里的后续消息由导出检查点归属。
+      // 这里仅补全来源，不重建活跃路径或上下文；压缩和编辑仍全部由 Pi 的 projection 决定。
+      let through;
+      for (const entry of entries.toReversed()) {
+        if (
+          entry.customType === "pi-desktop-sync" &&
+          entry.data?.owner === owner &&
+          entry.data.conversation === id
+        )
+          through = entry.data.through;
+        else if (through !== undefined && !origins.has(entry.id))
+          origins.set(entry.id, through);
+      }
+      const visibleOrigins = projection.entries.flatMap(
+        ({ sourceEntry, messages }) =>
+          messages
+            .filter((message) =>
+              ["user", "assistant", "toolResult", "custom"].includes(
+                message.role,
+              ),
+            )
+            .map(() => origins.get(sourceEntry.id)),
+      );
+      if (visibleOrigins.some((id) => !Number.isSafeInteger(id)))
+        throw new DeskError(409, "无法确定退回消息来源，请重新打开会话");
+      return { messages: projection.messages, origins: visibleOrigins };
+    };
     const sync = () => {
       const next = queue.then(synchronize);
       queue = next.catch((error) => {
@@ -507,14 +552,10 @@ export async function openNativeTranscript({
     await sync();
     return {
       sync,
-      /* 退回点之前的模型上下文，用 Pi 自己的推导（含压缩与编辑），供 Host 写入 Durable
-       * 头部标记；该条目尚未写入原生日志时返回 undefined。 */
+      /* 退回消息与来源必须来自同一个 Pi 投影，否则再次退回会把被放弃的历史混入原点。 */
+      rewindContext,
       rewindMessages(entryId) {
-        const native = mapping.get(entryId);
-        if (native === undefined || !manager.getEntry(native)) return undefined;
-        const entries = manager.getEntries();
-        const byId = new Map(entries.map((entry) => [entry.id, entry]));
-        return sdk.buildSessionContext(entries, native, byId).messages;
+        return rewindContext(entryId)?.messages;
       },
       /* 原生会话树的只读投影：只描述结构与位置（父子、活跃路径、leaf、分支点、退回标记），
        * 不携带模型语义；界面靠它画分支树，退回/分叉仍走 Host 命令。 */

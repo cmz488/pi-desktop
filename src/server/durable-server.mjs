@@ -354,13 +354,14 @@ export async function startDurableDesk(options = {}) {
       if (!Number.isSafeInteger(entryId))
         throw new DeskError(422, "没有可退回的消息");
       await transcript.sync();
-      const messages = transcript.rewindMessages(entryId);
-      if (!messages?.length)
+      const replay = transcript.rewindContext(entryId);
+      if (!replay?.messages.length)
         throw new DeskError(409, "退回位置尚未写入原生会话，请稍后重试");
       const result = await workspace.execute("rewind", {
         id: input.id,
         entryId,
-        messages,
+        messages: replay.messages,
+        origins: replay.origins,
       });
       await transcripts?.sync(root.agents);
       root = await workspace.read();

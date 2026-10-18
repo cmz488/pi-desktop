@@ -516,3 +516,85 @@ test("compaction keeps durable billing totals and invalidates the old context me
   assert(after.contextUsage.tokens > 0);
   assert(after.usage.tokens > compacted.usage.tokens);
 });
+
+test("退回来源参数无效或越界时不提交标记，简单旧调用仍兼容", async (t) => {
+  const f = await workspaceFixture(t);
+  const { id } = await f.create();
+  f.faux.setResponses([fauxAssistantMessage("answer")]);
+  await f.workspace.execute("send", {
+    id,
+    message: "origin",
+    requestId: "origin-validation",
+  });
+  const current = await settled(f.workspace, id);
+  const point = current.active.messages.find(
+    (row) => row.text === "origin",
+  ).entryId;
+  const entries = (await f.workspace.transcript(id)).entries;
+  const messages = entries.find((entry) => entry.id === point).model;
+  for (const [origins, status] of [
+    ["bad", 422],
+    [[-1], 422],
+    [null, 422],
+    [[], 409],
+    [[Number.MAX_SAFE_INTEGER], 404],
+  ]) {
+    await assert.rejects(
+      f.workspace.execute("rewind", { id, entryId: point, messages, origins }),
+      (error) => error.status === status,
+    );
+    assert.equal(
+      (await f.workspace.transcript(id)).entries.length,
+      entries.length,
+      "拒绝不会追加部分标记",
+    );
+  }
+  await f.workspace.execute("rewind", { id, entryId: point, messages });
+  const replayed = (await f.workspace.read(id)).active.messages;
+  assert.equal(replayed.length, 1);
+  assert.equal(replayed[0].entryId, point);
+});
+
+test("退回把原生 UI 角色规范成 LLM 消息但仍保留 custom 卡片与原点", async (t) => {
+  const f = await workspaceFixture(t);
+  const { id } = await f.create();
+  const message = {
+    role: "custom",
+    customType: "fixture.notice",
+    content: "native card",
+    display: true,
+    details: { piDesktop: { version: 1, kind: "card", title: "Native card" } },
+    timestamp: 1,
+  };
+  await f.workspace.persistNative(id, [], [{ message, triggerTurn: false }]);
+  const before = (await f.workspace.read(id)).active.messages;
+  const point = before.find((row) => row.role === "custom").entryId;
+  await f.workspace.execute("rewind", {
+    id,
+    entryId: point,
+    messages: [message],
+    origins: [point],
+  });
+  const current = (await f.workspace.read(id)).active.messages;
+  assert.deepEqual(
+    current.map((row) => [
+      row.role,
+      row.text,
+      row.entryId,
+      row.extensionView?.title,
+    ]),
+    before.map((row) => [
+      row.role,
+      row.text,
+      row.entryId,
+      row.extensionView?.title,
+    ]),
+  );
+  const marker = (await f.workspace.transcript(id)).entries.at(-1);
+  assert.equal(
+    marker.model[0].role,
+    "user",
+    "UI 角色不能直接进入 Durable model",
+  );
+  assert.deepEqual(marker.data.nativeMessages, [message]);
+});
