@@ -1182,52 +1182,145 @@ function activityProgress(value, key) {
 }
 /* 消息动作：右键消息可退回或分叉。退回让模型上下文从该消息之后重建；分叉从该消息创建
  * 独立会话。两者都由 Host 写回 Pi JSONL 会话树，因此 TUI 看到同一棵树。 */
-let messageMenu;
-function closeMessageMenu() {
-  messageMenu?.remove();
-  messageMenu = undefined;
+/* 通用动作菜单：消息菜单与会话栏菜单共用同一套打开/定位/关闭逻辑，避免第二套实现。
+ * 键盘可达：触发元素（消息右键、会话行 Shift+F10／菜单键）打开后焦点落到第一项，
+ * ArrowUp／ArrowDown 在项间移动，Esc 或点击外部关闭。 */
+let actionMenu;
+function closeActionMenu() {
+  actionMenu?.remove();
+  actionMenu = undefined;
 }
-function openMessageMenu(x, y, entryId) {
-  closeMessageMenu();
+function openActionMenu({
+  x,
+  y,
+  className = "action-menu",
+  dataset = {},
+  items,
+}) {
+  closeActionMenu();
   const menu = document.createElement("div");
-  menu.className = "message-menu";
+  menu.className = className;
   menu.setAttribute("role", "menu");
-  menu.dataset.entryId = String(entryId);
-  const run = async (command) => {
-    closeMessageMenu();
-    try {
-      const result = await api("/api/command", {
-        command,
-        // 命令的目标 id 与 entryId 都是数字：Host 用严格相等校验目标。
-        id: Number(durableAgentId),
-        entryId,
-      });
-      // 分叉返回新会话；退回原地重建上下文，由 state_changed 推动刷新。
-      if (command === "fork" && result?.sessionId)
-        chooseDurableAgent(result.sessionId);
-      else
-        toast(command === "fork" ? "已分叉" : "已退回，上下文从该消息之后重建");
-    } catch (error) {
-      toast(error.message);
-    }
-  };
-  for (const [command, label] of [
-    ["rewind", "退回到此消息"],
-    ["fork", "从此消息分叉"],
-  ]) {
+  Object.assign(menu.dataset, dataset);
+  const buttons = [];
+  for (const item of items) {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("role", "menuitem");
-    button.dataset.command = command;
-    button.textContent = label;
-    button.addEventListener("click", () => void run(command));
+    if (item.command) button.dataset.command = item.command;
+    button.textContent = item.label;
+    button.disabled = item.disabled === true;
+    if (item.title) button.title = item.title;
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      closeActionMenu();
+      void item.run?.();
+    });
+    buttons.push(button);
     menu.append(button);
   }
   document.body.append(menu);
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
-  messageMenu = menu;
+  menu.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const index = buttons.indexOf(document.activeElement);
+    buttons[(index + step + buttons.length) % buttons.length]?.focus();
+  });
+  actionMenu = menu;
+  (buttons.find((button) => !button.disabled) ?? buttons[0])?.focus();
+}
+/* 命令统一带上目标 id 与可选 sessionId：Host 用严格相等校验目标，数字不能是字符串。 */
+async function runAgentCommand(command, input, message) {
+  try {
+    const result = await api("/api/command", {
+      command,
+      id: Number(input.id ?? durableAgentId),
+      ...input,
+    });
+    if (result?.sessionId) chooseDurableAgent(result.sessionId);
+    else toast(message);
+    return result;
+  } catch (error) {
+    toast(error.message);
+    return undefined;
+  }
+}
+function openMessageMenu(x, y, entryId) {
+  openActionMenu({
+    x,
+    y,
+    className: "action-menu message-menu",
+    dataset: { entryId: String(entryId) },
+    items: [
+      {
+        command: "rewind",
+        label: "退回到此消息",
+        run: () =>
+          runAgentCommand(
+            "rewind",
+            { entryId },
+            "已退回，上下文从该消息之后重建",
+          ),
+      },
+      {
+        command: "fork",
+        label: "从此消息分叉",
+        run: () => runAgentCommand("fork", { entryId }, "已分叉"),
+      },
+    ],
+  });
+}
+/* 「创建分支」按当前上下文分叉，并切到新会话；「退回分支」退回最后一条用户消息。 */
+async function createBranch(row) {
+  const sessionId = row.dataset.sessionId;
+  const result = await runAgentCommand(
+    "fork",
+    { id: Number(sessionId), mode: "tail", sessionId },
+    "已创建分支",
+  );
+  if (result) await refreshSessions();
+}
+async function rewindBranch(row) {
+  const sessionId = row.dataset.sessionId;
+  await runAgentCommand(
+    "rewind",
+    { id: Number(sessionId), mode: "last-user", sessionId },
+    "已退回该会话的最后一条用户消息",
+  );
+}
+/* 「打开分支树」切到扩展工作台并广播要展示的会话；面板在扩展工作台里注册（见 task-4）。 */
+async function openBranchTree(row) {
+  const sessionId = row.dataset.sessionId;
+  await showView("extensions");
+  window.dispatchEvent(
+    new CustomEvent("pi-desktop:branch-tree", { detail: { sessionId } }),
+  );
+}
+function openSessionMenu(row, x, y) {
+  const native = row.dataset.native === "true";
+  openActionMenu({
+    x,
+    y,
+    className: "action-menu session-menu",
+    dataset: { sessionId: row.dataset.sessionId },
+    items: [
+      { command: "fork", label: "创建分支", run: () => createBranch(row) },
+      {
+        command: "rewind",
+        label: "退回分支",
+        disabled: !native,
+        title: native
+          ? "退回该会话的最后一条用户消息"
+          : "该会话没有原生 Pi 记录，退回不可用；分叉不受影响",
+        run: () => rewindBranch(row),
+      },
+      { command: "tree", label: "打开分支树", run: () => openBranchTree(row) },
+    ],
+  });
 }
 function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
   const assistant = message.role !== "user";
@@ -1774,7 +1867,7 @@ function renderSessions() {
     ? sessions
         .map(
           (row) =>
-            `<button class="session ${row.id === current ? "active" : ""}" data-session-id="${esc(row.id)}"><span>${esc(row.name)}</span><small>${row.running ? "运行中 · " : row.waiting ? "等待交互 · " : row.initializing ? "初始化 · " : ""}${row.cwd ? esc(row.cwd) : `${row.messageCount ?? 0} 条消息`} ${row.modified ? "· " + esc(new Date(row.modified).toLocaleDateString()) : ""}</small></button>`,
+            `<button class="session ${row.id === current ? "active" : ""}" data-session-id="${esc(row.id)}" data-native="${row.native === true}"><span>${esc(row.name)}</span><small>${row.running ? "运行中 · " : row.waiting ? "等待交互 · " : row.initializing ? "初始化 · " : ""}${row.cwd ? esc(row.cwd) : `${row.messageCount ?? 0} 条消息`} ${row.modified ? "· " + esc(new Date(row.modified).toLocaleDateString()) : ""}</small></button>`,
         )
         .join("")
     : '<div class="empty">新会话会保存在 pi 会话目录</div>';
@@ -3200,11 +3293,27 @@ $("#messages")?.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   openMessageMenu(event.clientX, event.clientY, Number(row.dataset.entryId));
 });
+$("#sessions")?.addEventListener("contextmenu", (event) => {
+  const row = event.target.closest("[data-session-id]");
+  if (!row || !live) return;
+  event.preventDefault();
+  openSessionMenu(row, event.clientX, event.clientY);
+});
+/* 键盘也能打开会话菜单：行获得焦点后按菜单键或 Shift+F10。 */
+$("#sessions")?.addEventListener("keydown", (event) => {
+  if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+    return;
+  const row = event.target.closest("[data-session-id]");
+  if (!row || !live) return;
+  event.preventDefault();
+  const box = row.getBoundingClientRect();
+  openSessionMenu(row, box.left + 12, box.bottom - 4);
+});
 document.addEventListener("pointerdown", (event) => {
-  if (!event.target.closest(".message-menu")) closeMessageMenu();
+  if (!event.target.closest(".action-menu")) closeActionMenu();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeMessageMenu();
+  if (event.key === "Escape") closeActionMenu();
 });
 document.addEventListener("visibilitychange", () => {
   if (!live) return;

@@ -343,18 +343,34 @@ export async function startDurableDesk(options = {}) {
       // 原生日志只绑定在宿主启动时接管的 Agent 上（默认多进程宿主每个 Agent 一个 worker）。
       if (!transcript)
         throw new DeskError(409, "该会话没有原生转录，不能退回；可改用分叉");
+      // 界面可以只给模式：会话栏的「退回分支」退回最后一条用户消息，具体目标由宿主解析。
+      const entryId = Number.isSafeInteger(input.entryId)
+        ? input.entryId
+        : input.mode === "last-user"
+          ? await lastMessageEntryId(input.id, { role: "user" })
+          : undefined;
+      if (!Number.isSafeInteger(entryId))
+        throw new DeskError(422, "没有可退回的消息");
       await transcript.sync();
-      const messages = transcript?.rewindMessages(input.entryId);
+      const messages = transcript.rewindMessages(entryId);
       if (!messages?.length)
         throw new DeskError(409, "退回位置尚未写入原生会话，请稍后重试");
       const result = await workspace.execute("rewind", {
         id: input.id,
-        entryId: input.entryId,
+        entryId,
         messages,
       });
       await transcript?.sync();
       root = await workspace.read();
       return result;
+    };
+    /* 活跃上下文里最后一条（可按角色过滤的）消息的 entry id：会话栏的「创建分支／退回分支」
+     * 用它解析目标，界面不必自己猜条目，也自然避开被放弃的路径。 */
+    const lastMessageEntryId = async (id, { role } = {}) => {
+      const state = await workspace.read(id);
+      return (state.active?.messages ?? [])
+        .filter((row) => role === undefined || row.role === role)
+        .at(-1)?.entryId;
     };
     async function reload() {
       const ctx = target();
@@ -612,6 +628,11 @@ export async function startDurableDesk(options = {}) {
           },
           extra: {
             ...result,
+            // 会话栏判断「退回分支」是否可用：把是否绑定原生转录一并带上（追加字段）。
+            agents: result.agents?.map((agent) => ({
+              ...agent,
+              native: transcriptAgentId === agent.id,
+            })),
             active: active ? { ...active, resourceState: undefined } : null,
             sessionCommands: true,
             configurationPending: !!active?.configurationPending,
@@ -711,7 +732,18 @@ export async function startDurableDesk(options = {}) {
           if (input.command === "create") result = await create(input);
           else if (input.command === "rewind") result = await rewind(input);
           else {
-            result = await workspace.execute(input.command, input);
+            let payload = input;
+            if (
+              input.command === "fork" &&
+              !Number.isSafeInteger(input.entryId)
+            ) {
+              // 会话栏的「创建分支」：目标就是当前活跃上下文的最后一条消息。
+              const entryId = await lastMessageEntryId(input.id);
+              if (!Number.isSafeInteger(entryId))
+                throw new DeskError(422, "会话还没有可分支的内容");
+              payload = { ...input, entryId };
+            }
+            result = await workspace.execute(input.command, payload);
             if (input.command === "configure")
               await resources?.ensure((await workspace.read(input.id)).active);
             if (input.command === "fork") {
@@ -800,6 +832,8 @@ export async function startDurableDesk(options = {}) {
           name: agent.name,
           cwd: agent.cwd,
           running: !agent.idle,
+          // 该会话是否已绑定原生转录；会话栏据此判断「退回分支」是否可用。
+          native: transcriptAgentId === agent.id,
         })),
       newSession: async (input) => {
         const result = await create(input);

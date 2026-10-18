@@ -70,6 +70,16 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 | 既没有 `id`，宿主也没有任何会话 | `DeskError(422, "请选择 Agent")`   |
 | `id` 不是数字                   | 解析为 `NaN` → 会话不存在（404）   |
 
+## 会话清单与命令模式
+
+会话栏与分支树面板共用两份宿主读模型：
+
+- `GET /api/sessions`（capability `sessions`）的每行：`{ id, name, cwd, running, native }`。`native` 表示该会话已绑定原生 Pi 记录，界面据此启用／禁用「退回分支」；`id` 就是 Durable 侧的会话 id。
+- 会话相关的命令都走 `POST /api/command`，并允许界面只给模式、由宿主解析目标：
+  - `fork`：`{ id, mode: "tail" }` = 按当前活跃上下文的最后一条消息分叉（会话栏「创建分支」）；也接受精确的 `entryId`。
+  - `rewind`：`{ id, mode: "last-user" }` = 退回最后一条用户消息（会话栏「退回分支」）；也接受精确的 `entryId`。
+    目标解析始终取**活跃上下文**里的消息，因此被放弃的路径不会被选中；没有可用的目标时返回 `DeskError(422)`。
+
 ## 性能特征
 
 - 每次调用读一次 `workspace.read()`（全量摘要）与一次 `transcript(id)` 条目扫描；原生树来自内存中的 SessionManager，不读盘。

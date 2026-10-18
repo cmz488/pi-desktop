@@ -55,7 +55,17 @@ export function chatSnapshot(snapshot, limit = 50, revision = () => "") {
     ...chat,
     commandsRevision: revision(commands ?? []),
     agents: snapshot.agents?.map((row) =>
-      pick(row, ["id", "name", "cwd", "idle", "revision", "model"]),
+      pick(row, [
+        "id",
+        "name",
+        "cwd",
+        "idle",
+        "revision",
+        "model",
+        // 会话栏判断分支条目是否可退回、以及分支来源标签所需（追加字段）。
+        "native",
+        "forkOf",
+      ]),
     ),
     messages: messages.slice(-limit).map((row) => {
       const hidden =

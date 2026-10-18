@@ -4950,8 +4950,8 @@ body.dark {
   }
 }
 
-/* 消息动作菜单（右键消息）：退回或分叉当前会话。 */
-.message-menu {
+/* 动作菜单：消息右键（退回／分叉）与会话栏右键（创建分支／退回分支／打开分支树）共用。 */
+.action-menu {
   position: fixed;
   z-index: 60;
   min-width: 168px;
@@ -4965,7 +4965,7 @@ body.dark {
   box-shadow: var(--shadow);
   font-size: calc(12px * var(--ui-font-scale));
 }
-.message-menu > button {
+.action-menu > button {
   text-align: left;
   padding: 7px 9px;
   border-radius: 8px;
@@ -4974,7 +4974,11 @@ body.dark {
   color: inherit;
   cursor: pointer;
 }
-.message-menu > button:hover,
-.message-menu > button:focus-visible {
+.action-menu > button:hover,
+.action-menu > button:focus-visible {
   background: var(--hover);
+}
+.action-menu > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

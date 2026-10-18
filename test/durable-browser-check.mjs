@@ -317,6 +317,85 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   await until(
     "document.querySelector('#session-title').textContent==='Agent A' && document.querySelector('#stop-button').hidden===true",
   );
+  // 会话栏右键：创建分支 / 退回分支 / 打开分支树。
+  const sessionMenu = (id) =>
+    evaluate(`(() => {
+      const row = document.querySelector('[data-session-id="${id}"]');
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 90, clientY: 120 }));
+    })()`);
+  await sessionMenu(first);
+  await until("!!document.querySelector('.session-menu')");
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.session-menu [role=menuitem]').length",
+    ),
+    3,
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.session-menu [data-command=rewind]').disabled",
+    ),
+    false,
+    "the host session has a native transcript, so rewind stays available",
+  );
+  const sessionRows = await evaluate(
+    "document.querySelectorAll('#sessions [data-session-id]').length",
+  );
+  await evaluate(
+    "document.querySelector('.session-menu [data-command=fork]').click()",
+  );
+  await until(
+    `document.querySelectorAll('#sessions [data-session-id]').length===${sessionRows + 1}`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent.includes('分支')",
+  );
+  const branchId = await evaluate(
+    "document.querySelector('#sessions .session.active').dataset.sessionId",
+  );
+  assert.notEqual(branchId, String(first), "creating a branch switches to it");
+  await sessionMenu(branchId);
+  await until("!!document.querySelector('.session-menu')");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.session-menu [data-command=rewind]').disabled",
+    ),
+    true,
+    "a branch without a native transcript cannot be rewound",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('.session-menu [data-command=rewind]').title.includes('原生')",
+    ),
+    "the disabled rewind explains why it is unavailable",
+  );
+  await evaluate(
+    "document.querySelector('.session-menu [data-command=tree]').click()",
+  );
+  await until("document.querySelector('#view-extensions').hidden===false");
+  await evaluate("document.querySelector('[data-view=workspace]').click()");
+  await until("document.querySelector('#view-workspace').hidden===false");
+  await sessionMenu(first);
+  await until("!!document.querySelector('.session-menu')");
+  await evaluate(
+    "document.querySelector('.session-menu [data-command=rewind]').click()",
+  );
+  await until("!document.querySelector('.session-menu')");
+  await evaluate(
+    `document.querySelector('[data-session-id="${first}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent==='Agent A'",
+  );
+  await until(
+    "document.querySelector('#messages').innerText.includes('retry after network recovery')===false",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('#messages').innerText.includes('draft A')",
+    ),
+    "the sidebar rewind keeps the earlier turns",
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
     `Durable Chromium passed: project creation, independent drafts, background streaming, configuration, 320/360/390px; screenshot ${screenshot}`,
