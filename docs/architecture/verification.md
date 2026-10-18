@@ -92,3 +92,9 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 ## 会话只读面板
 
 `test/session-panel-loader.test.mjs` 用有界时钟验证代际、取消读取、节流／补刷与销毁，不依赖真实时间轮询。`test:extensions:browser` 追加真实工作台与两面板的隔离浏览器验收：旧 DOM、晚到响应、A/B/A、背景取消确认、同会话权限变化、折叠／滚动、unsupported 与资源清理。`test:workspace:browser` 追加真实默认 worker 的聊天控制器验收：在新快照返回前立即撤下旧数据，迟到任务读模型／分叉结果不切换会话，能力变化正确隐藏入口，且两个真实在途任务均未被误取消。它也验证默认分支的独立转录、两次退回后 Q1 原点与再次分叉。读模型能力在完整／chat 快照内都由 `test/bridge.test.mjs` 守住，不依赖方法存在性猜测。
+
+## 长任务等待
+
+`test:workspace:browser` 纳入 `test/long-task-wait-browser-check.mjs`：默认 Host → worker → runtime 的真实前台任务在点击等待后再阻塞 16.5 秒，13 秒时仍未结束且没有通用中止或提前成功，最终回答提交后才返回。后续通过同 worker 的两个独立会话验证取消等待／总期限不误中止任务、408 只续同一目标且不重置预算、旧成功故意无视 abort 晚到也不影响另一会话。读模型返回 unsupported 时立即释放等待，能力隐藏不留下观察请求。时钟边界还验证 5 分钟预算、45 秒等待连接错误与普通 API 的 12 秒预算，以及全部出口的定时器回收。
+
+`test/task-waits.test.mjs` 用真实 HTTP 验证 408、断连归还配额、503 关闭、正常出口移除连接监听与到期时钟；`test/durable-task-scope.test.mjs` 用真实 Durable runtime 验证 32 项观察配额和物理断连后立即重用；`test/agent-workspace.test.mjs` 验证独立取消 Context 释放观察者而前台任务继续。完整调用与错误契约见 [任务契约](interfaces/task-graph.md)。

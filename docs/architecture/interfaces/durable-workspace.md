@@ -35,7 +35,7 @@ workspace.read(id?)        // async -> { agents: [摘要], recovery, tasks, ... 
                            //   （无则 null）；tasks 是当前任务图
 workspace.live(id?)        // async -> 流式期间的轻量视图；也可观察 owned 子会话，不授予写命令权限
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
-workspace.execute(command, input?)  // async -> 命令结果
+workspace.execute(command, input?, { signal } = {})  // async -> 命令结果；signal 只供 wait 观察者
 workspace.transcript(id)   // async -> { entries, ... }：Pi 消息形状的投影
 workspace.persistNative(id, entries, messages = [])  // 把原生回合写回 transcript
 workspace.importNative(id, entries)                  // 导入原生树（归档恢复路径）
@@ -66,6 +66,8 @@ workspace.close()                                    // 释放 Harness、锁与�
 | `configure` | `{ id, patch }`                       | 修改该会话的 agent 文档（模型／思考级别／扩展／工具）                                    |
 | `fork`      | `{ id, entryId }`                     | 从某个 entry 分叉出**新的会话**，名称追加"· 分支"                                        |
 | `rewind`    | `{ id, entryId, messages, origins? }` | 退回：追加 `desk.rewind` 头部标记，其 `model` 就是退回点之前的模型上下文；原条目全部保留 |
+| `wait`      | `{ id, taskId? }`                     | 只观察指定任务终态或会话空闲；可选第三参数 signal 仅取消这次观察，不中止任务             |
+| `cancel`    | `{ id, taskId?, background? }`        | 中止范围内任务，完整归属与后台语义见任务契约                                             |
 | 其他        | —                                     | `DeskError(404, "不支持的 Agent 操作")`                                                  |
 
 ## 不变量
@@ -82,6 +84,7 @@ workspace.close()                                    // 释放 Harness、锁与�
 - **`rewind` 只改上下文起点，不删历史**：`desk.rewind` 是头部标记（`head: "self"`），Durable 内核因此把模型上下文重建为该标记携带的消息（退回点之前的前缀），其后的条目不再进入上下文；原生日志的 leaf 移动由会话模块用 Pi 的 `branch()` 在同一文件里完成。前缀消息由 Host 用 Pi 自己的推导从原生日志取得，命令本身不自行推导上下文。
 - **退回来源必须可对齐**：Host 从同一个 Pi 投影同时取得消息与 `origins: number[]`，按可见 `user`／`assistant`／`toolResult`／`custom` 顺序排列，不包含 UI 摘要和 system。来源必须是该会话的已知 entry；原点与标记原子提交，不能因数量不符就省略映射。直接调用方的简单旧调用仍兼容，不能对齐的复杂历史返回 409，不再伪装成标记来源。
 - **模型与 UI 角色分离**：退回消息通过 Pi `convertToLlm` 写入 model；有摘要／custom 等原生角色时，原始贡献保存在同一标记的只读 UI 数据里，卡片与消息原点不会因规范化而丢失。
+- **等待不拥有执行生命周期**：`execute("wait", input, { signal })` 把 signal 仅用于 Durable 的等待 Context；其他命令沿用原有上下文。取消观察不会 abort 任务，指定任务的所有权校验不变。HTTP 额外的租约／配额、前端续租与总预算见 [任务契约](task-graph.md)。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
 
 ## 顺序约束

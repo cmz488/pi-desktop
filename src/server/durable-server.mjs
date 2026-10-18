@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createDeskBridge } from "./bridge.mjs";
 import { createDesktopBtw } from "../agent/btw-desktop.mjs";
 import { sendJson } from "./http-transfer.mjs";
+import { createTaskWaits } from "./task-waits.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
 import { openDurableModels } from "../agent/durable-models.mjs";
 import { createDurableResources } from "../agent/durable-resources.mjs";
@@ -134,6 +135,7 @@ export async function startDurableDesk(options = {}) {
         })
       : undefined;
   const requestState = new AsyncLocalStorage();
+  const taskWaits = createTaskWaits();
   const extensions = [];
   for (const file of options.extensionPaths ?? [])
     extensions.push(await loadDurableExtension(file));
@@ -754,7 +756,17 @@ export async function startDurableDesk(options = {}) {
                 throw new DeskError(422, "会话还没有可分支的内容");
               payload = { ...input, entryId };
             }
-            result = await workspace.execute(input.command, payload);
+            if (input.command === "wait") {
+              try {
+                result = await taskWaits.run(request, response, (signal) =>
+                  workspace.execute(input.command, payload, { signal }),
+                );
+                if (response.destroyed) return true;
+              } catch (error) {
+                if (response.destroyed) return true;
+                throw error;
+              }
+            } else result = await workspace.execute(input.command, payload);
             if (input.command === "configure")
               await resources?.ensure((await workspace.read(input.id)).active);
             if (input.command === "fork") {
@@ -1116,7 +1128,8 @@ export async function startDurableDesk(options = {}) {
         deltaTimer = undefined;
         unsubscribe();
         auth.cancelAll();
-        // Cancel tool waiters through Harness before disposing their native UI/MCP runtime.
+        // 先释放独立观察请求，再关闭传输与任务执行资源，避免关机被长等待拖住。
+        await taskWaits.close();
         await bridge.stop();
         resources?.cancelInteractions();
         const closingBrowser = browser?.close();
@@ -1139,6 +1152,7 @@ export async function startDurableDesk(options = {}) {
       },
     };
   } catch (error) {
+    await taskWaits.close();
     await browser?.close();
     await bridge?.stop();
     await workspace?.close();

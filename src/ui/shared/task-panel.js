@@ -6,10 +6,11 @@ import { createSessionPanelLoader } from "./session-panel-loader.js";
  * 接口：`createTaskPanel` 的 builtin.update/render 接收工作台上下文，refresh、
  *   setActive／dispose 管理读取；命令与权限见 docs/architecture/interfaces/read-panels.md。
  * 不变量：来源、确认与命令目标绑定同一代不可变身份；切会话立即清数据和确认；
- *   只读管理禁用，远程本会话操作不额外禁用；等待不是提前成功。
- * 错误：当前读取错误显示，当前命令错误提示；过期回调与结果均忽略，不误操作新会话。
+ *   只读管理禁用，远程本会话操作不额外禁用；等待只拥有一个可取消观察，不拥有任务。
+ * 错误：当前读取／命令失败可见，408 仅续租；取消／到期明确保留任务，过期结果忽略。
  */
 
+const WAIT_TOTAL_MS = 5 * 60 * 1000;
 const STATUS_LABELS = {
   pending: "排队",
   running: "运行中",
@@ -30,6 +31,7 @@ export function createTaskPanel({
   const CONFIRM_MS = 4000;
   let armed;
   let armTimer;
+  let waiting;
   let container;
   let repaint;
 
@@ -43,7 +45,10 @@ export function createTaskPanel({
   const loader = createSessionPanelLoader({
     read: fetchTasks,
     onChange: render,
-    onReset: disarm,
+    onReset: () => {
+      disarm();
+      cancelWaiting();
+    },
   });
   function updateContext(context) {
     const owner = String(context.sessionId ?? currentSession?.() ?? "");
@@ -105,6 +110,71 @@ export function createTaskPanel({
     return button;
   }
 
+  function cancelWaiting(notify = false) {
+    const previous = waiting;
+    if (!previous) return;
+    waiting = undefined;
+    clearTimeout(previous.timer);
+    previous.controller.abort();
+    if (notify && loader.isCurrent(previous.identity))
+      toast("已取消等待，任务继续运行");
+  }
+
+  async function waitForTask(input, identity) {
+    if (!loader.isCurrent(identity) || !loader.canManage) return;
+    cancelWaiting();
+    disarm();
+    const entry = {
+      input: Object.freeze(input),
+      identity,
+      controller: new AbortController(),
+      timer: undefined,
+    };
+    waiting = entry;
+    entry.timer = setTimeout(() => {
+      if (waiting !== entry) return;
+      cancelWaiting();
+      if (loader.isCurrent(identity)) {
+        toast("等待时间已到，任务继续运行，可重新等待");
+        render();
+      }
+    }, WAIT_TOTAL_MS);
+    render();
+    const { signal } = entry.controller;
+    try {
+      let result;
+      for (;;) {
+        if (signal.aborted) return;
+        try {
+          result = await command(entry.input, { signal });
+          break;
+        } catch (failure) {
+          // 租约到期不是任务终态；只续当前这一项观察，不重发工作或中止命令。
+          if (failure.status !== 408 || signal.aborted) throw failure;
+          if (waiting !== entry || !loader.isCurrent(identity)) return;
+        }
+      }
+      if (signal.aborted || waiting !== entry || !loader.isCurrent(identity))
+        return;
+      waiting = undefined;
+      clearTimeout(entry.timer);
+      render();
+      toast("任务已结束");
+      await loader.refresh({ force: true });
+      return result;
+    } catch (failure) {
+      if (!signal.aborted && waiting === entry && loader.isCurrent(identity))
+        toast(failure.message);
+      return undefined;
+    } finally {
+      clearTimeout(entry.timer);
+      if (waiting === entry) {
+        waiting = undefined;
+        render();
+      }
+    }
+  }
+
   async function act(input, message, identity) {
     if (!loader.isCurrent(identity) || !loader.canManage) return;
     try {
@@ -120,6 +190,7 @@ export function createTaskPanel({
   }
 
   function render() {
+    if (!loader.available) cancelWaiting();
     if (!container?.isConnected || !loader.available) {
       if (container) repaint?.();
       return;
@@ -221,22 +292,44 @@ export function createTaskPanel({
           ),
         );
         const rowActions = element("span", "task-panel-row-actions");
-        const wait = element("button", "outline-button", "等待");
+        const pending = waiting;
+        const isWaiting =
+          !!pending &&
+          pending.identity === identity &&
+          pending.input.taskId === taskId;
+        const wait = element(
+          "button",
+          "outline-button",
+          isWaiting ? "取消等待" : "等待",
+        );
         wait.type = "button";
         wait.dataset.taskAction = `wait:${task.id}`;
+        wait.dataset.waiting = String(isWaiting);
+        wait.setAttribute(
+          "aria-label",
+          `${isWaiting ? "取消等待" : "等待"}任务 #${task.id}`,
+        );
         wait.disabled = !loader.canManage;
-        if (wait.disabled)
-          wait.title = "当前会话只提供任务查看，不提供管理操作";
+        wait.title = wait.disabled
+          ? "当前会话只提供任务查看，不提供管理操作"
+          : isWaiting
+            ? "只取消观察请求，任务继续运行"
+            : "等待任务真正结束";
         wait.onclick = () => {
-          if (!wait.isConnected) return;
-          void act(
-            {
-              command: "wait",
-              id: Number(sessionId),
-              sessionId,
-              taskId,
-            },
-            "任务已结束",
+          if (
+            !wait.isConnected ||
+            !loader.isCurrent(identity) ||
+            !loader.canManage
+          )
+            return;
+          if (isWaiting) {
+            if (waiting !== pending) return;
+            cancelWaiting(true);
+            render();
+            return;
+          }
+          void waitForTask(
+            { command: "wait", id: Number(sessionId), sessionId, taskId },
             identity,
           );
         };

@@ -471,3 +471,78 @@ test("历史 fork 来源不是任务所有权，取消父会话不影响独立�
   assert.deepEqual((await read("/api/tasks", a)).tasks, []);
   assert.deepEqual((await read("/api/tasks", branch)).tasks, branchGraph.tasks);
 });
+
+test("HTTP 取消等待释放有界观察配额，不中止当前任务", async (t) => {
+  const f = await fixture(t);
+  const [id] = f.ids;
+  await f.hold(id);
+  const task = (await f.read("/api/tasks", id)).tasks.find(
+    (row) => row.kind === "pi.generation",
+  );
+  assert.ok(task);
+  const origin = new URL(f.app.url).origin;
+  const controllers = [];
+  const replies = [];
+  const wait = () => {
+    const controller = new AbortController();
+    controllers.push(controller);
+    return fetch(`${origin}/api/command?id=${id}`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command: "wait",
+        id,
+        sessionId: String(id),
+        taskId: task.id,
+      }),
+      signal: controller.signal,
+    });
+  };
+  const capacity = 32;
+  const probes = Array.from({ length: capacity + 1 }, () =>
+    wait()
+      .then(async (response) => {
+        replies.push(response.status);
+        await response.json();
+      })
+      .catch(() => {}),
+  );
+  try {
+    await sleep(500);
+    assert.ok(
+      replies.includes(429),
+      "同一 worker 最多保留 32 个观察者，不能无限积累",
+    );
+    for (const controller of controllers) controller.abort();
+    await Promise.all(probes);
+    const deadline = Date.now() + 2000;
+    let accepted;
+    while (Date.now() < deadline) {
+      const pending = wait();
+      const reply = await Promise.race([
+        pending.then((response) => ({ response })),
+        sleep(100).then(() => ({})),
+      ]);
+      if (!reply.response) {
+        accepted = pending;
+        break;
+      }
+      assert.equal(reply.response.status, 429);
+      await reply.response.json();
+    }
+    assert.ok(accepted, "断连后配额重新可用，不用等任务结束");
+    assert.ok(
+      (await f.read("/api/tasks", id)).tasks.some((row) => row.id === task.id),
+      "取消观察不能中止任务",
+    );
+    f.releaseHold();
+    const result = await accepted;
+    assert.equal(result.status, 200);
+    const value = await result.json();
+    assert.equal(value.taskId, task.id);
+  } finally {
+    for (const controller of controllers) controller.abort();
+    f.releaseHold();
+    await Promise.all(probes);
+  }
+});

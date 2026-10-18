@@ -598,3 +598,53 @@ test("退回把原生 UI 角色规范成 LLM 消息但仍保留 custom 卡片与
   );
   assert.deepEqual(marker.data.nativeMessages, [message]);
 });
+
+test("取消等待只释放观察者，不中止真实前台任务", async (t) => {
+  const f = await workspaceFixture(t);
+  const slow = fauxProvider({
+    provider: "desk-test",
+    models: [{ id: "local", reasoning: true }],
+    tokensPerSecond: 1,
+  });
+  slow.setResponses([
+    fauxAssistantMessage("long foreground answer ".repeat(20)),
+  ]);
+  f.models.setProvider(slow.provider);
+  const { id } = await f.create();
+  await f.workspace.execute("send", {
+    id,
+    message: "hold",
+    requestId: "cancel-wait",
+  });
+  const deadline = Date.now() + 5000;
+  while ((await f.workspace.read(id)).active.idle && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal((await f.workspace.read(id)).active.idle, false);
+  const controller = new AbortController();
+  let ended = false,
+    cancelled = false;
+  const observer = f.workspace
+    .execute("wait", { id }, { signal: controller.signal })
+    .then(
+      () => {
+        ended = true;
+      },
+      () => {
+        cancelled = true;
+      },
+    );
+  try {
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(cancelled, true, "调用者中止后等待观察者应立即释放");
+    assert.equal(ended, false, "取消等待不能假报终态");
+    assert.equal(
+      (await f.workspace.read(id)).active.idle,
+      false,
+      "任务本身继续运行",
+    );
+  } finally {
+    await f.workspace.execute("abort", { id });
+    await observer;
+  }
+});

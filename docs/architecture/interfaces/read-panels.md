@@ -25,6 +25,7 @@ loader.dispose();
 
 createBranchTreePanel({ fetchTree, command, toast, switchSession });
 createTaskPanel({ fetchTasks, command, toast, currentSession? });
+// 任务 command(input, { signal }?)：wait 必须遵守 signal；非 wait 不增加生命周期选项。
 // 返回 key/view/available、builtin.update/render、refresh、setActive、dispose；
 // 分支树另有 setSession(id)，空字符串表示跟随当前会话。
 ```
@@ -51,7 +52,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 
 1. 更新所有内置页上下文 → 过滤 available → 渲染选中页；用户开始选择另一个会话时不等待新快照才失效。
 2. 管理动作捕获不可变目标 → 检查当前身份与权限 → 既有命令 → 仅在身份仍有效时提示与补刷。
-3. `setActive(false)` 中止读取并清补刷／确认；恢复后显式 refresh。页面恢复缓存不复用旧令牌。
+3. `setActive(false)` 中止读取与任务等待观察并清补刷／确认／等待期限；恢复后显式 refresh。页面恢复缓存不复用旧令牌。
 4. `dispose()` 幂等；之后不能读取、补刷或发布迟到结果。提供方应遵守 AbortSignal 以释放物理请求资源。
 
 ## 错误模式
@@ -59,6 +60,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - 当前读取失败保留错误供重试，不伪装成“没有任务”；过期或主动中止错误不显示。
 - 返回目标与请求不符时显示“会话读模型目标不一致，请重新读取”，不采用该响应。
 - 当前命令失败由面板提示，过期命令结果忽略；取消 HTTP 读取不等于取消 Durable 任务。
+- 等待取消只停止观察，408 续租、5 分钟总期限与 45 秒连接超时均见 [任务契约](task-graph.md)；旧结果仍按同一身份令牌失效。
 - 业务 HTTP 错误语义沿用 [任务契约](task-graph.md) 与 [分支树契约](session-tree.md)。
 
 ## 性能特征
@@ -70,5 +72,6 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - `test/session-panel-loader.test.mjs`：9 条有界时钟／迟到响应回归，覆盖能力、A/B/A、权限、节流／补刷、暂停／销毁和错误。
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁。
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
+- `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
 - `test/bridge.test.mjs`：完整／chat 快照都只按 Host 声明返回读能力。
 - `npm run test:extensions:browser`、`test:workspace:browser` 纳入上述浏览器证据；静态 module 统一经资产清单发布并由 `package:check` 验证。

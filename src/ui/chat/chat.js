@@ -763,7 +763,9 @@ function toast(message) {
   $("#toast").classList.add("visible");
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 4200);
 }
+const TASK_WAIT_REQUEST_MS = 45000;
 async function api(path, input, { signal, selectSession = true } = {}) {
+  const taskWait = path === "/api/command" && input?.command === "wait";
   const requestOwner = durableAgentId;
   const requestEpoch = actionEpoch;
   const controller = new AbortController();
@@ -771,7 +773,12 @@ async function api(path, input, { signal, selectSession = true } = {}) {
   if (signal?.aborted) abort();
   else signal?.addEventListener("abort", abort, { once: true });
   const timeout = setTimeout(
-    () => controller.abort(),
+    () =>
+      controller.abort(
+        taskWait
+          ? new Error("等待连接超时，任务继续运行，可重新等待")
+          : undefined,
+      ),
     path.startsWith("/api/btw")
       ? 600000
       : path.startsWith("/api/package")
@@ -782,7 +789,9 @@ async function api(path, input, { signal, selectSession = true } = {}) {
             ? 100000
             : path.startsWith("/api/browser")
               ? 45000
-              : 12000,
+              : taskWait
+                ? TASK_WAIT_REQUEST_MS
+                : 12000,
   );
   try {
     const data = await indexedFetch(
@@ -6423,7 +6432,7 @@ const branchTree = createBranchTreePanel({
 const taskPanel = createTaskPanel({
   fetchTasks: (id, options) =>
     api(`/api/tasks?id=${encodeURIComponent(id)}`, undefined, options),
-  command: (input) => api("/api/command", input),
+  command: (input, options) => api("/api/command", input, options),
   toast: (message) => toast(message),
   currentSession: () => readPanelContext().sessionId,
 });

@@ -1,7 +1,10 @@
 import { mkdir, realpath, stat, chmod } from "node:fs/promises";
 import { dirname, resolve, basename } from "node:path";
 import lockfile from "proper-lockfile";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+  BACKGROUND_CONTEXT,
+  withAbortSignal,
+} from "@earendil-works/chord/context";
 import {
   Harness,
   createRegistry,
@@ -621,7 +624,7 @@ export async function openAgentWorkspace(options) {
     }
     return { patch, profile };
   }
-  async function execute(command, input = {}) {
+  async function execute(command, input = {}, { signal } = {}) {
     guard();
     if (command === "create") {
       const { patch, profile } = await changes(input);
@@ -791,17 +794,18 @@ export async function openAgentWorkspace(options) {
       return { id: selected.id, entryId: marker.id, rewindTo: input.entryId };
     }
     if (command === "wait") {
-      // 等待：给定 taskId 时等那个任务结束；否则等该会话空闲。两者都只观察，不改变任务。
+      // 调用方取消只释放这个观察者；不能把 HTTP／页面的生命周期传给任务执行上下文。
+      const waitContext = signal ? withAbortSignal(signal, context) : context;
       if (input.taskId !== undefined) {
         await scopedTask(selected.id, input.taskId);
-        await harness.waitForTask(input.taskId, context);
+        await harness.waitForTask(input.taskId, waitContext);
         return {
           id: selected.id,
           taskId: input.taskId,
           idle: !foreground(selected.id),
         };
       }
-      await selected.waitForIdle(context);
+      await selected.waitForIdle(waitContext);
       return { id: selected.id, idle: true };
     }
     if (command === "cancel") {

@@ -4,6 +4,7 @@
 
 - `src/agent/agent-workspace.mjs`：`read()` 返回 `tasks`（任务图投影：所有权、等待关系、后台标记）、`children`（被任务拥有的子会话）与 `live`（会话视图，用于取在跑工具）。
 - `src/server/durable-server.mjs` 的 `tasks` 宿主实现 + `src/server/bridge.mjs` 的 `GET /api/tasks`：把两者合成一个只读读模型。
+- `src/server/task-waits.mjs`：HTTP 观察租约、断连取消、容量与关闭，不中止任何任务。
 - `src/shared/conversation-scope.mjs`：`ownedConversationIds(id, records) -> Set<number>`，统一读模型与命令的会话归属范围；输入是已经验证的会话 id 和 Durable 会话记录，不访问或修改任务状态。
 
 读模型只描述状态；**取消、等待等操作走 `/api/command`**（见下），这里不做任何写入。
@@ -82,6 +83,23 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 - **界面确认**：面板里的取消动作需要两步确认（第一次点击进入待确认状态，第二次才发出命令），等待不需要确认。
 - **后台任务**：`background: true` 的任务是会话拥有的任务，被排除在普通空闲等待与会话中止之外（会话可以在它运行时保持空闲）；面板顶部的「取消后台任务」按钮只在存在后台任务时出现，同样需要两步确认。夹具 `test/background-fixture.mjs` 用 `tx.createTask(..., { background: true })` 造出真实后台任务，API 测试与浏览器回归都基于它。
 
+## 等待生命周期
+
+```js
+workspace.execute("wait", { id, taskId? }, { signal? });
+createTaskWaits({ leaseMs = 40000, capacity = 32 } = {});
+// -> run(request, response, wait)、close()
+// wait(signal) -> Promise<命令结果>；必须遵守 signal，只取消观察者。
+```
+
+- `wait` 的 HTTP 200 只表示真正达到等待条件：指定任务进入终态，或普通遍历范围内不再有非后台工作。它不保证任务成功，也不把某个后台任务结束误当成整个会话空闲。结果沿用 `{ id, taskId?, idle }`。
+- 每个 runtime 同时最多 32 个 HTTP 等待观察者；每个请求租约 40 秒。到期返回 **408**（“等待租约已到期，任务继续运行”），不是终态或成功。容量用尽返回 **429**；关闭时取消当前观察者并以 **503** 拒绝新等待。客户端断开不再写响应；内部取消原因是 499。
+- 请求体读完不等于断连。响应连接关闭、租约到期或宿主关闭，会通过独立 signal 释放 Durable 等待观察者；不会给任务本身发送 abort。成功、失败、断连、到期与关闭都撤销计时器／监听并归还配额。
+- `run` 的等待回调必须遵守取消；`close()` 幂等，等待现有观察请求释放后返回。配置须为正安全整数，`leaseMs` 不得超过 Node 定时器范围（`2**31 - 1` 毫秒），否则 422。
+- 面板每次只观察一个不可变目标；再等另一个任务会先取消旧观察。当前等待按钮变为“取消等待”，不借用任务的两步中止动作。切换会话、能力／权限变化、返回 unsupported、暂停或销毁也取消观察；即使回调无视 abort，旧成功／错误都不可提示或刷新新身份。
+- 浏览器只给 `/api/command` 的 `wait` 使用 45 秒请求超时，为服务端 40 秒租约留出响应时间；其他端点保留原来的各自预算，普通 API 仍为 12 秒。连接超时提示“等待连接超时，任务继续运行，可重新等待”，不误报通用中止。
+- 面板对当前目标的 408 自动续租，不重发工作或取消命令，不提示任务已结束；整个点击操作的总观察期限是 **5 分钟**，续租不重置总期限。用户取消或总期限到达后停止观察，明确提示任务仍在运行；可再次发起等待。
+
 ## 性能特征
 
 - 除公共请求上下文读取外，宿主实现再调用一次 `workspace.read()`（含会话记录扫描与子会话的文档读取），校验请求会话后，按记录数线性计算 owned 范围；每个范围内有实时任务的会话读一次轻量视图。owned 子会话的视图可能额外扫描记录以验证它仍存在；工具列表不会为每个历史会话读取转录。
@@ -89,7 +107,10 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 
 ## 可执行证据
 
-- `test/durable-task-scope.test.mjs`：两个独立会话各有两层 owned 后代及真实后台任务；验证只显示本家族的任务/工具/子会话、单任务与后台取消的归属、越界与无效 id 的拒绝、等待 owned 后代的终态、远程与只读门控、请求目标 409，以及历史分叉不产生任务所有权。
+- `test/task-waits.test.mjs`：真实 HTTP 的到期／续租、断连归还配额、关闭与正常出口的计时器／监听清理。
+- `test/long-task-wait-browser-check.mjs`：真实默认 Host／worker 的 16.5 秒任务，回答提交后才返回；另覆盖独立取消、总期限、408 续租、故意忽略 abort 的晚到成功、B 的真实在途任务不受影响，以及普通 API 仍为 12 秒。
+- `test/agent-workspace.test.mjs`：signal 只释放观察者，不中止真实前台任务。
+- `test/durable-task-scope.test.mjs`：两个独立会话各有两层 owned 后代及真实后台任务；验证只显示本家族的任务/工具/子会话、单任务与后台取消的归属、越界与无效 id 的拒绝、等待 owned 后代的终态、远程与只读门控、请求目标 409，以及历史分叉不产生任务所有权；真实 runtime 的 32 项配额与断连后重新接受等待。
 - `test/durable-task-graph.test.mjs`：真实的子代理夹具（任务拥有的子会话）——断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具出现在 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation`、`waitingOn` 关系与 `background` 标记。
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `tasks`（40 个键）。
 - `test/bridge.test.mjs`：能力未声明时的回退形状（与 `/api/tree` 同一模式）。

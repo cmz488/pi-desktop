@@ -82,7 +82,7 @@
     "test:remote:browser": "node test/remote-browser-check.mjs",
     "preview": "node src/cli/preview.mjs",
     "test:workspace": "node --test --test-isolation=none test/desktop-control-plane.test.mjs test/desktop-process-recovery.test.mjs test/projectless-desktop.test.mjs test/desktop-pi-sessions.test.mjs",
-    "test:workspace:browser": "node test/desktop-workspace-check.mjs && node test/desktop-branch-family-browser-check.mjs && node test/read-panels-desktop-browser-check.mjs",
+    "test:workspace:browser": "node test/desktop-workspace-check.mjs && node test/desktop-branch-family-browser-check.mjs && node test/read-panels-desktop-browser-check.mjs && node test/long-task-wait-browser-check.mjs",
     "test:workspace:desktop": "node test/desktop-workspace-check.mjs --electron",
     "web:durable": "node desk.mjs --single-process",
     "desktop:durable": "node launch-desktop.mjs --single-process",

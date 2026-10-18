@@ -305,6 +305,17 @@ try {
     false,
     "远程的本会话取消不能被笼统禁用",
   );
+  await evaluate(
+    "document.querySelector('[data-task-action=\"wait:801\"]').click()",
+  );
+  await until("panelFixture.commands.some(row=>row.command==='wait')");
+  assert.equal(
+    await evaluate(
+      "Object.isFrozen(panelFixture.commands.findLast(row=>row.command==='wait'))",
+    ),
+    true,
+    "等待命令同样捕获不可变目标",
+  );
   await evaluate("panelFixture.dispose()");
   const reads = await evaluate("panelFixture.requests.length");
   await new Promise((resolve) => setTimeout(resolve, 1800));
