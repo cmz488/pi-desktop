@@ -20,8 +20,20 @@ import { DeskError } from "../config/config-store.mjs";
 import { ReadOnlyWeb } from "./read-only-tools.mjs";
 import { createNativeRuntime } from "./native-runtime.mjs";
 
-// Reuse the native resource loader, MCP implementation, package manager and UI
-// interactions. This runtime never receives normal chat or runs a model loop.
+/**
+ * 每个 Agent 一个 Pi 资源会话宿主：把 Pi 的工具、扩展、技能、MCP、包管理与交互
+ * 投影成 facade（边界文档的 seam B）。
+ *
+ * 接口：`createDurableResources(options)` 返回
+ *   `{ attach, ensure, normalizeExtensions, selectTools, reload, close, cancelInteractions, canWrite }`，
+ *   其 facade 为 `{ read, describe, execute }`；完整 action 表、顺序与错误见
+ *   docs/architecture/interfaces/resource-session.md。
+ * 不变量：资源会话不跑模型循环；`ensure(active)` 幂等并按会话缓存；`desk-native:*`
+ *   扩展按 scope 过滤；只读只裁剪工具集，不改变 facade 形状；事件方向单向。
+ * 错误：DeskError(404／422) 表示无效的资源操作、未知命令与未加载技能。
+ */
+// 复用原生资源 loader、MCP 实现、包管理器与 UI 交互；这个 runtime 不接收普通聊天，
+// 也不跑模型循环。
 export function createDurableResources({
   agentDir,
   onEvent = () => {},
@@ -100,8 +112,8 @@ export function createDurableResources({
             ...ReadOnlyWeb.tools,
           ]
         : [...CodingTools.tools, ...durableTools];
-      // Keep Pi's native read tool: Durable's read currently rejects images.
-      // Pi owns image decoding/resizing and the same extension/approval hooks.
+      // 保留 Pi 的原生 read 工具：Durable 的 read 目前不接受图片，
+      // 而图片解码／缩放与同一套扩展／审批钩子由 Pi 拥有。
       const customTools = environmentTools
         .filter((tool) => tool.name !== "read")
         .map((tool) => ({
@@ -304,8 +316,8 @@ export function createDurableResources({
               name: tool.name,
               description: tool.description,
               parameters: tool.parameters,
-              // ExtensionAPI has no replay contract. Native and nested calls stay
-              // unsafe even if MCP advertises read-only hints.
+              // ExtensionAPI 没有重放契约；即使 MCP 声明 read-only 提示，
+              // 原生与嵌套调用也仍不安全。
               executionMode: "sequential",
               async execute(args, api, context) {
                 if (

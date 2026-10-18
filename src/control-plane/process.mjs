@@ -1,6 +1,18 @@
 import { fork } from "node:child_process";
 
-// Electron uses its bundled Node runtime, matching DSH's RunAsNode Host boundary.
+/**
+ * Agent worker 的父子进程协议与停止语义。
+ *
+ * 接口：`launchService(entry, options, { timeout })` 在父进程侧启动 worker，返回
+ *   `{ child, ready, stop }`；`serviceMain(start)` 在子进程侧接收 start，成功后回
+ *   `ready`、失败回 `failed`。字段与错误表见 docs/architecture/interfaces/agent-runtime.md。
+ * 不变量：协议消息只有 start／stop／ready／failed；`stop()` 幂等且升级式
+ *   （IPC → 8 s SIGTERM → 10 s SIGKILL）；子进程 stderr 被丢弃，不进入 API 响应。
+ * 错误：启动超时（默认 45 s）或进程提前退出都让 `ready` 拒绝并触发 stop；子进程
+ *   启动抛错时先发 `failed`，再以退出码 1 结束。
+ */
+
+// Electron 使用自带的 Node 运行时，与 DSH 的 RunAsNode Host 边界一致。
 export function launchService(entry, options, { timeout = 45000 } = {}) {
   const child = fork(entry, [], {
     execArgv: [],
@@ -16,7 +28,7 @@ export function launchService(entry, options, { timeout = 45000 } = {}) {
       resolve();
     }),
   );
-  // Drain stderr without exposing plugin output or credentials in API responses.
+  // 丢弃 stderr：插件输出与凭据不得进入 API 响应。
   child.stderr.on("data", () => {});
   async function stop() {
     return (stopping ??= (async () => {

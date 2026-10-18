@@ -3,8 +3,16 @@ import { stat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { loadPiSessionManager } from "../agent/pi-sdk.mjs";
 
-/* Host-only module: the transcript projection is synchronous, so bind the
- * session submodule once here instead of threading awaits through callers. */
+/**
+ * Pi 会话文件的扫描与只读投影（Host 侧视图）。
+ *
+ * 接口：`createPiSessions(agentDir)`、`reconcilePiSessions`、`projectPiRecord`；
+ *   字段与错误模式见 docs/architecture/interfaces/lifecycle.md。
+ * 不变量：投影是同步的，所以在模块顶层一次性绑定 session 子模块，而不是把 await 穿过
+ *   所有调用者；本模块只读——不调度任务、不加载用户插件、不调用模型。
+ * 错误：记录不存在时抛 DeskError(404)；解析失败不回写原生文件。
+ */
+/* Host-only module: 投影同步，因此只在这里绑定一次 session 子模块。 */
 const { SessionManager, buildSessionProjection } = await loadPiSessionManager();
 import { DeskError } from "../config/config-store.mjs";
 import {
@@ -29,7 +37,7 @@ export function projectPiRecord(record, id) {
   );
   const branch = manager.getBranch(),
     projection = manager.buildSessionProjection();
-  // Keep older messages visible in history while applying Pi's context edits.
+  // Pi 的上下文编辑生效时，仍让旧消息在历史里可见。
   const history = buildSessionProjection(
     branch.map((entry) =>
       entry.type === "compaction"
@@ -88,8 +96,8 @@ export function createPiSessions(agentDir) {
             if (error.code !== "ENOENT") throw error;
           }
         }
-        // Pi's custom listAll(directory) lists one directory, unlike default
-        // listAll(). Bound parallel native parsing across cwd directories.
+        // Pi 的自定义 listAll(directory) 只列一个目录（默认 listAll() 不是）；
+        // 因此把跨 cwd 目录的原生解析并行度收在有限范围内。
         const found = [];
         let position = 0;
         await Promise.all(
@@ -170,7 +178,7 @@ export function createPiSessions(agentDir) {
 export function reconcilePiSessions(data, sessions) {
   const alive = new Set();
   for (const session of sessions) {
-    // Desktop's native JSONL and its Durable worker are one sidebar row.
+    // Desktop 的原生 JSONL 与它的 Durable worker 在侧栏里是同一行。
     let agent =
       data.agents.find(
         (row) =>
@@ -182,8 +190,8 @@ export function reconcilePiSessions(data, sessions) {
       continue;
     }
     let project = data.projects.find((row) => row.cwd === session.cwd);
-    // A removed workspace remains a tombstone for native discovery. Only an
-    // explicit add restores it; neither old nor newly written TUI JSONL does.
+    // 被移除的工作区在原生发现里保留为墓碑，只有显式重新添加才恢复；
+    // 旧的与新写入的 TUI JSONL 都不能恢复它。
     if (project?.removedAt) {
       if (agent) alive.add(agent.id);
       continue;

@@ -2,10 +2,23 @@ import { DeskError } from "../config/config-store.mjs";
 import { createRequestTarget } from "./target-guard.mjs";
 
 /**
- * Resolve an optional operation against the adapter on every call.
+ * Host 与传输之间的 seam：把每个宿主的能力与领域操作收敛成同一形状。
  *
- * TUI reuses one transport while its focused slot changes; caching the first
- * slot's functions here would send the next prompt to the previous Agent.
+ * 接口：`HOST_CAPABILITY_KEYS`（38 个键）、`normalizeHostCapabilities(value)`、
+ *   `createHostInterface(input)`；host 的 `supports`／`require`／`target` 语义与完整
+ *   操作名列表见 docs/architecture/interfaces/host-interface.md。
+ * 不变量：能力是显式声明而不是推断（回调存在不自动开启能力）；`normalizeHostCapabilities`
+ *   返回包含全部键的对象，未给出的为 false；操作在每次调用时重新解析；target 捕获的是
+ *   snapshot 函数本身（同一个函数必须返回最新状态）。
+ * 错误：输入形状错误抛 TypeError（如 “未知的 Host capability”）；宿主未提供操作抛
+ *   DeskError(501)；请求目标已变化抛 DeskError(409)。
+ */
+
+/**
+ * 在每次调用时重解析可选操作。
+ *
+ * TUI 复用同一个 transport 而聚焦 slot 会切换；在这里缓存第一个 slot 的函数，
+ * 会把下一个 prompt 发给上一个 Agent。
  */
 function optionalMethod(input, key) {
   const current = input[key];
@@ -73,11 +86,9 @@ export function normalizeHostCapabilities(value = {}) {
 }
 
 /**
- * The Host seam is a declared set of capabilities and domain operations, not
- * a bag whose optional keys the HTTP bridge probes one by one.
+ * Host seam 是一组声明的能力与领域操作，不是让 HTTP bridge 逐个探测可选键的口袋。
  *
- * Adapters still supply host-specific implementations; this module gives all
- * of them the same shape, explicit capability flags, and target-token helper.
+ * adapter 仍提供宿主特有的实现；本模块给它们统一形状、显式能力位与目标 token 助手。
  */
 export function createHostInterface(input = {}) {
   if (!input || typeof input.snapshot !== "function")

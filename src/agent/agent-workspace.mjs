@@ -65,7 +65,7 @@ function usageTotal(doc = {}) {
     for (const key of ["input", "output", "cacheRead", "cacheWrite"])
       total[key] += row[key] ?? 0;
   }
-  // Tool billing contributes to spend, but never to the model cache-hit denominator.
+  // 工具计费计入花费，但从不进入模型缓存命中率分母。
   for (const row of Object.values(doc.tools ?? {}))
     total.cost += row.cost?.total ?? 0;
   return total;
@@ -97,8 +97,18 @@ function contextUsage(view, contextWindow) {
   };
 }
 
-// The application's seam: callers submit named commands and read committed views.
-// Durable owns admission, replay, scheduling, compaction and cancellation.
+/**
+ * Durable workspace：把 Durable Harness 的会话、任务、文档与用量包成一个深 module。
+ *
+ * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
+ *   persistNative, importNative, install, subscribe, close }`；options、命令表、
+ *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
+ * 不变量：单 writer（proper-lockfile 独占 + SQLite）；先 commit 再显示；每次调用先过
+ *   `guard()`；`read` 是全量摘要、`live` 跳过 transcript；每会话一份 agent 文档。
+ * 错误：DeskError(404／409／422) 表达“不存在”“存储被占用或宿主已关闭”“参数无效”。
+ */
+// 应用侧的 seam：调用者提交具名命令、读取已提交视图；准入、重放、调度、压缩与取消
+// 都由 Durable 拥有。
 export async function openAgentWorkspace(options) {
   const { models } = options;
   if (
@@ -231,9 +241,8 @@ export async function openAgentWorkspace(options) {
     return found;
   }
   async function repairNativeContext(selected) {
-    // Older imports put native UI roles in model history. Repair the
-    // effective contribution through Durable edits; immutable history and native
-    // entry IDs stay intact. Run before resources read or tasks resume.
+    // 旧版导入把原生 UI 角色写进了模型历史。用 Durable 的编辑修复生效贡献；
+    // 不可变历史与原生 entry ID 保持不变。必须在资源读取或任务续跑之前完成。
     const { convertToLlm } = await loadPiMessages();
     const view = await selected.context(context);
     const edits = view.entries.flatMap((entry, index) => {
@@ -300,10 +309,9 @@ export async function openAgentWorkspace(options) {
       ),
     };
   }
-  // The live half of an Agent projection: cheap enough to run per streaming
-  // window. `transcript` adds the expensive part (every committed entry run
-  // through projectMessage), so callers that only need status/partial/tools
-  // must leave it off.
+  // Agent 投影的轻量一半：足够便宜，可以每个流式窗口跑一次。`transcript` 会加上
+  // 昂贵部分（每条已提交 entry 都过 projectMessage），所以只需要状态／流式片段／
+  // 工具的调用者必须关掉它。
   async function projectActive(id, { transcript: withTranscript = true } = {}) {
     const selected = await conversation(id);
     const view = await selected.viewState(context);
@@ -359,8 +367,8 @@ export async function openAgentWorkspace(options) {
           selected.id,
           context,
         ),
-        // A cheap structural fingerprint: the live window compares it instead
-        // of rebuilding the transcript to find out whether history changed.
+        // 廉价的结构指纹：live 窗口用它比对，而不是重建整个 transcript 来判断
+        // 历史是否变化。
         entryCount: entries.length,
         lastEntryId: lastEntry ? String(lastEntry.id) : "",
       };
@@ -586,7 +594,7 @@ export async function openAgentWorkspace(options) {
       const { patch, profile } = await changes(input, prior);
       let deferred = false;
       await selected.commit(async (tx) => {
-        // The profile revision and task scan are checked on Durable's commit line.
+        // profile revision 与任务扫描都在 Durable 的提交线上校验。
         const tasks = await Promise.all(
           ["pending", "running", "waiting", "completing"].map((status) =>
             tx.scanTasks({ conversationId: selected.id, status }, 1),
@@ -638,8 +646,7 @@ export async function openAgentWorkspace(options) {
         },
         context,
       );
-      // A fork can stop before the parent's repair entry and inherit its old
-      // custom contribution again.
+      // 分叉可能停在父会话的修复条目之前，从而再次继承旧的 custom 贡献。
       await repairNativeContext(fork);
       return { id: fork.id };
     }
@@ -758,8 +765,8 @@ export async function openAgentWorkspace(options) {
             data: {
               nativeSessionId: nativeHeader.id,
               nativeEntryId: entry.id,
-              // Durable's model field accepts LLM messages only. Keep the
-              // original native custom message separately for card projection.
+              // Durable 的 model 字段只接受 LLM 消息；原始原生 custom 消息
+              // 单独保留给卡片投影。
               ...(sourceMessages[0]?.role === "custom"
                 ? { nativeMessage: sourceMessages[0] }
                 : {}),

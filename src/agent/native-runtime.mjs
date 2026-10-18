@@ -2,15 +2,25 @@ import { createHash, randomUUID } from "node:crypto";
 import { contentText } from "../shared/conversation.mjs";
 import { loadPiMessages } from "./pi-sdk.mjs";
 
+/**
+ * 原生资源会话与 Durable 回合之间的桥（边界文档 seam B 的内侧）。
+ *
+ * 接口：`createNativeRuntime({ workspace, id, ready, syncTools, onError })` 返回
+ *   `{ record, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
+ *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
+ * 不变量：Pi 拥有扩展状态与调度，Durable 拥有每一个被接受的模型回合；资源会话不跑
+ *   第二个模型循环；消息与事件方向单向（Durable 提交 → Pi 生命周期）。
+ * 错误：初始化与工具同步的失败经 `onError` 上报，不静默丢弃。
+ */
+
 const signature = (message) =>
   message.role === "toolResult"
     ? `tool:${message.toolCallId}`
     : createHash("sha256").update(JSON.stringify(message)).digest("hex");
 
 /**
- * Pi owns extension state and scheduling; Durable owns every admitted model
- * turn. The resource Session never runs a second model loop. Public Session
- * message methods and Runner contexts are delegated at this compatibility seam.
+ * 公开 Session 的消息方法与 Runner 上下文在这条兼容 seam 上被代理：Pi 的扩展与调度
+ * 继续按原语义工作，而模型回合仍由 Durable 拥有。
  */
 export function createNativeRuntime({
   workspace,

@@ -15,6 +15,18 @@ import {
 } from "../session/pi-session-storage.mjs";
 import { projectPiRecord } from "./pi-sessions.mjs";
 
+/**
+ * Host 侧的项目与 Agent 生命周期、只读历史视图与归档。
+ *
+ * 接口：`createSupervisor(store, options)` 返回 `{ shared, noteActivity, revision, read,
+ *   execute, target, openTarget, restore, close }`；命令表、顺序与错误模式见
+ *   docs/architecture/interfaces/lifecycle.md。
+ * 不变量：`revision()` 不做每 Agent 的会话文件 stat，`read()` 做；追加型命令（无
+ *   `input.id`）不参与 revision 冲突，已有行修改必须带 revision；历史视图按 LRU 上限 8；
+ *   `restore()` 必须在任何 worker 启动前完成归档／恢复意图；本模块不接触 Durable 内部。
+ * 错误：DeskError 表达“未启动”“记录已丢失”“视图已关闭”“归档进行中”等状态。
+ */
+
 const runningState = (state) =>
   ["starting", "running", "stopping"].includes(state.status);
 
@@ -73,8 +85,8 @@ export function createSupervisor(store, options) {
   };
   async function removeProject(input) {
     if (closing) throw new DeskError(409, "Desktop 正在关闭");
-    // Reject active targets before joining the queue: a starting/stopping
-    // worker can otherwise hold this request behind a long lifecycle await.
+    // 在排队前先拒绝活跃目标：starting／stopping 的 worker 会把请求卡在长时间
+    // 生命周期等待后面。
     removableProject(await store.read(), input.id);
     return serial(async () => {
       if (closing) throw new DeskError(409, "Desktop 正在关闭");
@@ -229,8 +241,8 @@ export function createSupervisor(store, options) {
     const directory = join(options.directory, "agents", agent.id);
     const storagePath = join(directory, "agents.sqlite");
     if (!(await stat(storagePath).catch(() => null))?.isFile()) return;
-    // Inspect committed history without scheduling tasks, loading user plugins,
-    // or authenticating/calling a model. Durable's public reader stays authoritative.
+    // 只读查看已提交历史：不调度任务、不加载用户插件、不认证或调用模型。
+    // Durable 的公开 reader 依然是权威。
     const workspace = await openAgentWorkspace({
       storagePath,
       resume: false,
@@ -317,8 +329,8 @@ export function createSupervisor(store, options) {
         });
       });
     },
-    /* Polling clients ask this first: the catalog revision plus the in-memory
-     * process states, without the per-agent session-file stat that read() does. */
+    /* 轮询客户端先问这个：目录 revision 加内存中的进程状态，不做 read() 会做的
+     * 每 Agent 会话文件 stat。 */
     async revision() {
       const catalog = await store.read();
       const processesFingerprint = [...processes.entries()]
@@ -369,9 +381,8 @@ export function createSupervisor(store, options) {
       };
     },
     execute(command, input = {}) {
-      // Append operations revalidate their target/uniqueness in the store. A
-      // background history scan or activity timestamp cannot invalidate a form
-      // that adds a new row; existing-row mutations retain revision protection.
+      // 追加型操作在 store 里重新校验目标与唯一性：后台历史扫描或活动时间戳不能
+      // 让“新增一行”的表单失效，而已有行的改动仍保留 revision 保护。
       input = { ...input };
       if (
         !input.id &&
@@ -682,7 +693,7 @@ export function createSupervisor(store, options) {
       const pending = histories.get(id);
       try {
         const history = await pending;
-        // Removal may commit while this history bridge is being opened.
+        // 打开历史桥的过程中，移除操作可能已经提交。
         await lookup(id);
         if (!history || histories.get(id) !== pending)
           throw new DeskError(409, "会话视图已关闭，请重试");
@@ -695,7 +706,7 @@ export function createSupervisor(store, options) {
     },
     restore() {
       return (restoring ??= serial(async () => {
-        // Finish durable archive/restore intents before any worker can boot.
+        // 在任何 worker 启动前完成 durable 归档／恢复意图。
         const known = await store.read();
         for (const state of (await archives).states()) {
           const agent = known.agents.find((row) => row.id === state.id);
@@ -783,7 +794,7 @@ export function createSupervisor(store, options) {
         const visibleProjects = new Set(
           catalog.projects.filter((row) => !row.removedAt).map((row) => row.id),
         );
-        // Independent SQLite owners can boot concurrently. Failures remain visible.
+        // 独立的 SQLite owner 可以并发启动；失败必须保持可见。
         await Promise.allSettled(
           catalog.agents
             .filter(
