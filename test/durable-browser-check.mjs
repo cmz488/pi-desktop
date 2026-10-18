@@ -12,6 +12,7 @@ import { MemoryStorage } from "@earendil-works/pi-durable";
 import { openAgentWorkspace } from "../src/agent/agent-workspace.mjs";
 import { startDurableDesk } from "../src/server/durable-server.mjs";
 import { browserDriver, pause } from "./durable-browser-driver.mjs";
+import { createBackgroundFixture } from "./background-fixture.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "pi-durable-browser-"));
 let app, browser, driver;
@@ -23,9 +24,11 @@ try {
   const models = createModels(),
     faux = fauxProvider({ tokensPerSecond: 1000 });
   models.setProvider(faux.provider);
+  const backgroundFixture = createBackgroundFixture();
   const workspace = await openAgentWorkspace({
     storage: new MemoryStorage(),
     models,
+    extensions: [backgroundFixture.extension],
     settings: { retry: { enabled: false } },
   });
   // 原生转录绑定在宿主启动时接管的 Agent 上（默认多进程宿主每个 Agent 一个 worker）。
@@ -456,6 +459,26 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   await until(
     `document.querySelectorAll('${treeRows}').length===${rowsBefore}`,
   );
+  // 面板自己的滚动位置在刷新后保持（不依赖工作台套件的通用假设）。
+  const scrollProof = JSON.parse(
+    await evaluate(`(() => {
+      const detail = document.querySelector('#view-extensions .extension-page-detail');
+      const canScroll = detail.scrollHeight > detail.clientHeight + 40;
+      if (canScroll) detail.scrollTop = 40;
+      return JSON.stringify({ canScroll, scrollTop: detail.scrollTop });
+    })()`),
+  );
+  await evaluate(
+    "document.querySelector('#view-extensions [data-branch-refresh]').click()",
+  );
+  await until(`document.querySelectorAll('${treeRows}').length>=1`);
+  const scrollAfter = await evaluate(
+    "document.querySelector('#view-extensions .extension-page-detail').scrollTop",
+  );
+  assert(
+    !scrollProof.canScroll || scrollAfter >= 40,
+    `a tree refresh keeps the panel scroll position (${scrollProof.scrollTop} → ${scrollAfter})`,
+  );
   const sessionsBefore = await evaluate(
     "document.querySelectorAll('#sessions [data-session-id]').length",
   );
@@ -583,6 +606,68 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     await evaluate(`document.querySelectorAll('${taskRows}').length`),
     0,
     "cancelling the tool task drains the panel",
+  );
+
+  // 真实后台任务：面板显示后台标记，顶部「取消后台任务」两步确认后把它终结。
+  faux.setResponses([
+    fauxAssistantMessage(
+      [
+        {
+          type: "toolCall",
+          id: "call-anchor",
+          name: "background_work",
+          arguments: {},
+        },
+      ],
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage("后台已派生"),
+  ]);
+  await evaluate(
+    "document.querySelector('#prompt').value='派生一个后台任务';document.querySelector('#composer').requestSubmit()",
+  );
+  await until(
+    "document.querySelector('#messages').innerText.includes('后台已派生') && document.querySelector('#stop-button').hidden===true",
+    { timeoutMs: 20000 },
+  );
+  await until(
+    "!!document.querySelector('#view-extensions [data-task-action=background]')",
+    { timeoutMs: 20000 },
+  );
+  assert(
+    await evaluate(
+      "!!document.querySelector('#view-extensions [data-task-id] .tag') && [...document.querySelectorAll('#view-extensions [data-task-id] .tag')].some((node)=>node.textContent==='后台')",
+    ),
+    "the background task is marked in the panel",
+  );
+  await evaluate(
+    "document.querySelector('#view-extensions [data-task-action=background]').click()",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('#view-extensions [data-task-action=background]').dataset.armed",
+    ),
+    "true",
+    "the first click only arms the background cancel",
+  );
+  assert(
+    await evaluate(
+      "!!document.querySelector('#view-extensions [data-task-action=background]')",
+    ),
+    "an armed background cancel does not run yet",
+  );
+  await evaluate(
+    "document.querySelector('#view-extensions [data-task-action=background]').click()",
+  );
+  await until("!!document.querySelector('.task-panel-empty')", {
+    timeoutMs: 20000,
+  });
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('#view-extensions [data-task-id]').length",
+    ),
+    0,
+    "cancelling the background task drains the task graph",
   );
 
   // 切换 Agent：工作台切换会话会重置选中页面（既有行为），重新打开面板后要看到

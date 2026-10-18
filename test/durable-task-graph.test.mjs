@@ -16,6 +16,7 @@ import {
   defineTool,
 } from "@earendil-works/pi-durable";
 import { openAgentWorkspace } from "../src/agent/agent-workspace.mjs";
+import { createBackgroundFixture } from "./background-fixture.mjs";
 import { startDurableDesk } from "../src/server/durable-server.mjs";
 
 /* 任务图与子会话读模型，以及任务管理操作（等待／取消／只读拒绝）。
@@ -41,6 +42,7 @@ test(
       fauxAssistantMessage([{ type: "toolCall", id, name, arguments: args }], {
         stopReason: "toolUse",
       });
+    const backgroundFixture = createBackgroundFixture();
     const Fixture = defineExtension({
       name: "subagent-fixture",
       tools: [
@@ -93,7 +95,7 @@ test(
     const workspace = await openAgentWorkspace({
       storage: new MemoryStorage(),
       models,
-      extensions: [Fixture],
+      extensions: [Fixture, backgroundFixture.extension],
       // 夹具只关心任务；关闭重试，避免响应耗尽后一直重试而拖住关闭。
       settings: { retry: { enabled: false } },
     });
@@ -178,6 +180,50 @@ test(
     assert.equal(typeof child.name, "string");
     assert.deepEqual(child.parent, null);
     assert.equal(child.idle, true);
+
+    // 阶段一之二：真实的后台任务。会话不必为空闲等待它，取消后台任务能让它进入终态。
+    faux.setResponses([
+      toolCall("call-anchor", "background_work", {}),
+      fauxAssistantMessage("后台已派生"),
+    ]);
+    await prompt("派生后台任务");
+    await waitFor(
+      async () =>
+        (await state()).messages.some((row) => row.text === "后台已派生"),
+      "the turn that spawned the background task",
+    );
+    const withAnchor = await waitFor(async () => {
+      const value = await taskGraph();
+      return value.tasks.some((row) => row.background) ? value : undefined;
+    }, "the background task to appear");
+    const anchor = withAnchor.tasks.find((row) => row.background);
+    assert.equal(anchor.kind, "fixture.anchor");
+    assert.equal(
+      anchor.owner,
+      null,
+      "a conversation-owned task has no owning task",
+    );
+    assert.equal(
+      (await state()).idle,
+      true,
+      "a background task does not keep the conversation busy",
+    );
+    const cleared = await post("/api/command", {
+      command: "cancel",
+      id: agentId,
+      sessionId: String(agentId),
+      background: true,
+    });
+    assert.deepEqual(
+      cleared.tasks.map(String),
+      [String(anchor.id)],
+      "the background cancel names the task it cancelled",
+    );
+    await waitFor(async () => {
+      const value = await taskGraph();
+      return value.tasks.length === 0 ? value : undefined;
+    }, "the cancelled background task to leave the task graph");
+    assert.equal((await state()).idle, true);
 
     // 阶段二：挂起的工具进入任务图与在跑工具，随后按任务 id 取消它。
     faux.setResponses([toolCall("call-hold", "hold", {})]);

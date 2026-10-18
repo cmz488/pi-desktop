@@ -48,7 +48,7 @@
 **规格轴**
 
 1. **消息原点缺陷（High，已在 `6fba75e` 修复）**：见上文规格轴第 1 条。
-2. **浏览器回归里运行的是前台任务，不是后台任务（Medium，记为 backlog）**：规格要求「浏览器回归覆盖一次真实的后台任务取消与一次等待」。现在浏览器回归覆盖真实 `bash` 前台任务的取消（两步确认）与一次等待，**后台取消**由 `test/durable-task-graph.test.mjs` 在 API 层覆盖（断言后台取消返回且不打断前台运行）。浏览器夹具没有能创建 `background` 任务的扩展，这是已知缺口，见 backlog。
+2. **后台任务取消的覆盖（Medium，已补）**：初次收口时只在 API 层覆盖后台取消，浏览器回归只跑前台任务；审查后补上 `test/background-fixture.mjs`（`tx.createTask(..., { background: true })` 的真实后台任务）：API 测试断言它在会话空闲时仍存活、取消后台任务返回该任务 id 并让它进入终态；浏览器回归在面板上造出同一后台任务，断言「后台」标记与顶部「取消后台任务」按钮的两步确认，随后任务图清空。原先的缺口已关闭（原 backlog 条目删除）。
 3. **`forkOf` 的来源变化（Low，已记录）**：分叉来源从会话文档改为 Durable 会话记录的 `parent`，API 字段名不变；`session-tree.md` 与 `durable-workspace.md` 已同步。
 4. **面板跟随会话依赖工作台既有行为（Low，已按现状适配）**：切换会话时工作台会重置选中页（既有行为），面板通过「读取页面当前会话 + 重开面板」跟随；浏览器断言按这个语义写。
 5. **子代理不可用造成的偏差（Low，已记录）**：两轴审查在同一会话内完成而不是并行子代理（宿主不可用），结论仍按轴分开。
@@ -56,7 +56,6 @@
 
 **本轮新增 backlog**
 
-- 浏览器端覆盖真实「后台任务」取消：夹具需要一个能创建 `background: true` 任务的扩展（`defineTask` 或 background 锚点），然后复用面板顶部的「取消后台任务」按钮做端到端断言。
 - 抽出 `createReadPanel` 共享骨架，消掉两个内置面板的重复加载逻辑（标准轴第 2 条）。
 - 给瘦身投影（`chatSnapshot`）加一条形状契约测试，避免新增字段再次被静默丢弃。
 
@@ -64,3 +63,16 @@
 
 1. 退回后消息原点（High，已修）
 2. 重复的菜单机制（Medium，计划与分支树 UI 一并收敛）
+
+## 敏感性检查的复现方式
+
+四条敏感性检查都是「临时反向改一处，跑指定测试，应当失败，然后还原」，命令如下（在仓库根目录执行；改动用 `git checkout --` 或手工还原）：
+
+| 检查            | 临时改动                                                                                                          | 命令                                             | 期望     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | -------- |
+| capability 契约 | `src/server/host-interface.mjs` 里把 `"sessionTree"` 改成别的名字                                                 | `node --test test/boundary-contracts.test.mjs`   | 1 条失败 |
+| 任务所有权投影  | `src/agent/agent-workspace.mjs` 里 `owner: task.owner ?? null` → `owner: null`                                    | `node --test test/durable-task-graph.test.mjs`   | 1 条失败 |
+| 只读门控        | `src/server/durable-server.mjs` 里删掉 `if (options.readOnly && ["wait", "cancel"].includes(input.command))` 那段 | `node --test test/durable-task-graph.test.mjs`   | 1 条失败 |
+| 退回原点映射    | `src/agent/agent-workspace.mjs` 里 `entryId: entry.data?.origins?.[index] ?? entry.id` → `entryId: entry.id`      | `node --test test/durable-session-tree.test.mjs` | 1 条失败 |
+
+还原后相应测试全绿（本轮每条都实际跑过一次）。

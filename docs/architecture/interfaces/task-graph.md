@@ -73,6 +73,7 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 - **只读宿主**：`wait`／`cancel` 是写操作，返回 `DeskError(403, "只读会话不提供任务管理操作")`；其他命令（发送、中止、压缩、配置）不受影响。
 - **远程客户端**：取消或等待**自己的**任务属于允许的远程动作（与“远程不允许改配置”的裁剪规则一致），不作为禁止项；远程的路径裁剪仍照常生效。
 - **界面确认**：面板里的取消动作需要两步确认（第一次点击进入待确认状态，第二次才发出命令），等待不需要确认。
+- **后台任务**：`background: true` 的任务是会话拥有的任务，被排除在普通空闲等待与会话中止之外（会话可以在它运行时保持空闲）；面板顶部的「取消后台任务」按钮只在存在后台任务时出现，同样需要两步确认。夹具 `test/background-fixture.mjs` 用 `tx.createTask(..., { background: true })` 造出真实后台任务，API 测试与浏览器回归都基于它。
 
 ## 性能特征
 
@@ -84,4 +85,5 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 - `test/durable-task-graph.test.mjs`：真实的子代理夹具（任务拥有的子会话）——断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具出现在 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation`、`waitingOn` 关系与 `background` 标记。
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `tasks`（40 个键）。
 - `test/bridge.test.mjs`：能力未声明时的回退形状（与 `/api/tree` 同一模式）。
+- 真实后台任务：同一测试断言后台任务在会话空闲时仍存活（`background: true`、`owner: null`），`cancel { background: true }` 返回它取消的任务 id 并让它离开任务图；`test/durable-browser-check.mjs` 在面板上造出同一个后台任务，断言「后台」标记与「取消后台任务」按钮的两步确认，随后任务图清空。
 - 管理操作：同一测试断言按任务 id 取消后任务图清空且子会话不产生孤儿、`wait` 在回答提交后才返回、`wait` 未知任务返回 404、只读宿主对 `cancel` 返回 403、后台取消不打断前台运行。
