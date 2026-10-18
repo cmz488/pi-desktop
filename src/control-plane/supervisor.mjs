@@ -8,6 +8,8 @@ import { createPiSessions, reconcilePiSessions } from "./pi-sessions.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
 import { openNativeTranscript } from "../session/pi-session-storage.mjs";
 import { openPiHistory } from "./pi-history.mjs";
+import { createSessionFamilies } from "./session-families.mjs";
+import { createFamilyArchives } from "./family-archives.mjs";
 import {
   openSessionArchives,
   assertNoNativeTui,
@@ -35,11 +37,22 @@ export function createSupervisor(store, options) {
   const sessions = createPiSessions(options.agentDir),
     histories = new Map();
   const archives = openSessionArchives(options.directory, options.agentDir);
+  const families = createSessionFamilies({
+    store,
+    directory: options.directory,
+  });
+  const familyArchives = createFamilyArchives({ store, archives });
   let discovering;
   async function discover() {
     return (discovering ??= (async () => {
-      const found = await sessions.scan();
+      for (const agent of (await store.read()).agents)
+        await families.remember(agent);
       const catalog = await store.read();
+      const found = await families.claim(
+        await sessions.scan(),
+        sessions,
+        catalog,
+      );
       const next = {
         projects: structuredClone(catalog.projects),
         agents: structuredClone(catalog.agents),
@@ -140,12 +153,7 @@ export function createSupervisor(store, options) {
             (row) => row.id === agent.promptProfileId,
           )?.instructions ?? "",
         agentDir: options.agentDir,
-        directory: join(
-          options.directory,
-          "agents",
-          id,
-          ...(agent.generation ? [`resume-${agent.generation}`] : []),
-        ),
+        directory: families.directory(agent),
         extensionPaths: projectless ? [] : options.extensionPaths,
         noExtensions: projectless || options.noExtensions,
         nativeResources: {
@@ -183,6 +191,7 @@ export function createSupervisor(store, options) {
             },
           ),
         );
+      await families.remember((await lookup(id)).agent);
       state.url = address.href;
       state.status = "running";
       return state;
@@ -200,6 +209,7 @@ export function createSupervisor(store, options) {
     await state.service.stop();
     state.status = "stopped";
     state.url = undefined;
+    await families.remember((await lookup(id)).agent);
   }
   async function worker(id, path, input) {
     const state = processes.get(id);
@@ -223,8 +233,10 @@ export function createSupervisor(store, options) {
     return result;
   }
   async function configureWorker(id, patch) {
-    const profile = (await worker(id, "/api/agent")).active;
-    if (!profile.idle) throw new DeskError(409, "请等待当前任务结束");
+    const current = await worker(id, "/api/agent");
+    const profile = current.active;
+    if (!(current.familyIdle ?? profile.idle))
+      throw new DeskError(409, "请等待当前任务结束");
     return worker(id, "/api/command", {
       command: "configure",
       id: profile.id,
@@ -299,10 +311,11 @@ export function createSupervisor(store, options) {
           runningState(state),
         );
         for (const [id, state] of active) {
-          if (
-            state.status !== "running" ||
-            !(await worker(id, "/api/agent")).active.idle
-          )
+          const current =
+            state.status === "running"
+              ? await worker(id, "/api/agent")
+              : undefined;
+          if (!current || !(current.familyIdle ?? current.active.idle))
             throw new DeskError(
               409,
               "请等待所有 Agent 的任务结束再修改全局配置",
@@ -356,8 +369,10 @@ export function createSupervisor(store, options) {
             )
             .map(async (row) => {
               const state = processes.get(row.id);
+              // 文件清单只供宿主迁移使用，不把新增的内部文件路径发给客户端。
+              const { nativeSessions, ...metadata } = row;
               return {
-                ...row,
+                ...metadata,
                 status:
                   row.source === "pi"
                     ? row.missing && !row.archived && !row.archivePending
@@ -365,7 +380,11 @@ export function createSupervisor(store, options) {
                       : "history"
                     : (state?.status ?? "stopped"),
                 pid: running(row.id) ? state?.pid : undefined,
-                error: state?.error ?? row.archiveError ?? row.migrationError,
+                error:
+                  state?.error ??
+                  row.archiveError ??
+                  row.familyError ??
+                  row.migrationError,
                 historyAvailable:
                   row.source === "pi" ||
                   row.archiveStored ||
@@ -432,9 +451,11 @@ export function createSupervisor(store, options) {
                 (row) => row.promptProfileId === input.id && running(row.id),
               )
             : [];
-          for (const row of users)
-            if (!(await worker(row.id, "/api/agent")).active.idle)
+          for (const row of users) {
+            const current = await worker(row.id, "/api/agent");
+            if (!(current.familyIdle ?? current.active.idle))
               throw new DeskError(409, "请等待使用此人格的任务结束");
+          }
           const saved = await store.prompt(input);
           for (const row of users)
             await configureWorker(row.id, {
@@ -477,32 +498,12 @@ export function createSupervisor(store, options) {
               throw new DeskError(409, "正在运行的会话不能归档，请先停止进程");
             const path = agent.nativeSessionPath ?? sessions.path(agent.id);
             const { project } = await lookup(agent.id);
-            try {
-              await (
-                await archives
-              ).archive(
-                agent.id,
-                path,
-                project?.cwd ??
-                  join(options.directory, "agents", agent.id, "context"),
-                agent.nativeSessionId,
-              );
-            } catch (error) {
-              const pending = (await archives).state(agent.id) === "archiving";
-              if (pending)
-                await store.update({}, (data) =>
-                  Object.assign(
-                    data.agents.find((row) => row.id === agent.id),
-                    {
-                      archivePending: true,
-                      desired: false,
-                      archiveError:
-                        "归档尚未完成，记录已备份到 SQLite，请重试归档",
-                    },
-                  ),
-                );
-              throw error;
-            }
+            await familyArchives.archive(
+              agent,
+              path,
+              project?.cwd ??
+                join(options.directory, "agents", agent.id, "context"),
+            );
             await closeHistory(agent.id);
             patch = {
               archived: true,
@@ -510,18 +511,22 @@ export function createSupervisor(store, options) {
               archiveStored: true,
               nativeSessionPath: path,
               archivePending: false,
+              archiveIntent: undefined,
               archiveError: undefined,
               missing: false,
             };
           }
           if (command === "agent.restore") {
+            if (agent.archiveIntent === "archive")
+              throw new DeskError(409, "会话族归档尚未完成，请先重试归档");
             if (agent.archiveStored)
               patch.nativeSessionPath = (
-                await (await archives).restore(agent.id)
+                await familyArchives.restore(agent)
               ).path;
             patch.archived = false;
             patch.missing = false;
             patch.archivePending = false;
+            patch.archiveIntent = undefined;
             patch.archiveError = undefined;
             await closeHistory(agent.id);
           }
@@ -574,6 +579,11 @@ export function createSupervisor(store, options) {
               : undefined);
           if (!cwd || record.header.cwd !== cwd)
             throw new DeskError(422, "会话目录与项目不一致，无法接管");
+          if (familyArchives.isFamily(agent))
+            throw new DeskError(
+              409,
+              "会话族包含独立分支，请使用重启恢复；不能只接管一份原生记录",
+            );
           await assertNoNativeTui(cwd);
           await closeHistory(agent.id);
           await store.update(input, (data) =>
@@ -708,10 +718,16 @@ export function createSupervisor(store, options) {
       return (restoring ??= serial(async () => {
         // 在任何 worker 启动前完成 durable 归档／恢复意图。
         const known = await store.read();
-        for (const state of (await archives).states()) {
-          const agent = known.agents.find((row) => row.id === state.id);
-          if (!agent) continue;
+        for (const agent of known.agents) {
+          const state = {
+            id: agent.id,
+            phase: (await archives).state(agent.id),
+          };
           try {
+            if (familyArchives.isFamily(agent)) {
+              await familyArchives.recover(agent);
+              continue;
+            }
             let record, archived;
             if (state.phase === "archiving") {
               record = await (await archives).completeArchive(agent.id);
@@ -758,7 +774,9 @@ export function createSupervisor(store, options) {
               Object.assign(
                 data.agents.find((row) => row.id === agent.id),
                 {
-                  archivePending: ["archiving", "restoring"].includes(phase),
+                  archivePending:
+                    familyArchives.isFamily(agent) ||
+                    ["archiving", "restoring"].includes(phase),
                   desired: false,
                   archiveError:
                     error instanceof DeskError
@@ -812,6 +830,7 @@ export function createSupervisor(store, options) {
     },
     async close() {
       closing = true;
+      await discovering?.catch(() => {});
       await queue;
       await restoring?.catch(() => {});
       await Promise.allSettled([...processes.keys()].map(stop));

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mergeNativeSessions } from "./session-families.mjs";
 import { stat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { loadPiSessionManager } from "../agent/pi-sdk.mjs";
@@ -182,10 +183,27 @@ export function reconcilePiSessions(data, sessions) {
     let agent =
       data.agents.find(
         (row) =>
+          row.source !== "pi" &&
+          (row.id === session.desktopOwner ||
+            row.nativeSessions?.some(
+              (member) => member.nativeSessionId === session.nativeSessionId,
+            )),
+      ) ??
+      data.agents.find(
+        (row) =>
           row.nativeSessionId === session.nativeSessionId ||
           (row.source !== "pi" && row.id === session.nativeSessionId),
-      ) ?? data.agents.find((row) => row.id === session.id);
+      ) ??
+      data.agents.find((row) => row.id === session.id);
     if (agent && agent.source !== "pi") {
+      if (session.desktopOwner === agent.id)
+        agent.nativeSessions = mergeNativeSessions(agent.nativeSessions, [
+          {
+            id: session.conversationId,
+            path: session.nativeSessionPath,
+            nativeSessionId: session.nativeSessionId,
+          },
+        ]);
       alive.add(agent.id);
       continue;
     }

@@ -16,7 +16,7 @@ import { webCommands } from "../shared/pi-commands.mjs";
 import { projectMessage } from "../shared/conversation.mjs";
 import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { createAgentSnapshot } from "./agent-snapshot.mjs";
-import { openNativeTranscript } from "../session/pi-session-storage.mjs";
+import { openNativeTranscriptFamily } from "../session/native-transcript-family.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
 import { DeskError, readDocument } from "../config/config-store.mjs";
 import { attachmentLimits } from "./context-attachments.mjs";
@@ -122,7 +122,7 @@ export async function startDurableDesk(options = {}) {
       return policy.followUpMode;
     },
   };
-  let bridge, workspace, root, stopPromise, transcript, transcriptAgentId;
+  let bridge, workspace, root, stopPromise, transcripts;
   const desktopBtw = createDesktopBtw();
   const browser =
     options.embeddedUI && options.agentBrowser !== false
@@ -231,17 +231,16 @@ export async function startDurableDesk(options = {}) {
     if (options.nativeSessionOwner && root.agents[0]) {
       // 原生转录（以及它的元数据）写在宿主目录里；注入 workspace 的宿主也必须能落盘。
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      transcript = await openNativeTranscript({
+      transcripts = await openNativeTranscriptFamily({
         agentDir,
         directory,
-        cwd: root.agents[0].cwd,
+        agents: root.agents,
         owner: options.nativeSessionOwner,
+        branches: !!options.singleAgent,
         resumePath: options.nativeResumePath,
         pathHint: options.nativeSessionPath,
         workspace,
-        id: root.agents[0].id,
       });
-      transcriptAgentId = root.agents[0].id;
       root = await workspace.read();
       if (options.nativeResumePath)
         await resources?.reload(
@@ -262,11 +261,10 @@ export async function startDurableDesk(options = {}) {
         sessionId: "",
         idle: true,
       };
+    const familyIdle = () =>
+      root.agents.every((agent) => agent.idle) && !root.tasks.length;
     const sharedWritable = () =>
-      root.agents.every((agent) => agent.idle) &&
-      !root.tasks.length &&
-      !auth.running &&
-      (resources?.canWrite() ?? true);
+      familyIdle() && !auth.running && (resources?.canWrite() ?? true);
     const configure = async (patch, { defer = false } = {}) => {
       const ctx = target();
       return workspace.execute("configure", {
@@ -343,7 +341,8 @@ export async function startDurableDesk(options = {}) {
     /* 退回：上下文用 Pi 从原生会话树推导出的退回点前缀重建，Durable 只提交标记；
      * 原生 leaf 的移动由紧随其后的同步循环完成。 */
     const rewind = async (input = {}) => {
-      // 原生日志只绑定在宿主启动时接管的 Agent 上（默认多进程宿主每个 Agent 一个 worker）。
+      // 退回必须移动该分支自己的原生 leaf，不能借用根会话的转录句柄。
+      const transcript = transcripts?.get(input.id);
       if (!transcript)
         throw new DeskError(409, "该会话没有原生转录，不能退回；可改用分叉");
       // 界面可以只给模式：会话栏的「退回分支」退回最后一条用户消息，具体目标由宿主解析。
@@ -363,7 +362,7 @@ export async function startDurableDesk(options = {}) {
         entryId,
         messages,
       });
-      await transcript?.sync();
+      await transcripts?.sync(root.agents);
       root = await workspace.read();
       return result;
     };
@@ -504,7 +503,7 @@ export async function startDurableDesk(options = {}) {
           !["/api/state", "/api/message-detail"].includes(url.pathname);
         const id =
           url.searchParams.get("sessionId") ?? url.searchParams.get("id");
-        await transcript?.sync();
+        await transcripts?.sync(root.agents);
         root = await workspace.read();
         const selected =
           id === null || id === "" ? root.agents[0]?.id : Number(id);
@@ -635,7 +634,7 @@ export async function startDurableDesk(options = {}) {
             // 会话栏判断「退回分支」是否可用：把是否绑定原生转录一并带上（追加字段）。
             agents: result.agents?.map((agent) => ({
               ...agent,
-              native: transcriptAgentId === agent.id,
+              native: !!transcripts?.get(agent.id),
             })),
             active: active ? { ...active, resourceState: undefined } : null,
             sessionCommands: true,
@@ -695,7 +694,7 @@ export async function startDurableDesk(options = {}) {
           );
         if (url.pathname === "/api/approval" && request.method === "POST") {
           const ctx = target();
-          if (!ctx.active.idle)
+          if (!ctx.active.idle || (options.singleAgent && !familyIdle()))
             throw new DeskError(409, "请等待当前任务结束再调整权限");
           const input = await body(request);
           if (!ctx.native) throw new DeskError(409, "Pi 权限宿主未就绪");
@@ -707,6 +706,7 @@ export async function startDurableDesk(options = {}) {
           const ctx = target();
           json(response, {
             active: { ...ctx.active, resourceState: undefined },
+            familyIdle: familyIdle(),
             ...(ctx.native?.describe(root) ?? {
               tools: root.tools,
               extensions: root.extensions,
@@ -725,7 +725,7 @@ export async function startDurableDesk(options = {}) {
             throw new DeskError(403, "只读会话不提供任务管理操作");
           // 只读宿主不提供任务管理（等待/取消）：它们是写操作；其他命令不受影响。
           // 远程客户端仍按各自的路径裁剪规则处理（取消自己的任务属于允许的远程动作）。
-          if (options.singleAgent && ["create", "fork"].includes(input.command))
+          if (options.singleAgent && input.command === "create")
             throw new DeskError(409, "请在 Desktop 项目栏创建独立 Agent");
           if (
             input.sessionId !== undefined &&
@@ -765,6 +765,7 @@ export async function startDurableDesk(options = {}) {
             }
           }
           root = await workspace.read();
+          await transcripts?.sync(root.agents);
           bridge.publish("state_changed", {});
           json(response, result);
           return true;
@@ -857,8 +858,7 @@ export async function startDurableDesk(options = {}) {
         if (requested === undefined) throw new DeskError(422, "请选择 Agent");
         const agent = await workspace.agent(requested);
         const record = root.agents.find((row) => row.id === agent.id);
-        const nativeTree =
-          transcriptAgentId === agent.id ? (transcript?.tree() ?? null) : null;
+        const nativeTree = transcripts?.get(agent.id)?.tree() ?? null;
         const entries = (await workspace.transcript(agent.id)).entries;
         return {
           sessionId: String(agent.id),
@@ -898,7 +898,7 @@ export async function startDurableDesk(options = {}) {
           cwd: agent.cwd,
           running: !agent.idle,
           // 该会话是否已绑定原生转录；会话栏据此判断「退回分支」是否可用。
-          native: transcriptAgentId === agent.id,
+          native: !!transcripts?.get(agent.id),
         })),
       newSession: async (input) => {
         const result = await create(input);
@@ -956,7 +956,7 @@ export async function startDurableDesk(options = {}) {
           message = expanded.message;
         }
         await applyDeferredConfiguration(ctx.active.id);
-        await transcript?.check();
+        await transcripts?.check();
         await workspace.execute("send", {
           id: ctx.active.id,
           message:
@@ -965,7 +965,7 @@ export async function startDurableDesk(options = {}) {
           requestId: requestId ?? randomUUID(),
           mode: mode === "follow_up" ? "followUp" : "steer",
         });
-        await transcript?.sync();
+        await transcripts?.sync(root.agents);
       },
       abort: () => workspace.execute("abort", { id: target().active.id }),
       setModel: (provider, modelId, { defer = false } = {}) =>
@@ -1046,7 +1046,7 @@ export async function startDurableDesk(options = {}) {
       }
       deltaBusy = true;
       try {
-        await transcript?.sync();
+        await transcripts?.sync(root.agents);
         let structural = typeof workspace.live !== "function";
         for (const agent of root.agents) {
           if (typeof workspace.live !== "function") break;
@@ -1120,7 +1120,7 @@ export async function startDurableDesk(options = {}) {
         resources?.cancelInteractions();
         const closingBrowser = browser?.close();
         try {
-          await transcript?.close();
+          await transcripts?.close();
         } finally {
           await workspace.close();
           await resources?.close();
@@ -1130,7 +1130,7 @@ export async function startDurableDesk(options = {}) {
     return {
       url,
       workspace,
-      nativeSession: transcript?.metadata,
+      nativeSession: transcripts?.metadata,
       bridge,
       stop,
       get stopped() {

@@ -29,8 +29,8 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 
 - **runtime 不拥有进程**：`defineAgentRuntime` 只接受 `id` 与 `start`；spawn、就绪、重启、销毁全部属于 Host（`src/control-plane/supervisor.mjs`）。
 - **`id` 非空、`start` 是函数**：否则 `defineAgentRuntime` 直接抛 `TypeError`；返回对象被 `Object.freeze`。
-- **durable runtime 固定三个键**：worker 只监听回环地址、端口由系统分配（`port: 0`）、单 Agent 模式。
-- **协议消息只有三种**：父→子 `{ type: "start", options }` 与 `{ type: "stop" }`；子→父 `{ type: "ready", url, nativeSession }` 与 `{ type: "failed", error }`。
+- **durable runtime 固定三个键**：worker 只监听回环地址、端口由系统分配（`port: 0`）、单 Desktop Agent 会话族模式。
+- **协议消息固定**：父→子 `{ type: "start", options }` 与 `{ type: "stop" }`；子→父 `{ type: "ready", url, nativeSession }` 与 `{ type: "failed", error }`。
 - **子进程 stderr 被 drain 且不外泄**：`child.stderr.on("data", () => {})`，插件输出与凭据不进入 API 响应。
 - **`stop()` 幂等且升级式**：先发 IPC `stop`，8 s 后 `SIGTERM`，10 s 后 `SIGKILL`；重复调用复用同一个 promise。
 - **`serviceMain` 忽略重复 start**：`starting`／`closing` 期间收到 `start` 不重复启动；`disconnect`／`SIGTERM`／`SIGINT` 都走同一条 `stop()`。
@@ -58,7 +58,8 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 ## 性能特征
 
 - 默认启动超时 **45 s**；停止预算 **8 s + 2 s**（SIGTERM→SIGKILL）。
-- 每个 Agent 一个 worker 进程；`--single-process` 由 Host 决定（`singleAgent: false`），runtime 不参与该决策。
+- 每个 Desktop Agent 一个 worker 进程，历史分支是该 worker 内独立的 Durable 会话，共用唯一 writer；禁止任意 `create`，允许原生 `fork`。原生归属与整族迁移见 [生命周期契约](lifecycle.md)。
+- `--single-process` 由 Host 决定（`singleAgent: false`），runtime 不参与该决策。
 - fork 使用 `execArgv: []` 与 `ELECTRON_RUN_AS_NODE=1`，使 Electron 与普通 Node 走同一启动路径。
 - 启动关键路径不得引入 SDK 整图加载：见 [pi-sdk 适配层](pi-sdk-adapter.md) 的懒加载契约。
 
@@ -69,3 +70,5 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 - `test/desktop-control-plane.test.mjs`：Supervisor 的 spawn／就绪／停止（`npm run test:workspace`）。
 - 全量：`npm test`。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
+
+`ready.nativeSession` 保留根元数据并追加可选 `family`，协议消息类型不变。`GET /api/agent` 追加 `familyIdle`（没有任何族成员的实时任务）；Host 的共享设置与运行配置门禁优先使用它，旧 worker 回退到 `active.idle`。单个会话 `/api/state.idle` 的原有含义不变。

@@ -39,7 +39,9 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
   role,
   customType,
   label,
-  rewindTo,     // 该节点是不是某次退回的落点
+  preview,      // string | null：首段文本预览
+  entryId,      // number | null：对应的 Durable entry id，未映射时为 null
+  rewindTo,     // number | null：退回标记指向的 Durable entry id，非标记为 null
   active,       // 是否在当前活跃路径上
   leaf,         // 是否是当前叶子
   branchPoint,  // 是否有多个子节点
@@ -49,9 +51,9 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 ## 不变量
 
-- **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变（本任务只新增端点，`read()` 的 `agents[]` 追加 `forkOf`）。
+- **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变（本任务只新增端点，`read()` 的 `agents[]` 追加 `parent`，本接口映射为 `forkOf`）。
 - **每个分支都是独立会话**：`branches[].id` 就是会话栏里的会话 id；`forkOf` 来自 Durable 的会话记录 `parent`，重启后仍可读，不依赖原生文件。
-- **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。
+- **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。默认 worker 的历史分支同样各自绑定转录；未启用会话族的单进程／注入 workspace 模式仍只绑定最初的会话。
 - **活跃/放弃由 `active` 表达**：`active === true` 的节点在活跃路径上（leaf 必然在其中）；其余节点是被放弃的路径，仍保留在树里。
 - **分支点**：`branchPoint` 表示该节点有多个子条目（退回会制造一个）。
 
@@ -87,6 +89,20 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 - 从会话栏进入可以显示另一个会话的树；面板顶部标出该会话并提供「跟随当前会话」。
 - 节点上的两个动作只在节点已有 Durable 条目 id 时出现，否则提示“该条目尚未写入会话存储”。
 
+## 默认 worker 的会话族
+
+一个 Desktop Agent 继续独占一个 worker 和 SQLite。`singleAgent: true` 表示禁止在 worker 内任意新建 Desktop Agent，不再禁止其已有会话的历史分叉。每个分支仍使用 Durable 原生 `fork`、`parent` 与独立 usage；分支不会创建第二个 writer。
+
+`src/session/native-transcript-family.mjs` 的接口：
+
+- `openNativeTranscriptFamily({ workspace, agentDir, directory, owner, agents, branches, resumePath?, pathHint? })` 返回 `sync(agents?)`、`get(id)`、`check()`、幂等 `close()` 与根 `metadata`。根元数据兼容原来的 `path`／`nativeSessionId`／`digest`，追加 `family`；分支模式只绑定根的历史后代，不绑定工具拥有的子会话。`sync` 串行执行，工作量随族成员及其转录长度增长，不调度新任务。
+- `nativeBranchIdentity(owner, id)` 给出稳定、独立的原生身份；重启不重新分配，且不与根复用同一个原生 id。
+- `readNativeTranscriptFamily(directory)` 返回原子发布的清单 `{ version: 1, root, members: [{ id, path, nativeSessionId }] }`，文件名为 `native-sessions.json`；旧宿主无清单返回 `null`，损坏／重复成员返回 409。
+- 原生 `pi-desktop-family` 条目的 `{ owner, conversationId }` 是只读互操作归属，供发现器处理文件与清单之间的发布窗口。清单和标记都不是第二份会话真相；分支与上下文始终以 Durable 为准。
+- 同步失败向调用者抛出；关闭会尝试释放全部转录锁，不能因一个分支失败就留下其他分支的 writer。
+
+Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契约](lifecycle.md)。
+
 ## 性能特征
 
 - 每次调用读一次 `workspace.read()`（全量摘要）与一次 `transcript(id)` 条目扫描；原生树来自内存中的 SessionManager，不读盘。
@@ -98,3 +114,5 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 - `test/durable-session-tree.test.mjs`：原生 parent 链与 leaf、分支点、被放弃路径不在活跃路径上、`rewinds` 记录退回目标、`branches` 列出全部分支且 `forkOf` 指向同一来源、无原生转录的会话返回 `native: null`。
 - `test/bridge.test.mjs`：未声明能力的宿主返回 `supported: false`；声明后按 `id` 传参且只调用一次。
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（40 个键）。
+
+默认模式的补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。

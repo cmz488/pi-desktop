@@ -160,6 +160,8 @@ export async function openNativeTranscript({
   owner,
   resumePath,
   pathHint,
+  nativeId,
+  familyOwner,
   workspace,
   id,
 }) {
@@ -198,7 +200,7 @@ export async function openNativeTranscript({
     const created = sdk.SessionManager.create(
       cwd,
       await nativeSessionDirectory(cwd, agentDir),
-      { id: owner.split(":")[0] },
+      { id: nativeId ?? owner.split(":")[0] },
     );
     manager = sdk.SessionManager.inMemory(cwd, undefined, [
       created.getHeader(),
@@ -331,6 +333,24 @@ export async function openNativeTranscript({
     async function synchronize() {
       if (failure) throw failure;
       const { active, entries } = await workspace.transcript(id);
+      // 发现器只能识别原生文件，必须显式保留所属 Desktop Agent，不能把分支误认成另一个宿主。
+      if (
+        familyOwner &&
+        !manager
+          .getEntries()
+          .some(
+            (entry) =>
+              entry.customType === "pi-desktop-family" &&
+              entry.data?.owner === familyOwner &&
+              entry.data?.conversationId === id,
+          )
+      ) {
+        manager.appendCustomEntry("pi-desktop-family", {
+          owner: familyOwner,
+          conversationId: id,
+        });
+        dirty = true;
+      }
       const config = JSON.stringify([
         active.name,
         active.model,

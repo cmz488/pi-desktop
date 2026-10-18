@@ -48,7 +48,7 @@ class DeskError extends Error { status }
 - **未启动的 Agent 不允许读取**：`agent.source !== "pi"`、未归档且缺少原生会话文件时抛 `DeskError(409, "请先启动 Agent")`；记录已丢失抛 `DeskError(404, "Pi 会话记录已不存在")`。
 - **写目标唯一**：所有跨 `await` 的写入必须经 `host.target()`／`supervisor.target(id)` 校验，路由不复制 409 规则。
 - **catalog 是只读快照 + revision**：`store.read()` 返回 `{ revision, projects, agents }`；写入走 `mutateDocument` 的锁 + revision 栅栏。
-- **原生转录绑定在宿主启动时接管的 Agent 上**：默认多进程 Desktop 每个 Agent 一个 worker，因此每个 Agent 有各自的 `agents/<id>` 目录与 `native-session.json`；注入 workspace 或 `--single-process` 宿主只绑定启动时的那个 Agent，其他会话没有原生 JSONL（退回因此返回 409，分叉不受影响）。
+- **一个 Desktop Agent 一个 writer**：默认 worker 承载该 Agent 的会话族，历史分支是同一 Harness 内独立的 Durable 会话。根保留 `agents/<id>` 下的元数据，分支在该目录的 `branches/<conversationId>` 下各自保存转录元数据；重启后原生身份与路径不变。单进程／注入 workspace 模式仍只绑定最初的会话。
 
 ## 顺序约束
 
@@ -88,3 +88,14 @@ class DeskError extends Error { status }
 - `test/remote-lazy.test.mjs`：`revision()` 作为轮询入口的形状。
 - 会话树退回与分叉：`test/durable-session-tree.test.mjs`（会话与 JSONL）、`npm run test:durable:browser`（消息右键菜单）。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
+
+## 会话族的生命周期
+
+- `src/control-plane/session-families.mjs` 只消费 worker 的原生清单与文件标记；`mergeNativeSessions(before?, next?)` 合并已验证的归属列表并保持 id／path／nativeSessionId 唯一，HTTP 工作区不额外暴露分支文件路径。发现器不会把同族 JSONL 另列为 Pi 只读 Agent；旧单文件 worker 的清单可以缺省。
+- `GET /api/agent` 的追加字段 `familyIdle` 用于整族配置门禁；所有实时任务结束前，共享人格、Agent 运行配置与权限调整不能误用根会话的空闲状态。未被引用的新提示词追加仍保留原有语义。
+- Host 的 Agent 停止／重启作用于整个 worker；聊天内的等待／取消仍只作用于选中会话及其 owned 后代，不跨历史分支。
+- `src/control-plane/family-archives.mjs` 在现有 `openSessionArchives` adapter 上组合迁移。根沿用原归档 key，分支使用独立 key；先保存 `archiveIntent: "archive" | "restore"` 和 `archivePending`，每个文件保留原有摘要、锁、不可覆盖发布和阶段恢复，整族完成后才清除门禁。启动前恢复未完成的整族意图，不能只恢复根就启动 worker。
+- 一份文件冲突时不覆盖文件，整个 Agent 保持 pending；归档未完成先重试归档，恢复未完成先重试恢复。迁移错误在工作区可见，不能通过反向操作清掉半完成状态。
+- 多分支族不支持用 `agent.resume` 把单份 TUI JSONL 接管成新数据库，返回 409，避免丢弃其余分支；原有单会话接管不变。会话族正常使用 stop/start/restart 及整族 archive/restore，Durable SQLite 始终保留。
+
+可执行证据：`test/desktop-branch-family.test.mjs` 覆盖独立转录、整族忙闲、三会话重启／归档恢复、归档中途锁冲突后重启完成、恢复不覆盖冲突分支且重启可续迁移、首次文件尚未移动就失败的意图恢复；`test/session-family-ownership.test.mjs` 覆盖清单、发布窗口、generation 与原生身份校验；`test/native-transcript-family.test.mjs` 覆盖同进程关闭失败时释放所有写锁；`test:workspace:browser` 包含真实默认 worker 的两处分叉入口。
