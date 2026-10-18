@@ -490,5 +490,11 @@ try {
     await exited;
   }
   await new Promise((resolve) => server.close(resolve));
-  await rm(root, { recursive: true, force: true });
+  // Chromium 父进程退出后，子进程可能短暂冲刷 profile；有界重试只处理临时目录收尾，仍保留最终错误。
+  await rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 100,
+  });
 }

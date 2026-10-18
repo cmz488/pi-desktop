@@ -1,6 +1,15 @@
-/* 内置「分支树」页：把 Host 的只读读模型（`GET /api/tree`）画成树。
- * 数据只读；创建分支与退回仍走 `POST /api/command`，与消息菜单、会话栏共用同一条命令路径。
- * 展开/折叠属于视图状态，保存在本模块里，因此工作台重绘或状态刷新都不会丢掉它。 */
+import { createSessionPanelLoader } from "./session-panel-loader.js";
+
+/**
+ * 分支树面板：展示 Host 读模型，动作复用会话命令，不推导或拥有历史。
+ *
+ * 接口：`createBranchTreePanel` 的 builtin.update/render 接收工作台上下文；
+ *   setSession 指定目标，refresh、setActive／dispose 管理读取；见
+ *   docs/architecture/interfaces/read-panels.md。
+ * 不变量：拥有者与显示目标共同决定请求身份，晚到结果不能覆盖新身份；
+ *   同一目标补刷保留折叠和滚动，命令捕获不可变目标，只读不提供管理。
+ * 错误：当前读取失败显示，当前命令失败提示；unsupported 隐藏入口，过期结果不导航。
+ */
 
 const ROLE_LABELS = {
   user: "用户消息",
@@ -26,16 +35,29 @@ export function createBranchTreePanel({
 }) {
   let owner = "";
   let target = "";
-  let data;
-  let error = "";
-  let loading = false;
-  let lastLoaded = 0;
-  let pending = false;
   let container;
   let repaint;
-  let retry;
   const collapsed = new Set();
-  const session = () => target || owner;
+  let context = {};
+  const loader = createSessionPanelLoader({
+    read: fetchTree,
+    onChange: render,
+  });
+  function updateContext(next) {
+    const previousOwner = owner;
+    context = next;
+    owner = String(next.sessionId ?? "");
+    if (owner !== previousOwner) collapsed.clear();
+    return loader.setContext({
+      owner,
+      sessionId: target || owner,
+      enabled: next.capabilities?.sessionTree === true,
+      canManage:
+        next.sessionCommands === true &&
+        next.capabilities?.readOnly !== true &&
+        next.capabilities?.remote !== true,
+    });
+  }
 
   const nodeLabel = (node) => {
     if (node.customType === "pi-desktop-rewind")
@@ -53,11 +75,13 @@ export function createBranchTreePanel({
 
   function render() {
     // 工作台可能在刷新时重建内容节点；容器已脱离文档时请它重画，而不是写进旧节点。
-    if (!container?.isConnected) {
-      repaint?.();
+    if (!container?.isConnected || !loader.available) {
+      if (container) repaint?.();
       return;
     }
-    const sessionId = session();
+    const { data, error, loading } = loader;
+    const sessionId = loader.context.sessionId;
+    const identity = loader.capture();
     const root = element("div", "branch-tree");
     root.dataset.branchTree = sessionId;
     const header = element("header", "branch-tree-header");
@@ -78,7 +102,7 @@ export function createBranchTreePanel({
     const refresh = element("button", "outline-button", "刷新");
     refresh.type = "button";
     refresh.dataset.branchRefresh = "true";
-    refresh.onclick = () => void load({ force: true });
+    refresh.onclick = () => void loader.refresh({ force: true });
     header.append(refresh);
     root.append(header);
     // 从会话栏的「打开分支树」进来时可能看的是另一个会话；显式标出并提供跟随当前会话的出口。
@@ -89,26 +113,25 @@ export function createBranchTreePanel({
       follow.type = "button";
       follow.dataset.branchFollow = "true";
       follow.onclick = () => {
+        if (!follow.isConnected || !loader.isCurrent(identity)) return;
         target = "";
         collapsed.clear();
-        data = undefined;
+        updateContext(context);
         render();
-        void load({ force: true });
+        void loader.refresh({ force: true });
       };
       note.append(follow);
       root.append(note);
     }
     if (error) root.append(element("p", "branch-tree-note", error));
-    if (data?.supported === false)
-      root.append(
-        element("p", "branch-tree-note", "当前宿主不提供分支树读模型。"),
-      );
-    else if (data && !data.native)
+    if (data && !data.native)
       root.append(
         element(
           "p",
           "branch-tree-note",
-          "该会话没有绑定原生 Pi 记录：创建分支仍可用，退回需要原生记录。",
+          loader.canManage
+            ? "该会话没有绑定原生 Pi 记录：创建分支仍可用，退回需要原生记录。"
+            : "该会话没有绑定原生 Pi 记录，当前仅可查看分支信息。",
         ),
       );
 
@@ -152,6 +175,7 @@ export function createBranchTreePanel({
         );
         toggle.disabled = !node.children;
         toggle.onclick = () => {
+          if (!toggle.isConnected || !loader.isCurrent(identity)) return;
           if (collapsed.has(node.id)) collapsed.delete(node.id);
           else collapsed.add(node.id);
           render();
@@ -179,12 +203,22 @@ export function createBranchTreePanel({
           fork.type = "button";
           fork.dataset.branchAction = "fork";
           fork.dataset.entryId = String(node.entryId);
-          fork.onclick = () => void act("fork", node);
+          fork.disabled = !loader.canManage;
+          if (fork.disabled)
+            fork.title = "当前会话只提供分支树查看，不提供管理操作";
+          fork.onclick = () => {
+            if (fork.isConnected) void act("fork", node.entryId, identity);
+          };
           const rewind = element("button", "outline-button", "退回");
           rewind.type = "button";
           rewind.dataset.branchAction = "rewind";
           rewind.dataset.entryId = String(node.entryId);
-          rewind.onclick = () => void act("rewind", node);
+          rewind.disabled = !loader.canManage;
+          if (rewind.disabled)
+            rewind.title = "当前会话只提供分支树查看，不提供管理操作";
+          rewind.onclick = () => {
+            if (rewind.isConnected) void act("rewind", node.entryId, identity);
+          };
           actions.append(fork, rewind);
         } else {
           actions.append(
@@ -217,7 +251,10 @@ export function createBranchTreePanel({
             `${branch.idle ? "空闲" : "运行中"} · 来自条目 ${branch.forkOf?.entryId ?? "?"}`,
           ),
         );
-        row.onclick = () => void switchSession(branch.id);
+        row.onclick = () => {
+          if (row.isConnected && loader.isCurrent(identity))
+            void switchSession(branch.id);
+        };
         branches.append(row);
       }
       root.append(branches);
@@ -225,86 +262,52 @@ export function createBranchTreePanel({
     container.replaceChildren(root);
   }
 
-  async function act(kind, node) {
-    const sessionId = session();
+  async function act(kind, entryId, identity) {
+    if (!loader.isCurrent(identity) || !loader.canManage) return;
+    const input = Object.freeze({
+      id: Number(identity.sessionId),
+      entryId,
+      sessionId: identity.sessionId,
+    });
     try {
-      if (kind === "fork") {
-        const result = await command("fork", {
-          id: Number(sessionId),
-          entryId: node.entryId,
-          sessionId,
-        });
-        toast("已从该条目创建分支");
-        if (result?.sessionId) await switchSession(result.sessionId);
-        else await load({ force: true });
-      } else {
-        await command("rewind", {
-          id: Number(sessionId),
-          entryId: node.entryId,
-          sessionId,
-        });
-        toast("已退回到该条目");
-        await load({ force: true });
-      }
+      const result = await command(kind, input);
+      if (!loader.isCurrent(identity)) return;
+      toast(kind === "fork" ? "已从该条目创建分支" : "已退回到该条目");
+      if (kind === "fork" && result?.sessionId)
+        await switchSession(result.sessionId);
+      else await loader.refresh({ force: true });
     } catch (failure) {
-      toast(failure.message);
-    }
-  }
-
-  async function load({ force = false } = {}) {
-    const sessionId = session();
-    if (!sessionId) return;
-    // 状态刷新会频繁触发：进行中或刚读过时记下待刷新，结束后补一次，
-    // 否则切会话后的那次刷新可能被丢掉，面板停在旧会话或空态。
-    if (loading) {
-      pending = true;
-      return;
-    }
-    if (!force && Date.now() - lastLoaded < 1500) {
-      pending = true;
-      clearTimeout(retry);
-      retry = setTimeout(() => void load({ force: true }), 1600);
-      return;
-    }
-    loading = true;
-    lastLoaded = Date.now();
-    try {
-      data = await fetchTree(sessionId);
-      error = "";
-    } catch (failure) {
-      error = failure.message;
-    } finally {
-      loading = false;
-      render();
-      if (pending) {
-        pending = false;
-        void load({ force: true });
-      }
+      if (loader.isCurrent(identity)) toast(failure.message);
     }
   }
 
   return {
     key: "desktop:branch-tree",
     view: { label: "Desktop", title: "分支树", status: "" },
-    /* 会话栏可以指定要看哪个会话；不带参数时跟随当前会话。 */
+    get available() {
+      return loader.available;
+    },
+    /* 显示别的会话时不能混用页面当前会话的命令目标。 */
     setSession(id) {
       const next = String(id ?? "");
       if (next === target) return;
       target = next;
       collapsed.clear();
-      data = undefined;
+      updateContext(context);
       render();
     },
-    refresh() {
-      return load();
-    },
+    refresh: loader.refresh,
+    setActive: loader.setActive,
+    dispose: loader.dispose,
     builtin: {
-      render(node, { sessionId: current, rerender }) {
+      update: updateContext,
+      render(node, next) {
         container = node;
-        repaint = rerender;
-        owner = String(current ?? owner ?? "");
+        repaint = next.rerender;
+        updateContext(next);
         render();
-        void load();
+        if (!loader.data && !loader.loading && !loader.error)
+          void loader.refresh();
       },
     },
   };

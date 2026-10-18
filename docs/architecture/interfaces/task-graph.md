@@ -78,6 +78,7 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 
 - **只读宿主**：`wait`／`cancel` 是写操作，返回 `DeskError(403, "只读会话不提供任务管理操作")`；其他命令（发送、中止、压缩、配置）不受影响。
 - **远程客户端**：取消或等待**自己的**任务属于允许的远程动作（与“远程不允许改配置”的裁剪规则一致），不作为禁止项；远程的路径裁剪仍照常生效。
+- **生产远程路径**：上述 Worker 规则不放宽网关对 `/api/command` 的既有裁剪。生产远程页保留 `/api/abort` 等现有会话操作，不把该网关不能执行的面板任务命令显示为可用；允许 scoped 命令的嵌入调用方仍可提供其合法管理回调。
 - **界面确认**：面板里的取消动作需要两步确认（第一次点击进入待确认状态，第二次才发出命令），等待不需要确认。
 - **后台任务**：`background: true` 的任务是会话拥有的任务，被排除在普通空闲等待与会话中止之外（会话可以在它运行时保持空闲）；面板顶部的「取消后台任务」按钮只在存在后台任务时出现，同样需要两步确认。夹具 `test/background-fixture.mjs` 用 `tx.createTask(..., { background: true })` 造出真实后台任务，API 测试与浏览器回归都基于它。
 
@@ -94,3 +95,5 @@ Host capability: tasks          // 未声明时返回 { supported: false }（HTT
 - `test/bridge.test.mjs`：能力未声明时的回退形状（与 `/api/tree` 同一模式）。
 - 真实后台任务：同一测试断言后台任务在会话空闲时仍存活（`background: true`、`owner: null`），`cancel { background: true }` 返回它取消的任务 id 并让它离开任务图；`test/durable-browser-check.mjs` 在面板上造出同一个后台任务，断言「后台」标记与「取消后台任务」按钮的两步确认，随后任务图清空。
 - 管理操作：同一测试断言按任务 id 取消后任务图清空且子会话不产生孤儿、`wait` 在回答提交后才返回、`wait` 未知任务返回 404、只读宿主对 `cancel` 返回 403、后台取消不打断前台运行。
+
+面板身份、权限与生命周期见 [会话只读面板契约](read-panels.md)。快照的 `capabilities.tasks` 由 Host 声明；unsupported 与未声明均隐藏入口。`test/read-panels-desktop-browser-check.mjs` 以真实默认 worker 验证切换前后没有误取消任务，`test/read-panels-browser-check.mjs` 覆盖后台取消确认、晚到响应、快速切换、权限变化与资源清理。

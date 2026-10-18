@@ -124,3 +124,5 @@ Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契�
 默认模式的补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。
 
 多次退回的来源、重启与再次分叉见 `test/durable-rewind-origins.test.mjs`；原生编辑／压缩／批量贡献的来源投影见 `test/native-rewind-context.test.mjs`。默认浏览器验收也覆盖两次退回后从可见 Q1 分叉，不能带入 Q2/Q4。
+
+入口与管理按钮门控、读取生命周期见 [会话只读面板契约](read-panels.md)。`capabilities.sessionTree` 显式来自 Host；unsupported 时内置页及会话栏的分支树入口一起隐藏。只读仅展示，远程不放宽既有分支命令裁剪。

@@ -431,6 +431,8 @@ export function createDeskBridge(input) {
         capabilities: {
           ...(visible.capabilities ?? {}),
           remote: request.headers["x-pi-remote-client"] === "1",
+          sessionTree: host.capabilities.sessionTree,
+          tasks: host.capabilities.tasks,
           sessions:
             visible.capabilities?.sessions ?? host.capabilities.sessions,
           reload: visible.capabilities?.reload ?? host.capabilities.reload,

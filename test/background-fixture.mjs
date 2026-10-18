@@ -5,9 +5,16 @@ import {
   defineTool,
 } from "@earendil-works/pi-durable";
 
-/* 真实后台任务的夹具：一个「锚点」任务持有 20 秒（被中止时立刻结算），由工具以
- * `background: true` 创建成会话拥有的任务。Durable 因此把它排除在普通空闲等待与
- * 会话中止之外——正好用来验证「取消后台任务」这条路径，以及面板上的后台标记。 */
+/**
+ * 受控后台任务夹具：让 API 与浏览器验证会话拥有的真实 Durable 后台任务。
+ *
+ * 接口：createBackgroundFixture() 返回 { extension, Anchor }；安装 extension 后可
+ *   用 background_work 派生任务，见 docs/architecture/interfaces/task-graph.md。
+ * 不变量：任务带 background 标记、由会话拥有；普通空闲／中止不影响它，持续时间有界；
+ *   仅在临时 Harness 中运行，不启动外部子代理。
+ * 错误：sleep 的中止或失败交给 Durable 结算，工具创建失败原样抛出，不伪造成功。
+ */
+const BACKGROUND_HOLD_MS = 20000;
 
 export function createBackgroundFixture() {
   const Anchor = defineTask({
@@ -17,7 +24,7 @@ export function createBackgroundFixture() {
     phases: {
       hold: async (task, runtime, context) => {
         // sleep 在调用被中止时会拒绝，任务因此进入终态；没有中止则 20 秒后自己结束。
-        await runtime.sleep(Date.now() + 20000, context);
+        await runtime.sleep(Date.now() + BACKGROUND_HOLD_MS, context);
       },
     },
   });

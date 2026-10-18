@@ -1,6 +1,14 @@
-/* 内置「任务与子代理」页：把 Host 的任务读模型（`GET /api/tasks`）画成任务树，
- * 并列出在跑工具与被任务拥有的子会话。操作（等待／取消／后台取消）走 `/api/command`，
- * 取消类动作需要两步确认；面板本身只读，不持有任务状态。 */
+import { createSessionPanelLoader } from "./session-panel-loader.js";
+
+/**
+ * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
+ *
+ * 接口：`createTaskPanel` 的 builtin.update/render 接收工作台上下文，refresh、
+ *   setActive／dispose 管理读取；命令与权限见 docs/architecture/interfaces/read-panels.md。
+ * 不变量：来源、确认与命令目标绑定同一代不可变身份；切会话立即清数据和确认；
+ *   只读管理禁用，远程本会话操作不额外禁用；等待不是提前成功。
+ * 错误：当前读取错误显示，当前命令错误提示；过期回调与结果均忽略，不误操作新会话。
+ */
 
 const STATUS_LABELS = {
   pending: "排队",
@@ -20,13 +28,6 @@ export function createTaskPanel({
   currentSession,
 }) {
   const CONFIRM_MS = 4000;
-  let sessionId = "";
-  let data;
-  let error = "";
-  let loading = false;
-  let lastLoaded = 0;
-  let pending = false;
-  let retry;
   let armed;
   let armTimer;
   let container;
@@ -39,20 +40,31 @@ export function createTaskPanel({
     return node;
   };
 
-  /* 会话以页面当前选择为准：工作台不会因为会话切换而重画内置页，面板自己跟随。 */
-  const session = () => {
-    const fromPage = String(currentSession?.() ?? "");
-    if (fromPage) sessionId = fromPage;
-    return sessionId;
-  };
+  const loader = createSessionPanelLoader({
+    read: fetchTasks,
+    onChange: render,
+    onReset: disarm,
+  });
+  function updateContext(context) {
+    const owner = String(context.sessionId ?? currentSession?.() ?? "");
+    return loader.setContext({
+      owner,
+      sessionId: owner,
+      enabled: context.capabilities?.tasks === true,
+      canManage:
+        (context.taskCommands ?? context.sessionCommands) === true &&
+        context.capabilities?.readOnly !== true,
+    });
+  }
   const kindLabel = (kind) => KIND_LABELS[kind] ?? kind;
   const statusLabel = (status) => STATUS_LABELS[status] ?? status;
 
-  function arm(key) {
-    armed = key;
+  function arm(key, identity) {
+    armed = Object.freeze({ key, identity });
     clearTimeout(armTimer);
     armTimer = setTimeout(() => {
-      armed = undefined;
+      if (armed?.identity !== identity) return;
+      disarm();
       render();
     }, CONFIRM_MS);
     render();
@@ -60,20 +72,32 @@ export function createTaskPanel({
   function disarm() {
     armed = undefined;
     clearTimeout(armTimer);
+    armTimer = undefined;
   }
   /* 两步确认：第一次点击只进入待确认状态，第二次才执行；4 秒后自动撤销。 */
-  function confirmButton(key, label, title, run) {
+  function confirmButton(key, label, title, run, identity) {
+    const confirming = armed?.key === key && armed.identity === identity;
     const button = element(
       "button",
       "outline-button",
-      armed === key ? `${label}（再次点击确认）` : label,
+      confirming ? `${label}（再次点击确认）` : label,
     );
     button.type = "button";
     button.dataset.taskAction = key;
     if (title) button.title = title;
-    if (armed === key) button.dataset.armed = "true";
+    button.disabled = !loader.canManage;
+    if (button.disabled)
+      button.title = "当前会话只提供任务查看，不提供管理操作";
+    if (confirming) button.dataset.armed = "true";
     button.onclick = () => {
-      if (armed !== key) return arm(key);
+      if (
+        !button.isConnected ||
+        !loader.isCurrent(identity) ||
+        !loader.canManage
+      )
+        return;
+      if (!confirming || armed?.identity !== identity || armed.key !== key)
+        return arm(key, identity);
       disarm();
       render();
       void run();
@@ -81,25 +105,33 @@ export function createTaskPanel({
     return button;
   }
 
-  async function act(input, message) {
+  async function act(input, message, identity) {
+    if (!loader.isCurrent(identity) || !loader.canManage) return;
     try {
-      const result = await command(input);
+      const result = await command(Object.freeze(input));
+      if (!loader.isCurrent(identity)) return result;
       toast(message);
-      await load({ force: true });
+      await loader.refresh({ force: true });
       return result;
     } catch (failure) {
-      toast(failure.message);
+      if (loader.isCurrent(identity)) toast(failure.message);
       return undefined;
     }
   }
 
   function render() {
-    if (!container?.isConnected) {
-      repaint?.();
+    if (!container?.isConnected || !loader.available) {
+      if (container) repaint?.();
       return;
     }
+    const focused = container.contains(document.activeElement)
+      ? document.activeElement.dataset.taskAction
+      : undefined;
+    const { data, error, loading } = loader;
+    const sessionId = loader.context.sessionId;
+    const identity = loader.capture();
     const root = element("div", "task-panel");
-    root.dataset.taskPanel = session();
+    root.dataset.taskPanel = sessionId;
     const tasks = data?.tasks ?? [];
     const tools = data?.tools ?? [];
     const children = data?.conversations ?? [];
@@ -120,7 +152,7 @@ export function createTaskPanel({
     const refresh = element("button", "outline-button", "刷新");
     refresh.type = "button";
     refresh.dataset.taskRefresh = "true";
-    refresh.onclick = () => void load({ force: true });
+    refresh.onclick = () => void loader.refresh({ force: true });
     actions.append(refresh);
     if (tasks.some((task) => task.background))
       actions.append(
@@ -137,16 +169,14 @@ export function createTaskPanel({
                 background: true,
               },
               "已取消后台任务",
+              identity,
             ),
+          identity,
         ),
       );
     header.append(actions);
     root.append(header);
     if (error) root.append(element("p", "task-panel-note", error));
-    if (data?.supported === false)
-      root.append(
-        element("p", "task-panel-note", "当前宿主不提供任务读模型。"),
-      );
     if (data && !tasks.length)
       root.append(
         element(
@@ -161,6 +191,7 @@ export function createTaskPanel({
       const childrenOf = (owner) =>
         tasks.filter((task) => String(task.owner ?? "") === owner);
       const row = (task, depth) => {
+        const taskId = Number(task.id);
         const node = element("div", "task-panel-row");
         node.dataset.taskId = String(task.id);
         node.dataset.kind = task.kind;
@@ -193,16 +224,22 @@ export function createTaskPanel({
         const wait = element("button", "outline-button", "等待");
         wait.type = "button";
         wait.dataset.taskAction = `wait:${task.id}`;
-        wait.onclick = () =>
+        wait.disabled = !loader.canManage;
+        if (wait.disabled)
+          wait.title = "当前会话只提供任务查看，不提供管理操作";
+        wait.onclick = () => {
+          if (!wait.isConnected) return;
           void act(
             {
               command: "wait",
               id: Number(sessionId),
               sessionId,
-              taskId: Number(task.id),
+              taskId,
             },
             "任务已结束",
+            identity,
           );
+        };
         rowActions.append(wait);
         rowActions.append(
           confirmButton(
@@ -215,10 +252,12 @@ export function createTaskPanel({
                   command: "cancel",
                   id: Number(sessionId),
                   sessionId,
-                  taskId: Number(task.id),
+                  taskId,
                 },
                 "已取消该任务",
+                identity,
               ),
+            identity,
           ),
         );
         node.append(rowActions);
@@ -281,58 +320,30 @@ export function createTaskPanel({
       root.append(list);
     }
     container.replaceChildren(root);
-  }
-
-  async function load({ force = false } = {}) {
-    const requested = session();
-    if (!requested) return;
-    // 状态刷新会频繁触发：进行中或刚读过时记下待刷新，结束后补一次，
-    // 否则切会话后的那次刷新可能被丢掉，面板停在旧会话。
-    if (loading) {
-      pending = true;
-      return;
-    }
-    if (!force && Date.now() - lastLoaded < 1500) {
-      pending = true;
-      clearTimeout(retry);
-      retry = setTimeout(() => void load({ force: true }), 1600);
-      return;
-    }
-    loading = true;
-    lastLoaded = Date.now();
-    try {
-      data = await fetchTasks(requested);
-      error = "";
-    } catch (failure) {
-      error = failure.message;
-    } finally {
-      loading = false;
-      render();
-      if (pending) {
-        pending = false;
-        void load({ force: true });
-      }
-    }
+    if (focused)
+      [...root.querySelectorAll("[data-task-action]")]
+        .find((node) => node.dataset.taskAction === focused && !node.disabled)
+        ?.focus({ preventScroll: true });
   }
 
   return {
     key: "desktop:task-panel",
     view: { label: "Desktop", title: "任务与子代理", status: "" },
-    refresh() {
-      return load();
+    get available() {
+      return loader.available;
     },
+    refresh: loader.refresh,
+    setActive: loader.setActive,
+    dispose: loader.dispose,
     builtin: {
-      render(node, { sessionId: current, rerender }) {
+      update: updateContext,
+      render(node, context) {
         container = node;
-        repaint = rerender;
-        const next = String(current ?? "");
-        if (next && next !== sessionId && !String(currentSession?.() ?? "")) {
-          sessionId = next;
-          data = undefined;
-          disarm();
-        }
+        repaint = context.rerender;
+        updateContext(context);
         render();
-        void load();
+        if (!loader.data && !loader.loading && !loader.error)
+          void loader.refresh();
       },
     },
   };

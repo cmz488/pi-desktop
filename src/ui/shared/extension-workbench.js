@@ -1,3 +1,13 @@
+/**
+ * 扩展工作台：注册 adapter 与内置读模型的第二展示面，不加载插件脚本或拥有业务状态。
+ *
+ * 接口：projectExtensionPages／projectExtensionPanels、createExtensionWorkbench；
+ *   update(rows, context)／select(key) 与内置页上下文见
+ *   docs/architecture/interfaces/read-panels.md。
+ * 不变量：页面按会话与稳定键隔离；所有内置页先更新身份再过滤；相同页面重画保留
+ *   披露状态、焦点与滚动；动作只转交注册 adapter 已验证的意图。
+ * 错误：当前懒加载失败走 onError；过期结果不重画，renderer 输出沿用清理与安全回退。
+ */
 const MAX_PAGES = 80;
 const MAX_RETAINED_ENTRIES = 500;
 
@@ -60,6 +70,8 @@ export function createExtensionWorkbench({
   const layout = root.querySelector(".extension-workbench-layout");
   const disclosures = new Map();
   const loadAttempts = new Map();
+  let latestRows = [],
+    latestContext = {};
   let pages = [],
     owner,
     renderedOwner,
@@ -177,8 +189,9 @@ export function createExtensionWorkbench({
       );
       detail.append(content);
       page.builtin.render(content, {
+        ...latestContext,
         sessionId: owner,
-        rerender: renderDetail,
+        rerender: repaintBuiltin,
       });
       detail.scrollTop = changed ? 0 : previousScroll;
       return;
@@ -279,7 +292,10 @@ export function createExtensionWorkbench({
     true,
   );
 
-  return {
+  function repaintBuiltin() {
+    if (!controller.update(latestRows, latestContext)) renderDetail();
+  }
+  const controller = {
     /* 会话栏「打开分支树」需要直接选中内置页；找不到 key 时保持当前选择。 */
     select(key) {
       if (!pages.some((row) => row.key === key)) return false;
@@ -288,7 +304,10 @@ export function createExtensionWorkbench({
       renderDetail();
       return true;
     },
-    update(rows, { sessionId } = {}) {
+    update(rows, context = {}) {
+      const { sessionId } = context;
+      latestRows = rows;
+      latestContext = context;
       if (owner !== sessionId) {
         owner = sessionId;
         selected = undefined;
@@ -299,15 +318,23 @@ export function createExtensionWorkbench({
         loadAttempts.clear();
         detail.replaceChildren();
       }
+      // 未选中的内置页也必须立即失效，不能等用户重新打开才清掉旧确认和请求。
+      const changedBuiltins = new Set();
+      for (const page of builtinPages)
+        if (page.builtin.update?.(context)) changedBuiltins.add(page.key);
       const next = [
-        ...builtinPages,
+        ...builtinPages.filter((page) => page.available !== false),
         ...projectExtensionPanels(registry, rows, { sessionId }),
         ...projectExtensionPages(registry, rows, { sessionId }),
       ];
       const nextSignature = JSON.stringify(next);
       // 会话切换时页面清单可能完全一样，但内置页要看的是新会话，必须重画。
       const ownerChanged = renderedOwner !== owner;
-      if (nextSignature === signature && !ownerChanged) return;
+      if (nextSignature === signature && !ownerChanged) {
+        if (!changedBuiltins.has(selected)) return false;
+        renderDetail();
+        return true;
+      }
       signature = nextSignature;
       renderedOwner = owner;
       pages = next;
@@ -317,6 +344,8 @@ export function createExtensionWorkbench({
       onCount(pages.length);
       renderList();
       renderDetail();
+      return true;
     },
   };
+  return controller;
 }

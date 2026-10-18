@@ -579,3 +579,29 @@ test("the session tree endpoint is read-only and explicit about unsupported host
   assert.equal(withoutId.requested, null);
   assert.equal(calls, 2);
 });
+
+test("聊天快照显式声明读面板能力，不能被宿主自填字段或方法存在性冒充", async (t) => {
+  for (const declared of [false, true]) {
+    const f = await fixture(t, {
+      capabilities: declared ? { sessionTree: true, tasks: true } : {},
+      snapshot: () => ({
+        models: [],
+        messages: [],
+        idle: true,
+        capabilities: { sessionTree: !declared, tasks: !declared },
+      }),
+      sessionTree: () => ({ sessionId: "1", native: null, branches: [] }),
+      tasks: () => ({
+        sessionId: "1",
+        tasks: [],
+        tools: [],
+        conversations: [],
+      }),
+    });
+    for (const path of ["/api/state", "/api/state?view=chat"]) {
+      const value = await (await f.request(path)).json();
+      assert.equal(value.capabilities.sessionTree, declared);
+      assert.equal(value.capabilities.tasks, declared);
+    }
+  }
+});

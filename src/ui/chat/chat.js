@@ -87,6 +87,7 @@ const scanAgent = scanAddress.searchParams.get("agent");
 let durableAgentId = /^\d+$/.test(scanAgent ?? "")
   ? scanAgent
   : sessionStorage.getItem(selectionKey) || "";
+let actionEpoch = 0;
 if (/^\d+$/.test(scanAgent ?? "")) {
   sessionStorage.setItem(selectionKey, scanAgent);
   scanAddress.searchParams.delete("agent");
@@ -166,8 +167,11 @@ function chooseDurableAgent(id) {
     $("#messages").replaceChildren();
     resetInteraction();
   }
+  actionEpoch++;
   durableAgentId = String(id);
   sessionStorage.setItem(selectionKey, durableAgentId);
+  closeActionMenu();
+  extensionWorkbench?.update([], readPanelContext());
   syncComposerButton();
 }
 const titles = {
@@ -759,8 +763,9 @@ function toast(message) {
   $("#toast").classList.add("visible");
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 4200);
 }
-async function api(path, input, { signal } = {}) {
+async function api(path, input, { signal, selectSession = true } = {}) {
   const requestOwner = durableAgentId;
+  const requestEpoch = actionEpoch;
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   if (signal?.aborted) abort();
@@ -797,6 +802,9 @@ async function api(path, input, { signal } = {}) {
           },
     );
     if (
+      selectSession &&
+      requestEpoch === actionEpoch &&
+      requestOwner === durableAgentId &&
       state?.host === "durable" &&
       (data.sessionId ?? data.sessionCommand?.sessionId) &&
       (path === "/api/prompt" ||
@@ -820,6 +828,7 @@ async function api(path, input, { signal } = {}) {
       path === "/api/state" &&
       durableAgentId &&
       requestOwner === durableAgentId &&
+      requestEpoch === actionEpoch &&
       !signal?.aborted
     ) {
       durableAgentId = "";
@@ -1214,7 +1223,7 @@ function openActionMenu({
     button.disabled = item.disabled === true;
     if (item.title) button.title = item.title;
     button.addEventListener("click", () => {
-      if (button.disabled) return;
+      if (button.disabled || !button.isConnected) return;
       closeActionMenu();
       void item.run?.();
     });
@@ -1237,21 +1246,32 @@ function openActionMenu({
 }
 /* 命令统一带上目标 id 与可选 sessionId：Host 用严格相等校验目标，数字不能是字符串。 */
 async function runAgentCommand(command, input, message) {
+  if (["fork", "rewind"].includes(command) && !canManageBranches()) return;
+  const owner = readPanelContext().sessionId;
+  const epoch = actionEpoch;
   try {
-    const result = await api("/api/command", {
-      command,
-      id: Number(input.id ?? durableAgentId),
-      ...input,
-    });
+    const result = await api(
+      "/api/command",
+      {
+        command,
+        id: Number(input.id ?? durableAgentId),
+        ...input,
+      },
+      { selectSession: false },
+    );
+    if (readPanelContext().sessionId !== owner || epoch !== actionEpoch) return;
     if (result?.sessionId) chooseDurableAgent(result.sessionId);
     else toast(message);
     return result;
   } catch (error) {
-    toast(error.message);
+    if (readPanelContext().sessionId === owner && epoch === actionEpoch)
+      toast(error.message);
     return undefined;
   }
 }
 function openMessageMenu(x, y, entryId) {
+  const sessionId = readPanelContext().sessionId;
+  const target = Object.freeze({ id: Number(sessionId), entryId, sessionId });
   openActionMenu({
     x,
     y,
@@ -1261,17 +1281,15 @@ function openMessageMenu(x, y, entryId) {
       {
         command: "rewind",
         label: "退回到此消息",
+        disabled: !canManageBranches(),
         run: () =>
-          runAgentCommand(
-            "rewind",
-            { entryId },
-            "已退回，上下文从该消息之后重建",
-          ),
+          runAgentCommand("rewind", target, "已退回，上下文从该消息之后重建"),
       },
       {
         command: "fork",
         label: "从此消息分叉",
-        run: () => runAgentCommand("fork", { entryId }, "已分叉"),
+        disabled: !canManageBranches(),
+        run: () => runAgentCommand("fork", target, "已分叉"),
       },
     ],
   });
@@ -1296,6 +1314,7 @@ async function rewindBranch(row) {
 }
 /* 「打开分支树」切到扩展工作台并广播要展示的会话；面板在扩展工作台里注册（见 task-4）。 */
 async function openBranchTree(row) {
+  if (!branchTree.available) return;
   const sessionId = row.dataset.sessionId;
   await showView("extensions");
   window.dispatchEvent(
@@ -1310,17 +1329,32 @@ function openSessionMenu(row, x, y) {
     className: "action-menu session-menu",
     dataset: { sessionId: row.dataset.sessionId },
     items: [
-      { command: "fork", label: "创建分支", run: () => createBranch(row) },
+      {
+        command: "fork",
+        label: "创建分支",
+        disabled: !canManageBranches(),
+        run: () => createBranch(row),
+      },
       {
         command: "rewind",
         label: "退回分支",
-        disabled: !native,
-        title: native
-          ? "退回该会话的最后一条用户消息"
-          : "该会话没有原生 Pi 记录，退回不可用；分叉不受影响",
+        disabled: !native || !canManageBranches(),
+        title: !canManageBranches()
+          ? "当前会话不提供分支管理操作"
+          : native
+            ? "退回该会话的最后一条用户消息"
+            : "该会话没有原生 Pi 记录，退回不可用；分叉不受影响",
         run: () => rewindBranch(row),
       },
-      { command: "tree", label: "打开分支树", run: () => openBranchTree(row) },
+      ...(branchTree.available
+        ? [
+            {
+              command: "tree",
+              label: "打开分支树",
+              run: () => openBranchTree(row),
+            },
+          ]
+        : []),
     ],
   });
 }
@@ -1729,7 +1763,7 @@ function applyKeyedRows(items) {
 function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
   const node = $("#messages");
   messageRows = rows ?? [];
-  extensionWorkbench?.update(messageRows, { sessionId: state?.sessionId });
+  extensionWorkbench?.update(messageRows, readPanelContext());
   if (!messageRows.length && (state?.initializing || conversationSwitching)) {
     renderConversationLoading(
       conversationSwitching ? "正在切换会话…" : "正在载入会话…",
@@ -3011,8 +3045,9 @@ const sessionConnection = createSessionConnection({
 });
 /* 会话栏的「打开分支树」：选中内置页，并把目标会话交给面板。 */
 window.addEventListener("pi-desktop:branch-tree", (event) => {
+  if (state?.capabilities?.sessionTree !== true) return;
   if (event.detail?.sessionId) branchTree.setSession(event.detail.sessionId);
-  extensionWorkbench?.update(messageRows, { sessionId: state?.sessionId });
+  extensionWorkbench?.update(messageRows, readPanelContext());
   if (!extensionWorkbench?.select(branchTree.key))
     toast("分支树面板不可用，请刷新页面后重试");
   void branchTree.refresh();
@@ -3097,7 +3132,16 @@ async function refreshOnce(snapshot) {
   }
   const enteringReadOnly =
     !state?.capabilities?.readOnly && snapshot.capabilities?.readOnly;
+  const panelPolicyChanged =
+    state?.sessionCommands !== snapshot.sessionCommands ||
+    ["sessionTree", "tasks", "readOnly", "remote"].some(
+      (key) => state?.capabilities?.[key] !== snapshot.capabilities?.[key],
+    );
   const enteringSession = state?.sessionId !== snapshot.sessionId;
+  if (panelPolicyChanged || enteringSession) {
+    actionEpoch++;
+    closeActionMenu();
+  }
   state = snapshot;
   document.body.classList.toggle(
     "remote-client",
@@ -3347,10 +3391,18 @@ window.addEventListener("online", () => {
   if (live && hostFocused) sessionConnection.resume();
 });
 window.addEventListener("pagehide", () => {
+  branchTree.setActive(false);
+  taskPanel.setActive(false);
   if (live) sessionConnection.pause();
 });
 window.addEventListener("pageshow", (event) => {
-  if (live && hostFocused && event.persisted) sessionConnection.resume();
+  if (!event.persisted) return;
+  branchTree.setActive(true);
+  taskPanel.setActive(true);
+  extensionWorkbench?.update(messageRows, readPanelContext());
+  void branchTree.refresh();
+  void taskPanel.refresh();
+  if (live && hostFocused) sessionConnection.resume();
 });
 window.addEventListener("focus", () => {
   if (live && hostFocused && !document.hidden) sessionConnection.check();
@@ -6327,10 +6379,38 @@ async function handleGoalPanelAction({ kind, value }) {
     }
   }
 }
+function readPanelContext() {
+  const selected = String(
+    state?.host === "durable"
+      ? durableAgentId || state.sessionId || ""
+      : (state?.sessionId ?? ""),
+  );
+  const ready = String(state?.sessionId ?? "") === selected;
+  return {
+    sessionId: selected,
+    capabilities: ready ? (state?.capabilities ?? {}) : {},
+    sessionCommands: ready && state?.sessionCommands === true,
+    // 既有远程网关裁剪 /api/command；不能为了启用面板按钮放宽这条边界。
+    taskCommands:
+      ready &&
+      state?.sessionCommands === true &&
+      state?.capabilities?.remote !== true,
+  };
+}
+function canManageBranches() {
+  const context = readPanelContext();
+  return (
+    context.sessionCommands &&
+    context.capabilities.readOnly !== true &&
+    context.capabilities.remote !== true
+  );
+}
 /* 内置「分支树」页：数据来自 /api/tree，动作复用消息菜单与会话栏的同一条命令路径。 */
 const branchTree = createBranchTreePanel({
-  fetchTree: (id) => api(`/api/tree?id=${encodeURIComponent(id)}`),
-  command: (name, input) => api("/api/command", { command: name, ...input }),
+  fetchTree: (id, options) =>
+    api(`/api/tree?id=${encodeURIComponent(id)}`, undefined, options),
+  command: (name, input) =>
+    api("/api/command", { command: name, ...input }, { selectSession: false }),
   toast: (message) => toast(message),
   switchSession: async (id) => {
     const value = String(id);
@@ -6341,10 +6421,11 @@ const branchTree = createBranchTreePanel({
 });
 /* 内置「任务与子代理」页：读取 /api/tasks，操作复用同一命令路径（取消需要两步确认）。 */
 const taskPanel = createTaskPanel({
-  fetchTasks: (id) => api(`/api/tasks?id=${encodeURIComponent(id)}`),
+  fetchTasks: (id, options) =>
+    api(`/api/tasks?id=${encodeURIComponent(id)}`, undefined, options),
   command: (input) => api("/api/command", input),
   toast: (message) => toast(message),
-  currentSession: () => state?.sessionId ?? "",
+  currentSession: () => readPanelContext().sessionId,
 });
 extensionWorkbench = createExtensionWorkbench({
   root: $("#view-extensions"),

@@ -73,13 +73,13 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 - **退回（rewind）**：上下文重建到退回点——退回点之前的消息仍在上下文里，其后的回合不再出现；原条目仍在存储里（`desk.rewind` 标记记录 `rewindTo`），且不会把被放弃的回答重放进新上下文。退回后继续对话只提交一份回答。
 - **Pi JSONL 一致性**：退回在同一个文件里完成（不新建会话文件），`pi-desktop-rewind` 自定义条目对模型不可见，活跃分支经过退回点、新回合是它的子条目，被放弃的回合仍在文件里但不在活跃分支上——TUI 因此看到与 Desktop 相同的会话树。
 
-扩展工作台的任务与子代理面板同样在 `test/durable-browser-check.mjs` 中断言：空闲 Agent 显示空态、真实 `bash` 在跑任务出现在任务树与在跑工具里、第一步点击只进入待确认状态而任务仍在、第二步取消后面板清空、`等待` 返回时回答已提交，以及切到另一个 Agent 并重新打开面板后看到的是那个 Agent 自己的任务（面板跟随当前会话）。扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：树行、活跃/已放弃标记、唯一 leaf 与徽标、折叠子树后行数减少、刷新后折叠状态保持、再从节点创建分支（切到新会话）与从节点退回后树仍区分被放弃路径。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
+扩展工作台的任务与子代理面板同样在 `test/durable-browser-check.mjs` 中断言：空闲 Agent 显示空态、真实 `bash` 在跑任务出现在任务树与在跑工具里、第一步点击只进入待确认状态而任务仍在、第二步取消后面板清空、`等待` 返回时回答已提交，以及切到另一个 Agent 并重新打开面板后看到的是那个 Agent 自己的任务（面板跟随当前会话）。扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：树行、活跃/已放弃标记、唯一 leaf 与徽标、折叠子树后行数减少、刷新后折叠状态保持、再从节点创建分支（切到新会话）与从节点退回后树仍区分被放弃路径。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、在该单进程注入夹具中，分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
 
 任务管理由 `POST /api/command` 的 `wait`／`cancel` 提供；真实后台任务由 `test/background-fixture.mjs`（`tx.createTask(..., { background: true })`）造出，API 测试断言它在会话空闲时仍存活、取消后台任务返回它的 id 并让它进入终态，浏览器回归在面板上完成同一条路径（后台标记 + 两步确认取消）；任务管理（取消支持单任务、后台任务与该会话当前工作；只读宿主返回 403，远程取消自己的任务属于允许动作）；`test/durable-task-graph.test.mjs` 另外断言按任务 id 取消后任务图清空、子会话不产生孤儿、`wait` 在回答提交后才返回、未知任务 404、后台取消不打断前台运行，并用临时去掉只读门控的方式验证这些断言确实敏感。任务图与子会话读模型由 `GET /api/tasks`（capability `tasks`）提供：`test/durable-task-graph.test.mjs` 用真实子代理夹具断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具进入 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation` 与 `waitingOn` 关系。
 
 分支树读模型由 `GET /api/tree`（capability `sessionTree`）提供：Durable 侧给出分叉来源与会话 id，原生侧给出 parent 链与 leaf；`test/durable-session-tree.test.mjs` 断言分支点、被放弃路径不在活跃路径上、`forkOf` 与 branches 一致、无原生转录时为 `null`，`test/bridge.test.mjs` 断言未声明能力的宿主返回 `supported: false`。
 
-已知限制：退回需要该 Agent 的原生转录（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionContext`）从原生日志取得，Desktop 不自行实现上下文推导。
+已知限制：退回需要该会话自己的原生转录；默认多进程 Desktop 的根与历史分支各自绑定独立转录，并使用同一 worker 的唯一 Durable writer。注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionProjection`）从原生日志取得，Desktop 不自行实现上下文推导。
 
 ## 契约与规范的验证
 
@@ -88,3 +88,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 形状与能力集由一个专门文件守住：`test/boundary-contracts.test.mjs` 断言 Host 的 40 个 capability、资源目标 token 的 409 语义、AgentRuntime 的固定选项与停止预算（8 s SIGTERM／10 s SIGKILL）、pi-sdk 的七条深路径在已安装包里真实存在且导出形状正确、workspace／facade／native／supervisor 的键与命令表，以及上述文档与链接仍然存在。敏感性已实测：临时删掉一个 capability 或重命名一个 workspace 键都会使断言失败，还原后恢复全绿。
 
 代码与文档规范（[代码与文档规范](../guides/code-style.md)）本轮不引入自动检查器：靠评审清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
+
+## 会话只读面板
+
+`test/session-panel-loader.test.mjs` 用有界时钟验证代际、取消读取、节流／补刷与销毁，不依赖真实时间轮询。`test:extensions:browser` 追加真实工作台与两面板的隔离浏览器验收：旧 DOM、晚到响应、A/B/A、背景取消确认、同会话权限变化、折叠／滚动、unsupported 与资源清理。`test:workspace:browser` 追加真实默认 worker 的聊天控制器验收：在新快照返回前立即撤下旧数据，迟到任务读模型／分叉结果不切换会话，能力变化正确隐藏入口，且两个真实在途任务均未被误取消。它也验证默认分支的独立转录、两次退回后 Q1 原点与再次分叉。读模型能力在完整／chat 快照内都由 `test/bridge.test.mjs` 守住，不依赖方法存在性猜测。
