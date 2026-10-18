@@ -30,7 +30,7 @@ workspace 表面：
 
 ```js
 workspace.read(id?)        // async -> { agents: [摘要], recovery, tasks, ... }：
-                           //   agents 是每个会话的摘要；recovery 是本次打开时接管的待恢复任务
+                           //   agents 是每个会话的摘要（含 forkOf 分叉来源）；recovery 是本次打开时接管的待恢复任务
                            //   （无则 null）；tasks 是当前任务图
 workspace.live(id?)        // async -> projectActive(id, { transcript: false })：流式期间的轻量视图
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
@@ -76,6 +76,7 @@ workspace.close()                                    // 释放 Harness、锁与�
 - **`read` 与 `live` 的差别是契约的一部分**：`read` 是全量摘要（供快照），`live` 不带 transcript（供流式期间的增量视图，见 01 性能深化）。
 - **每个会话一份 agent 文档**：模型、思考级别、扩展名、工具名、cwd 存在 Durable 文档里（不是进程内存），因此重启后一致。
 - **恢复是追加式读模型**：打开时记录任务图里的待恢复任务（重启后运行中的任务显示为 `pending`），之后按当前任务图汇报每项是否结束。`recovery` 只在打开时任务图为空的情况下为 `null`；重启后即使待恢复任务已全部结束（`outstanding` 为 0）仍会报告 `count` 与 `resumedAt`，界面只在 `outstanding > 0` 时提示。它不改变 transcript，也不重发已提交且不依赖中断工作的条目。
+- **`fork` 记录来源**：被分叉出的会话在文档里保存 `forkOf { conversationId, entryId }`，因此分支树在重启后仍能读出父子关系（界面读模型见 [分支树契约](session-tree.md)）。
 - **`fork` 产生独立会话**：新会话有独立 `usage` 与独立 transcript；分叉后必须修复原生上下文（`repairNativeContext`），避免继承父会话的旧贡献。
 - **`rewind` 只改上下文起点，不删历史**：`desk.rewind` 是头部标记（`head: "self"`），Durable 内核因此把模型上下文重建为该标记携带的消息（退回点之前的前缀），其后的条目不再进入上下文；原生日志的 leaf 移动由会话模块用 Pi 的 `branch()` 在同一文件里完成。前缀消息由 Host 用 Pi 自己的推导从原生日志取得，命令本身不自行推导上下文。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
@@ -114,5 +115,5 @@ workspace.close()                                    // 释放 Harness、锁与�
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
-- 会话树：`test/durable-session-tree.test.mjs` —— 分叉（独立会话与独立用量）与退回（上下文重建到该点、被放弃的回合仍在存储与原生日志里、JSONL 的 parent id 与 active entry 一致）。
+- 会话树与分叉来源：`test/durable-session-tree.test.mjs` —— 分叉（独立会话与独立用量）与退回（上下文重建到该点、被放弃的回合仍在存储与原生日志里、JSONL 的 parent id 与 active entry 一致）。
 - 定点重启：`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）在回答生成与工具调用两种中断点分别 SIGKILL 宿主，断言恢复可见、回答只提交一次、已提交的生成不被重发、未安全重放的工具不重复执行。

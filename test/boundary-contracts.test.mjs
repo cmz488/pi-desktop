@@ -33,7 +33,7 @@ const slice = (source, from, to) => {
 };
 
 test("the Host interface keeps its declared capability set", () => {
-  assert.equal(HOST_CAPABILITY_KEYS.length, 38);
+  assert.equal(HOST_CAPABILITY_KEYS.length, 39);
   assert.deepEqual([...HOST_CAPABILITY_KEYS].sort(), [
     "abort",
     "auth",
@@ -65,6 +65,7 @@ test("the Host interface keeps its declared capability set", () => {
     "revision",
     "route",
     "sessionCommand",
+    "sessionTree",
     "sessions",
     "settings",
     "settingsChanged",
@@ -78,7 +79,7 @@ test("the Host interface keeps its declared capability set", () => {
     prompt: true,
     gitChanged: 1,
   });
-  assert.equal(Object.keys(capabilities).length, 38);
+  assert.equal(Object.keys(capabilities).length, 39);
   assert.equal(capabilities.prompt, true);
   assert.equal(capabilities.gitChanged, false, "only true counts as enabled");
   assert.equal(capabilities.abort, false);

@@ -32,7 +32,14 @@ const AgentProfile = defineDoc({
   scope: "conversation",
   history: "rewindable",
   fork: "asOf",
-  initial: () => ({ name: "Agent", revision: 1, shellPath: "", shellEnv: {} }),
+  initial: () => ({
+    name: "Agent",
+    revision: 1,
+    shellPath: "",
+    shellEnv: {},
+    // 分叉来源：{ conversationId, entryId }；不是分叉出来的会话为 null。
+    forkOf: null,
+  }),
 });
 const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const text = (value, limit, label) => {
@@ -339,6 +346,7 @@ export async function openAgentWorkspace(options) {
       environmentKeys: Object.keys(profile?.shellEnv ?? {}),
       nativeInitialized: !!profile?.nativeInitialized,
       nativeDefaults: profile?.nativeDefaults !== false,
+      forkOf: profile?.forkOf ?? null,
       idle: !foreground(conversation.id),
     };
   }
@@ -678,6 +686,11 @@ export async function openAgentWorkspace(options) {
           init: async (tx, id) => {
             const profile = await tx.doc(AgentProfile, id);
             profile.name += " · 分支";
+            // 记录分叉来源：分支树的父子关系不依赖原生文件，重启后仍可读。
+            profile.forkOf = {
+              conversationId: selected.id,
+              entryId: input.entryId,
+            };
             profile.revision++;
           },
         },

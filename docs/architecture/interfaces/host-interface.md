@@ -10,7 +10,7 @@
 ## 签名
 
 ```js
-export const HOST_CAPABILITY_KEYS; // readonly string[]，38 个键（见下）
+export const HOST_CAPABILITY_KEYS; // readonly string[]，39 个键（见下）
 export function normalizeHostCapabilities(value = {}); // -> frozen Record<key, boolean>
 export function createHostInterface(input = {}); // -> frozen host
 export function createRequestTarget(snapshot, input = {}, validateTarget); // -> target
@@ -47,14 +47,14 @@ host.require(name, message); // 返回操作函数；没有对应操作时抛 De
 
 **操作名与 capability 对应**（`host.require(name)` 的合法取值）：
 
-`listSessions`、`newSession`、`switchSession`、`sessionCommand`、`packageAction`、`packageUpdates`、`packageRoot`、`skillInventory`、`mcpAction`、`mcpRegistered`、`mcpTools`、`trustProject`、`reload`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`authStart`、`authLogout`、`refreshModels`、`setModel`、`setThinking`、`prompt`、`abort`、`btw`、`requestContext`、`route`。
+`listSessions`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`packageAction`、`packageUpdates`、`packageRoot`、`skillInventory`、`mcpAction`、`mcpRegistered`、`mcpTools`、`trustProject`、`reload`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`authStart`、`authLogout`、`refreshModels`、`setModel`、`setThinking`、`prompt`、`abort`、`btw`、`requestContext`、`route`。
 
-`HOST_CAPABILITY_KEYS`：`sessions`、`remote`、`newSession`、`switchSession`、`sessionCommand`、`canManageSessions`、`packageManagement`、`packageUpdates`、`packageRoot`、`skills`、`mcp`、`interactions`、`reload`、`auth`、`authLogout`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`model`、`thinking`、`trustProject`、`prompt`、`abort`、`btw`、`settings`、`canSaveSettings`、`revision`、`projectTrusted`、`canWrite`、`canEditShared`、`validateTarget`、`canSetThinking`、`canDeferConfiguration`、`settingsChanged`、`gitChanged`、`route`、`requestContext`。
+`HOST_CAPABILITY_KEYS`：`sessions`、`remote`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`canManageSessions`、`packageManagement`、`packageUpdates`、`packageRoot`、`skills`、`mcp`、`interactions`、`reload`、`auth`、`authLogout`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`model`、`thinking`、`trustProject`、`prompt`、`abort`、`btw`、`settings`、`canSaveSettings`、`revision`、`projectTrusted`、`canWrite`、`canEditShared`、`validateTarget`、`canSetThinking`、`canDeferConfiguration`、`settingsChanged`、`gitChanged`、`route`、`requestContext`。
 
 ## 不变量
 
 - **能力是显式声明，不是推断**：bridge 只看 `host.supports(name)` 与 `host.require(name)`；回调存在不会自动开启能力。
-- **`normalizeHostCapabilities` 全量归一**：返回对象包含全部 38 个键，未给出的键为 `false`；输入含未知键抛 `TypeError`。
+- **`normalizeHostCapabilities` 全量归一**：返回对象包含全部 39 个键，未给出的键为 `false`；输入含未知键抛 `TypeError`。
 - **每次调用重新解析操作**：`optionalMethod` 返回的闭包在**调用时**才取 `input[key]`，因此 TUI 复用同一 transport、切换聚焦 slot 后不会把下一个 prompt 发到上一个 Agent。
 - **`host.target()` 由 host 提供**：bridge 不自己创建 target token，也不复制 409 规则。
 - **快照标识在创建时固定**：`createRequestTarget` 捕获的是 `snapshot` **函数本身**，期望身份为创建时的 `sessionId` 与 `cwd`；宿主必须让同一个函数返回最新状态（切换会话时不要整体替换 `snapshot` 引用），否则旧 token 会读到过期身份，409 保护静默失效。

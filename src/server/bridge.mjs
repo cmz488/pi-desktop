@@ -615,6 +615,20 @@ export function createDeskBridge(input) {
       );
       return;
     }
+    if (url.pathname === "/api/tree" && request.method === "GET") {
+      /* 分支树是只读读模型；未声明该能力的宿主报告 unsupported，客户端不显示分支树面板。 */
+      if (!host.capabilities.sessionTree) {
+        json(response, 200, { supported: false });
+        return;
+      }
+      const id =
+        url.searchParams.get("id") ?? url.searchParams.get("sessionId");
+      const value = await host.require("sessionTree")(
+        id === null || id === "" ? undefined : Number(id),
+      );
+      json(response, 200, { supported: true, ...value });
+      return;
+    }
     if (url.pathname === "/api/interactions" && request.method === "GET") {
       json(response, 200, {
         rows: host.capabilities.interactions

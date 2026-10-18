@@ -281,5 +281,60 @@ test(
       !chain.has(abandoned.id),
       "the abandoned turn is off the active native branch",
     );
+
+    // 分支树读模型：Durable 侧的会话 id 与分叉来源、原生 parent 链与 leaf、分支点与被放弃路径。
+    const treeCall = async (id) => {
+      const response = await fetch(`${origin}/api/tree?id=${id}`, {
+        headers: { Origin: origin },
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const tree = await treeCall(agentId);
+    assert.equal(tree.supported, true);
+    assert.equal(tree.sessionId, String(agentId));
+    assert.equal(tree.forkOf, null, "the source session is not a branch");
+    assert.ok(tree.native, "the source session exposes its native chain");
+    assert.equal(tree.native.leafId, tree.leaf);
+    const leafNode = tree.native.nodes.find((row) => row.leaf);
+    assert.ok(leafNode?.active, "the leaf sits on the active path");
+    assert.ok(
+      tree.native.nodes.some((row) => row.branchPoint),
+      "the rewind leaves a branch point",
+    );
+    const rewindNode = tree.native.nodes.find(
+      (row) => row.customType === "pi-desktop-rewind",
+    );
+    assert.ok(rewindNode?.active, "the rewind marker is on the active branch");
+    assert.ok(
+      tree.native.nodes.some((row) => !row.active && row.type === "message"),
+      "the abandoned path stays in the tree but off the active path",
+    );
+    assert.equal(
+      tree.rewinds.at(-1)?.rewindTo,
+      target.entryId,
+      "the tree reports the rewind target",
+    );
+    assert.deepEqual(
+      tree.branches.map((row) => row.id).sort(),
+      [String(forked.id), String(fromFirst.id)].sort(),
+      "every fork shows up as a Durable session",
+    );
+    assert.deepEqual(
+      tree.branches.find((row) => row.id === String(forked.id)).forkOf,
+      { conversationId: agentId, entryId: firstEntry.entryId },
+      "a branch records where it forked from",
+    );
+    const branchTree = await treeCall(forked.id);
+    assert.deepEqual(
+      branchTree.forkOf,
+      { conversationId: agentId, entryId: firstEntry.entryId },
+      "the branch itself reports the same origin",
+    );
+    assert.equal(
+      branchTree.native,
+      null,
+      "a session without a bound native transcript reports no native tree",
+    );
   },
 );

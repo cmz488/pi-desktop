@@ -547,3 +547,35 @@ test("revision probing is explicit about unsupported hosts and cheap when declar
   assert.equal(value.interactions, "2");
   assert.equal(calls, 1);
 });
+
+test("the session tree endpoint is read-only and explicit about unsupported hosts", async (t) => {
+  const plain = await fixture(t);
+  const unsupported = await (await plain.request("/api/tree")).json();
+  assert.equal(unsupported.supported, false);
+
+  let calls = 0;
+  const declared = await fixture(t, {
+    capabilities: { sessionTree: true },
+    sessionTree: (id) => {
+      calls++;
+      return {
+        sessionId: "3",
+        name: "会话",
+        forkOf: null,
+        leaf: "n2",
+        native: { leafId: "n2", nodes: [] },
+        rewinds: [],
+        branches: [],
+        requested: id ?? null,
+      };
+    },
+  });
+  const value = await (await declared.request("/api/tree?id=3")).json();
+  assert.equal(value.supported, true);
+  assert.equal(value.sessionId, "3");
+  assert.equal(value.requested, 3);
+  assert.equal(calls, 1);
+  const withoutId = await (await declared.request("/api/tree")).json();
+  assert.equal(withoutId.requested, null);
+  assert.equal(calls, 2);
+});

@@ -25,6 +25,8 @@
 | [pi-sdk 适配层](pi-sdk-adapter.md)             | `src/agent/pi-sdk.mjs`                                                                                                                 | 入口解析、懒加载、深路径子模块、具名导出校验           | `test/boundary-contracts.test.mjs`（七条深路径存在与导出形状）、`test/pi-sdk.test.mjs`、`test/pi-sdk-lazy.test.mjs`                     |
 | [项目与 Agent 生命周期](lifecycle.md)          | `src/control-plane/supervisor.mjs`、`src/control-plane/server.mjs`、`src/control-plane/pi-sessions.mjs`、`src/config/config-store.mjs` | supervisor 接口、命令表、store revision、归档          | `test/boundary-contracts.test.mjs`（supervisor 键与命令表）、`test/desktop-control-plane.test.mjs`、`test/desktop-pi-sessions.test.mjs` |
 
+| [分支树读模型](session-tree.md) | `src/server/durable-server.mjs`、`src/session/pi-session-storage.mjs`、`src/agent/agent-workspace.mjs` | `GET /api/tree` 与 `sessionTree` capability：分叉来源、原生 parent 链与 leaf、分支点与被放弃路径 | `test/durable-session-tree.test.mjs`、`test/bridge.test.mjs`、`test/boundary-contracts.test.mjs` |
+
 形状测试（`test/boundary-contracts.test.mjs`）只断言接口形状、能力集、深路径与命令表：重命名或删掉其中一项就会失败；行为语义仍由各自的专项测试覆盖。
 
 ## 使用方式

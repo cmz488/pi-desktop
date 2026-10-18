@@ -119,7 +119,7 @@ export async function startDurableDesk(options = {}) {
       return policy.followUpMode;
     },
   };
-  let bridge, workspace, root, stopPromise, transcript;
+  let bridge, workspace, root, stopPromise, transcript, transcriptAgentId;
   const desktopBtw = createDesktopBtw();
   const browser =
     options.embeddedUI && options.agentBrowser !== false
@@ -238,6 +238,7 @@ export async function startDurableDesk(options = {}) {
         workspace,
         id: root.agents[0].id,
       });
+      transcriptAgentId = root.agents[0].id;
       root = await workspace.read();
       if (options.nativeResumePath)
         await resources?.reload(
@@ -409,6 +410,7 @@ export async function startDurableDesk(options = {}) {
         settingsChanged: true,
         gitChanged: false,
         revision: true,
+        sessionTree: true,
         route: true,
         requestContext: true,
       },
@@ -754,6 +756,42 @@ export async function startDurableDesk(options = {}) {
             .map((row) => row.name)
             .sort()
             .join(","),
+        };
+      },
+      /* 分支树读模型：本会话在 Durable 侧的 id 与分叉来源、原生树的 parent 链与 leaf、退回标记
+       * 位置，以及从本会话分叉出去的分支（每个分支都是独立会话）。只读；本宿主未绑定原生转录
+       * 时 native 为 null，界面据此只显示 Durable 侧信息。 */
+      sessionTree: async (id) => {
+        root = await workspace.read();
+        const requested =
+          id === undefined || id === null
+            ? (requestState.getStore()?.active?.id ?? root.agents[0]?.id)
+            : Number(id);
+        if (requested === undefined) throw new DeskError(422, "请选择 Agent");
+        const agent = await workspace.agent(requested);
+        const nativeTree =
+          transcriptAgentId === agent.id ? (transcript?.tree() ?? null) : null;
+        const entries = (await workspace.transcript(agent.id)).entries;
+        return {
+          sessionId: String(agent.id),
+          name: agent.name,
+          forkOf: agent.forkOf ?? null,
+          leaf: nativeTree?.leafId ?? null,
+          native: nativeTree,
+          rewinds: entries
+            .filter((entry) => entry.kind === "desk.rewind")
+            .map((entry) => ({
+              entryId: entry.id,
+              rewindTo: entry.data?.rewindTo ?? null,
+            })),
+          branches: root.agents
+            .filter((row) => row.forkOf?.conversationId === agent.id)
+            .map((row) => ({
+              id: String(row.id),
+              name: row.name,
+              forkOf: row.forkOf,
+              idle: row.idle,
+            })),
         };
       },
       listSessions: async () =>

@@ -496,6 +496,36 @@ export async function openNativeTranscript({
         const byId = new Map(entries.map((entry) => [entry.id, entry]));
         return sdk.buildSessionContext(entries, native, byId).messages;
       },
+      /* 原生会话树的只读投影：只描述结构与位置（父子、活跃路径、leaf、分支点、退回标记），
+       * 不携带模型语义；界面靠它画分支树，退回/分叉仍走 Host 命令。 */
+      tree() {
+        const entries = manager.getEntries();
+        const leafId = manager.getLeafId();
+        const active = new Set(manager.getBranch().map((entry) => entry.id));
+        const childCount = new Map();
+        for (const entry of entries)
+          if (entry.parentId)
+            childCount.set(
+              entry.parentId,
+              (childCount.get(entry.parentId) ?? 0) + 1,
+            );
+        return {
+          leafId: leafId ?? null,
+          nodes: entries.map((entry) => ({
+            id: entry.id,
+            parentId: entry.parentId ?? null,
+            type: entry.type,
+            role: entry.message?.role ?? null,
+            customType: entry.customType ?? null,
+            label: manager.getLabel(entry.id) ?? null,
+            rewindTo: entry.data?.rewindTo ?? null,
+            active: active.has(entry.id),
+            leaf: entry.id === leafId,
+            branchPoint: (childCount.get(entry.id) ?? 0) > 1,
+            children: childCount.get(entry.id) ?? 0,
+          })),
+        };
+      },
       async check() {
         if (failure) throw failure;
         if (resumePath) await assertNoNativeTui(cwd);
