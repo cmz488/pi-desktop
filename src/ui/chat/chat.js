@@ -1,6 +1,7 @@
 import { createComposerModelPicker } from "./composer-model-picker.js";
 import { createWorkspacePanels } from "./workspace-panels.js";
 import { createExtensionWorkbench } from "./extension-workbench.js";
+import { createBranchTreePanel } from "./branch-tree-panel.js";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createSessionConnection, openSessionStream } from "./connection.mjs";
 import { createSessionInventories } from "./session-inventories.mjs";
@@ -3007,6 +3008,15 @@ const sessionConnection = createSessionConnection({
     );
   },
 });
+/* 会话栏的「打开分支树」：选中内置页，并把目标会话交给面板。 */
+window.addEventListener("pi-desktop:branch-tree", (event) => {
+  if (event.detail?.sessionId) branchTree.setSession(event.detail.sessionId);
+  extensionWorkbench?.update(messageRows, { sessionId: state?.sessionId });
+  if (!extensionWorkbench?.select(branchTree.key))
+    toast("分支树面板不可用，请刷新页面后重试");
+  void branchTree.refresh();
+});
+
 const refresh = () => sessionConnection.refresh();
 let usageReturn;
 function closeUsageDetails(restore = false) {
@@ -3234,6 +3244,8 @@ async function refreshOnce(snapshot) {
       running: !agent.idle,
     }));
     renderSessions();
+    // 分支树面板只做节流读取；不在这里直接拉取（见分支树面板的刷新）。
+    void branchTree.refresh();
   } else void refreshSessions().catch((error) => toast(error.message));
 }
 function applyRecord(record) {
@@ -6313,9 +6325,22 @@ async function handleGoalPanelAction({ kind, value }) {
     }
   }
 }
+/* 内置「分支树」页：数据来自 /api/tree，动作复用消息菜单与会话栏的同一条命令路径。 */
+const branchTree = createBranchTreePanel({
+  fetchTree: (id) => api(`/api/tree?id=${encodeURIComponent(id)}`),
+  command: (name, input) => api("/api/command", { command: name, ...input }),
+  toast: (message) => toast(message),
+  switchSession: async (id) => {
+    const value = String(id);
+    chooseDurableAgent(value);
+    if (live) await api("/api/switch-session", { id: value, sessionId: value });
+    await refresh();
+  },
+});
 extensionWorkbench = createExtensionWorkbench({
   root: $("#view-extensions"),
   registry: extensionAdapterRegistry,
+  builtinPages: [branchTree],
   sanitize: (html) => DOMPurify.sanitize(html),
   loadDetails: loadMessageDetails,
   onError: toast,

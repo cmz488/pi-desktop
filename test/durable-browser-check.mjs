@@ -396,6 +396,107 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     ),
     "the sidebar rewind keeps the earlier turns",
   );
+  // 分支树面板：树形层级、活跃/放弃标记、展开折叠、图上创建与退回。
+  const treeRows = "#view-extensions [data-node-id]";
+  await sessionMenu(first);
+  await until("!!document.querySelector('.session-menu')");
+  await evaluate(
+    "document.querySelector('.session-menu [data-command=tree]').click()",
+  );
+  await until("!!document.querySelector('[data-branch-tree]')");
+  await until(`document.querySelectorAll('${treeRows}').length>=3`, {
+    timeoutMs: 15000,
+  });
+  assert(
+    await evaluate(
+      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-active'))`,
+    ),
+    "the tree marks the active path",
+  );
+  assert(
+    await evaluate(
+      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-abandoned'))`,
+    ),
+    "the tree keeps the abandoned path visible",
+  );
+  assert.equal(
+    await evaluate(
+      `document.querySelectorAll('${treeRows}[data-leaf=true]').length`,
+    ),
+    1,
+    "the tree marks exactly one leaf",
+  );
+  assert(
+    await evaluate(
+      `[...document.querySelectorAll('${treeRows} .tag')].some((node)=>node.textContent==='当前位置')`,
+    ),
+    "the leaf carries a badge",
+  );
+  const toggle = "#view-extensions [data-toggle-node]:not(:disabled)";
+  const rowsBefore = await evaluate(
+    `document.querySelectorAll('${treeRows}').length`,
+  );
+  await evaluate(`document.querySelector('${toggle}').click()`);
+  const rowsCollapsed = await evaluate(
+    `document.querySelectorAll('${treeRows}').length`,
+  );
+  assert(rowsCollapsed < rowsBefore, "collapsing hides the subtree");
+  await evaluate(
+    "document.querySelector('#view-extensions [data-branch-refresh]').click()",
+  );
+  await until(
+    `document.querySelectorAll('${treeRows}').length===${rowsCollapsed}`,
+  );
+  assert.equal(
+    await evaluate(`document.querySelectorAll('${treeRows}').length`),
+    rowsCollapsed,
+    "a refresh keeps the collapsed state",
+  );
+  await evaluate(`document.querySelector('${toggle}').click()`);
+  await until(
+    `document.querySelectorAll('${treeRows}').length===${rowsBefore}`,
+  );
+  const sessionsBefore = await evaluate(
+    "document.querySelectorAll('#sessions [data-session-id]').length",
+  );
+  await evaluate(
+    "[...document.querySelectorAll('#view-extensions [data-branch-action=fork]')].find((button)=>!button.disabled).click()",
+  );
+  await until(
+    `document.querySelectorAll('#sessions [data-session-id]').length===${sessionsBefore + 1}`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent.includes('分支')",
+  );
+  await evaluate("document.querySelector('[data-view=workspace]').click()");
+  await until("document.querySelector('#view-workspace').hidden===false");
+  await evaluate(
+    `document.querySelector('[data-session-id="${first}"]').click()`,
+  );
+  await until(
+    "document.querySelector('#session-title').textContent==='Agent A'",
+  );
+  await sessionMenu(first);
+  await until("!!document.querySelector('.session-menu')");
+  await evaluate(
+    "document.querySelector('.session-menu [data-command=tree]').click()",
+  );
+  await until("!!document.querySelector('[data-branch-tree]')");
+  const rowsBeforeRewind = await evaluate(
+    `document.querySelectorAll('${treeRows}').length`,
+  );
+  await evaluate(
+    "[...document.querySelectorAll('#view-extensions [data-branch-action=rewind]')].find((button)=>!button.disabled).click()",
+  );
+  await until(
+    `document.querySelectorAll('${treeRows}').length!==${rowsBeforeRewind}`,
+  );
+  assert(
+    await evaluate(
+      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-abandoned'))`,
+    ),
+    "the tree still distinguishes the abandoned path after a rewind from a node",
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
     `Durable Chromium passed: project creation, independent drafts, background streaming, configuration, 320/360/390px; screenshot ${screenshot}`,

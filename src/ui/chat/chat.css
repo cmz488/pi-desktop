@@ -4982,3 +4982,115 @@ body.dark {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* 分支树面板：缩进 + 左侧连线，区分活跃／已放弃，并标出 leaf、分支点与退回标记。 */
+.branch-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.branch-tree-header,
+.branch-tree-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.branch-tree-header {
+  justify-content: space-between;
+}
+.branch-tree-header small,
+.branch-tree-note,
+.branch-tree-row small {
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+}
+.branch-tree-note {
+  margin: 0;
+}
+.branch-tree-list,
+.branch-tree-branches {
+  display: flex;
+  flex-direction: column;
+}
+.branch-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px calc(6px + var(--branch-depth, 0) * 14px);
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  font-size: var(--text-ui-sm);
+}
+.branch-tree-row:hover {
+  background: var(--hover);
+}
+.branch-tree-row.is-active {
+  border-left-color: var(--accent);
+}
+.branch-tree-row.is-abandoned {
+  border-left-color: var(--border);
+  opacity: 0.62;
+}
+.branch-tree-row.is-leaf {
+  background: var(--accent-surface);
+}
+.branch-tree-toggle {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.branch-tree-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.branch-tree-marker {
+  width: 12px;
+  text-align: center;
+}
+.branch-tree-label {
+  white-space: nowrap;
+}
+.branch-tree-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 38ch;
+}
+.branch-tree-badges,
+.branch-tree-actions {
+  display: flex;
+  gap: 4px;
+}
+.branch-tree-badges {
+  margin-left: auto;
+}
+.branch-tree-actions button {
+  padding: 2px 8px;
+  font-size: var(--text-ui-xs);
+  opacity: 0.72;
+}
+.branch-tree-row:hover .branch-tree-actions button,
+.branch-tree-actions button:focus-visible {
+  opacity: 1;
+}
+.branch-tree-branch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.branch-tree-branch.active {
+  border-color: var(--accent);
+}

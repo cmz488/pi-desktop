@@ -502,6 +502,10 @@ export async function openNativeTranscript({
         const entries = manager.getEntries();
         const leafId = manager.getLeafId();
         const active = new Set(manager.getBranch().map((entry) => entry.id));
+        // Durable 条目 id 与原生条目 id 的对应关系：界面在节点上发起退回／分叉时需要 Durable id。
+        const durableId = new Map(
+          [...mapping].map(([key, value]) => [value, key]),
+        );
         const childCount = new Map();
         for (const entry of entries)
           if (entry.parentId)
@@ -509,6 +513,20 @@ export async function openNativeTranscript({
               entry.parentId,
               (childCount.get(entry.parentId) ?? 0) + 1,
             );
+        /* 节点的可读提示：消息取首段文本，其余为 null。只在投影里做一次，界面不再解析内容。 */
+        const preview = (entry, limit = 80) => {
+          const content = entry.message?.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .map((part) => part.text ?? "")
+                    .join("")
+                    .trim()
+                : "";
+          return text ? text.slice(0, limit) : null;
+        };
         return {
           leafId: leafId ?? null,
           nodes: entries.map((entry) => ({
@@ -518,7 +536,9 @@ export async function openNativeTranscript({
             role: entry.message?.role ?? null,
             customType: entry.customType ?? null,
             label: manager.getLabel(entry.id) ?? null,
+            preview: preview(entry),
             rewindTo: entry.data?.rewindTo ?? null,
+            entryId: durableId.get(entry.id) ?? null,
             active: active.has(entry.id),
             leaf: entry.id === leafId,
             branchPoint: (childCount.get(entry.id) ?? 0) > 1,

@@ -47,6 +47,7 @@ const element = (tag, className, text) => {
 export function createExtensionWorkbench({
   root,
   registry,
+  builtinPages = [],
   sanitize,
   loadDetails,
   onError,
@@ -83,7 +84,13 @@ export function createExtensionWorkbench({
           "span",
           "",
           [
-            page.panel ? "操作面板" : page.state ? "实时状态" : "会话记录",
+            page.builtin
+              ? "内置页"
+              : page.panel
+                ? "操作面板"
+                : page.state
+                  ? "实时状态"
+                  : "会话记录",
             page.view.status,
           ]
             .filter(Boolean)
@@ -162,6 +169,19 @@ export function createExtensionWorkbench({
       ),
     );
     detail.append(meta);
+    if (page.builtin) {
+      const content = element(
+        "div",
+        "extension-page-content branch-tree-content",
+      );
+      detail.append(content);
+      page.builtin.render(content, {
+        sessionId: owner,
+        rerender: renderDetail,
+      });
+      detail.scrollTop = changed ? 0 : previousScroll;
+      return;
+    }
     if (page.panel) {
       const content = element(
         "div",
@@ -259,6 +279,14 @@ export function createExtensionWorkbench({
   );
 
   return {
+    /* 会话栏「打开分支树」需要直接选中内置页；找不到 key 时保持当前选择。 */
+    select(key) {
+      if (!pages.some((row) => row.key === key)) return false;
+      selected = key;
+      renderList();
+      renderDetail();
+      return true;
+    },
     update(rows, { sessionId } = {}) {
       if (owner !== sessionId) {
         owner = sessionId;
@@ -271,6 +299,7 @@ export function createExtensionWorkbench({
         detail.replaceChildren();
       }
       const next = [
+        ...builtinPages,
         ...projectExtensionPanels(registry, rows, { sessionId }),
         ...projectExtensionPages(registry, rows, { sessionId }),
       ];
