@@ -21,9 +21,9 @@ import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
 let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false};
-const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map();
+const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
 const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,conversationId:Number(id),owner:null,background:true,status:'waiting'}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
-const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
+const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
 const root=document.querySelector('#view-extensions');root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,options),command:async(name,input)=>{commands.push({command:name,...input});return{};},toast:text=>notices.push(text),switchSession:async()=>{}});
 const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),command:async input=>{commands.push(input);return{};},toast:text=>notices.push(text),currentSession:()=>owner});
@@ -37,6 +37,7 @@ hold(kind,id){held.add(kind+':'+id);},
 unhold(kind,id){held.delete(kind+':'+id);},
 release(kind,id){held.delete(kind+':'+id);for(const item of pending.splice(0).filter(item=>{if(item.kind===kind&&item.id===id){item.resolve();return false;}return true;}))pending.push(item);},
 unsupported(kind,value){if(value)unsupported.add(kind);else unsupported.delete(kind);},
+tree(id,value){if(value)treeOverrides.set(String(id),value);else treeOverrides.delete(String(id));return branch.refresh({force:true});},
 get pending(){return pending.map(({kind,id,version})=>({kind,id,version}));},
 dispose(){for(const page of pages)page.dispose();}
 };update();
@@ -196,6 +197,24 @@ try {
   );
   await evaluate("panelFixture.update('3');panelFixture.select('tree')");
   await until("!!document.querySelector('[data-node-id=n339]')");
+  assert.equal(
+    await evaluate("!!document.querySelector('svg[data-round-tree]')"),
+    true,
+    "分支树用 SVG 展示对话轮次，不再显示原生日志长链",
+  );
+  assert.equal(
+    await evaluate("document.querySelectorAll('[data-round-node]').length"),
+    10,
+    "默认只显示最近十轮，不删除源会话历史",
+  );
+  await evaluate(
+    "(()=>{const input=document.querySelector('[data-round-limit]');input.value='40';input.dispatchEvent(new Event('change',{bubbles:true}));})()",
+  );
+  assert.equal(
+    await evaluate("document.querySelectorAll('[data-round-node]').length"),
+    40,
+    "显示窗口可配置，扩大窗口恢复旧节点而不是重新制造历史",
+  );
   await evaluate(
     "document.querySelector('.extension-page-detail').scrollTop=200",
   );
@@ -212,7 +231,9 @@ try {
     scroll,
     "补刷不重置滚动位置",
   );
-  await evaluate("document.querySelector('[data-toggle-node=n30]').click()");
+  await evaluate(
+    "document.querySelector('[data-toggle-node=n30]').dispatchEvent(new MouseEvent('click',{bubbles:true}))",
+  );
   assert.equal(
     await evaluate("document.querySelectorAll('[data-node-id]').length"),
     1,
@@ -235,6 +256,77 @@ try {
     "分支树也立即使旧数据失效",
   );
   await evaluate("panelFixture.release('tree','4')");
+  await until("!!document.querySelector('[data-node-id=n439]')");
+  await evaluate(`(() => {
+    const nodes=[];let parentId=null;
+    for(let i=0;i<12;i++)for(const [suffix,role,preview,entryId] of [
+      ['u','user','提问第'+(i+1)+'轮',i*10],
+      ['p','assistant','不应单独成为节点的思考',i*10+1],
+      ['t','toolResult','隐藏的工具日志',i*10+2],
+      ['a','assistant','最终答复第'+(i+1)+'轮',i*10+3],
+      ['c',null,null,null],
+    ]){const id=suffix+i;nodes.push({id,parentId,type:role?'message':'custom',role,preview,entryId,active:true,leaf:id==='c11',children:id==='c11'?0:1});parentId=id;}
+    return panelFixture.tree('4',{supported:true,sessionId:'4',name:'按轮次展示',idle:true,currentEntryId:113,native:{leafId:'c11',nodes},branches:[]});
+  })()`);
+  await until("!!document.querySelector('[data-round-node=u11]')");
+  await evaluate(
+    "(()=>{const input=document.querySelector('[data-round-limit]');input.value='10';input.dispatchEvent(new Event('change',{bubbles:true}));})()",
+  );
+  assert.deepEqual(
+    await evaluate(
+      "[...document.querySelectorAll('[data-round-node]')].map(n=>n.dataset.roundNode)",
+    ),
+    ["u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11"],
+    "一次提问到最终答复只有一个节点，工具、思考与扩展检查点不占名额",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-round-tree]').textContent.includes('隐藏的工具日志')",
+    ),
+    false,
+  );
+  await evaluate(
+    "document.querySelector('[data-round-node=u10]').dispatchEvent(new MouseEvent('click',{bubbles:true}))",
+  );
+  assert.equal(
+    await evaluate("!!document.querySelector('[data-branch-action=fork]')"),
+    false,
+    "历史节点只有退回入口",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-branch-action=rewind]').dataset.entryId",
+    ),
+    "103",
+    "退回目标是整轮最后的已提交答复，不是其中某次工具调用",
+  );
+  await evaluate(
+    "document.querySelector('[data-branch-action=rewind]').click()",
+  );
+  assert.deepEqual(await evaluate("panelFixture.commands.at(-1)"), {
+    command: "rewind",
+    id: 4,
+    entryId: 103,
+    sessionId: "4",
+  });
+  await evaluate(
+    "document.querySelector('[data-round-node=u10]').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))",
+  );
+  assert.equal(
+    await evaluate("document.activeElement.dataset.roundNode"),
+    "u11",
+    "SVG 节点支持键盘选择，焦点跟随视觉顺序",
+  );
+  await evaluate("document.querySelector('[data-branch-action=fork]').click()");
+  assert.deepEqual(await evaluate("panelFixture.commands.at(-1)"), {
+    command: "fork",
+    id: 4,
+    entryId: 113,
+    sessionId: "4",
+    mode: "tail",
+    expectedEntryId: 113,
+  });
+  await evaluate("panelFixture.tree('4',null)");
   await until("!!document.querySelector('[data-node-id=n439]')");
 
   await evaluate(

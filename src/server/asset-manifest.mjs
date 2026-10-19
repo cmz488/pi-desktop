@@ -24,6 +24,7 @@ export const sharedAssets = new Map([
     ["src/ui/shared/extension-workbench.js", javascript],
   ],
   ["/branch-tree-panel.js", ["src/ui/shared/branch-tree-panel.js", javascript]],
+  ["/round-tree-view.js", ["src/ui/shared/round-tree-view.js", javascript]],
   ["/task-panel.js", ["src/ui/shared/task-panel.js", javascript]],
   [
     "/session-panel-loader.js",

@@ -373,9 +373,16 @@ export async function startDurableDesk(options = {}) {
      * 用它解析目标，界面不必自己猜条目，也自然避开被放弃的路径。 */
     const lastMessageEntryId = async (id, { role } = {}) => {
       const state = await workspace.read(id);
-      return (state.active?.messages ?? [])
-        .filter((row) => role === undefined || row.role === role)
-        .at(-1)?.entryId;
+      return (
+        (state.active?.messages ?? [])
+          // 资源状态卡片是 UI 投影，没有 Durable entry，不能遮住真实的分支检查点。
+          .filter(
+            (row) =>
+              Number.isSafeInteger(row.entryId) &&
+              (role === undefined || row.role === role),
+          )
+          .at(-1)?.entryId
+      );
     };
     async function reload() {
       const ctx = target();
@@ -748,12 +755,21 @@ export async function startDurableDesk(options = {}) {
             let payload = input;
             if (
               input.command === "fork" &&
-              !Number.isSafeInteger(input.entryId)
+              (input.mode === "tail" || !Number.isSafeInteger(input.entryId))
             ) {
-              // 会话栏的「创建分支」：目标就是当前活跃上下文的最后一条消息。
               const entryId = await lastMessageEntryId(input.id);
               if (!Number.isSafeInteger(entryId))
                 throw new DeskError(422, "会话还没有可分支的内容");
+              // 只约束界面的当前位置意图；精确 asOf 分叉仍是 SDK 的原生公开能力。
+              if (input.expectedEntryId !== undefined) {
+                if (
+                  !Number.isSafeInteger(input.expectedEntryId) ||
+                  input.expectedEntryId < 0
+                )
+                  throw new DeskError(422, "当前位置无效");
+                if (input.expectedEntryId !== entryId)
+                  throw new DeskError(409, "当前位置已变化，请刷新后创建分支");
+              }
               payload = { ...input, entryId };
             }
             if (input.command === "wait") {
@@ -876,6 +892,8 @@ export async function startDurableDesk(options = {}) {
         return {
           sessionId: String(agent.id),
           name: agent.name,
+          currentEntryId: (await lastMessageEntryId(agent.id)) ?? null,
+          idle: agent.idle,
           // 分叉来源取自 Durable 的会话记录（parent = { conversationId, at }）。
           forkOf: record?.parent
             ? {

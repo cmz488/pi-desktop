@@ -163,6 +163,20 @@ try {
     q1.entryId,
     "第二次退回后可见 Q1 仍带原始消息目标",
   );
+  await chat(
+    `d.querySelector('#messages [data-entry-id="${q1.entryId}"]').dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true,clientX:80,clientY:80}))`,
+  );
+  assert.equal(
+    await chat(
+      "return d.querySelector('.message-menu [data-command=fork]').disabled",
+    ),
+    true,
+    "历史消息只提供退回，不能绕过 SVG 从历史位置直接分支",
+  );
+  await chat("d.querySelector('.message-menu [data-command=rewind]').click()");
+  await chatUntil(
+    "d.querySelector('#messages').textContent.includes('Q1') && !d.querySelector('#messages').textContent.includes('Q2')",
+  );
   await messageCommand(q1.entryId, "fork");
   await chatUntil(
     `d.querySelectorAll('#sessions [data-session-id]').length === 4 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(source)}`,
@@ -175,10 +189,14 @@ try {
     (await snapshot(replayFork)).messages.map((row) => row.text),
     ["Q1"],
   );
-  assert.equal(f.requests.length, 4, "两次退回和再次分叉均不重放模型");
+  assert.equal(
+    f.requests.length,
+    4,
+    "退回历史节点后从当前位置分支，不重放模型",
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
-    "Default Desktop branch browser passed: sidebar/tree forks, native identity, independent usage, unchanged source, switching and Q1/Q2/Q3 → rewind Q2 → Q4 → rewind Q4 → fork Q1.",
+    "Default Desktop branch browser passed: sidebar/tree forks, native identity, independent usage, unchanged source, switching and Q1/Q2/Q3 → rewind Q2 → Q4 → rewind Q4 → rewind Q1 → fork current.",
   );
 } finally {
   driver?.close();

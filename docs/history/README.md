@@ -19,6 +19,7 @@
 - [pi-boundary-deepening-review.md](pi-boundary-deepening-review.md)
 - [readme-before-organization.md](readme-before-organization.md)
 - [remote-access-review.md](remote-access-review.md)
+- [round-tree-host-management.md](round-tree-host-management.md)
 - [session-concurrency-review.md](session-concurrency-review.md)
 - [sessions-git-clipboard-review.md](sessions-git-clipboard-review.md)
 - [source-organization-review.md](source-organization-review.md)

@@ -113,6 +113,47 @@ test(
     assert.equal(typeof target?.entryId, "number");
     const transcriptBefore = (await workspace.transcript(agentId)).entries
       .length;
+    await workspace.persistNative(agentId, [
+      {
+        customType: "fixture.status",
+        data: {
+          piDesktop: { version: 1, kind: "card", title: "资源状态卡片" },
+        },
+      },
+    ]);
+    assert.equal(
+      (await state(agentId)).messages.at(-1).extensionView?.title,
+      "资源状态卡片",
+    );
+    const currentTree = await (
+      await fetch(`${origin}/api/tree?id=${agentId}`, {
+        headers: { Origin: origin },
+      })
+    ).json();
+    assert.equal(
+      currentTree.currentEntryId,
+      third.messages.at(-1).entryId,
+      "树读模型给出当前活跃消息位置，不让 SVG 视图猜测原生日志 leaf",
+    );
+    assert.equal(currentTree.idle, true);
+    await workspace.persistNative(agentId, []);
+    const staleFork = await fetch(`${origin}/api/command`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command: "fork",
+        id: agentId,
+        mode: "tail",
+        expectedEntryId: firstEntry.entryId,
+      }),
+    });
+    assert.equal(
+      staleFork.status,
+      409,
+      "当前位置分支拒绝过期界面捕获的历史位置",
+    );
+    assert.match((await staleFork.json()).error, /当前位置/);
+    assert.deepEqual((await state(agentId)).messages, third.messages);
 
     // 分叉：从第一轮分支出的会话拥有该点之前的上下文与独立用量。
     const forked = await call("/api/command", {

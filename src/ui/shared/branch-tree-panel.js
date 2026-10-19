@@ -1,31 +1,40 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
+import {
+  projectRoundTree,
+  DEFAULT_ROUND_LIMIT,
+  MAX_ROUND_LIMIT,
+} from "./round-tree-view.js";
 
 /**
- * 分支树面板：展示 Host 读模型，动作复用会话命令，不推导或拥有历史。
+ * 分支树面板：以 SVG 展示对话轮次，历史只提供退回，当前位置才提供创建分支。
  *
- * 接口：`createBranchTreePanel` 的 builtin.update/render 接收工作台上下文；
- *   setSession 指定目标，refresh、setActive／dispose 管理读取；见
- *   docs/architecture/interfaces/read-panels.md。
- * 不变量：拥有者与显示目标共同决定请求身份，晚到结果不能覆盖新身份；
- *   同一目标补刷保留折叠和滚动，命令捕获不可变目标，只读不提供管理。
- * 错误：当前读取失败显示，当前命令失败提示；unsupported 隐藏入口，过期结果不导航。
+ * 接口：createBranchTreePanel 的 builtin.update/render 接收工作台上下文；
+ *   setSession、refresh、setActive／dispose 见 docs/architecture/interfaces/read-panels.md。
+ * 不变量：展示聚合不替代 SDK 原生 parent／leaf 与上下文；最近 N 轮仅是视图窗口；
+ *   命令绑定不可变目标，晚到结果不可导航；只读禁用管理，同一目标补刷保留选择与折叠。
+ * 错误：读取／命令失败可见；unsupported 隐藏；过期结果忽略；偏好无法持久化时仍可临时使用。
  */
+const SVG_NS = "http://www.w3.org/2000/svg";
+const LIMIT_KEY = "pi-desktop:branch-round-limit";
+const ROW_HEIGHT = 86;
+const GRAPH_WIDTH = 460;
+const MAX_LANES = 4;
 
-const ROLE_LABELS = {
-  user: "用户消息",
-  assistant: "助手回复",
-  toolResult: "工具结果",
-  custom: "扩展消息",
+const element = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 };
-const KIND_LABELS = {
-  message: "消息",
-  compaction: "压缩",
-  session_info: "会话信息",
-  model_change: "模型切换",
-  thinking_level_change: "思考等级",
-  label: "标记",
-  custom: "扩展条目",
+const vector = (tag, attributes = {}, text) => {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attributes))
+    node.setAttribute(name, String(value));
+  if (text !== undefined) node.textContent = text;
+  return node;
 };
+const clipped = (text, length = 22) =>
+  text.length > length ? `${text.slice(0, length)}…` : text;
 
 export function createBranchTreePanel({
   fetchTree,
@@ -33,21 +42,30 @@ export function createBranchTreePanel({
   toast,
   switchSession,
 }) {
-  let owner = "";
-  let target = "";
-  let container;
-  let repaint;
-  const collapsed = new Set();
+  let owner = "",
+    target = "",
+    selected;
+  let container, repaint;
   let context = {};
+  let limit = DEFAULT_ROUND_LIMIT;
+  // 隐私模式可能禁用偏好存储；它不能阻止只读面板打开。
+  try {
+    const saved = Number(localStorage.getItem(LIMIT_KEY));
+    if (Number.isSafeInteger(saved) && saved >= 1 && saved <= MAX_ROUND_LIMIT)
+      limit = saved;
+  } catch {}
+  const collapsed = new Set();
   const loader = createSessionPanelLoader({
     read: fetchTree,
     onChange: render,
   });
   function updateContext(next) {
-    const previousOwner = owner;
+    if (owner !== String(next.sessionId ?? "")) {
+      selected = undefined;
+      collapsed.clear();
+    }
     context = next;
     owner = String(next.sessionId ?? "");
-    if (owner !== previousOwner) collapsed.clear();
     return loader.setContext({
       owner,
       sessionId: target || owner,
@@ -58,54 +76,279 @@ export function createBranchTreePanel({
         next.capabilities?.remote !== true,
     });
   }
-
-  const nodeLabel = (node) => {
-    if (node.customType === "pi-desktop-rewind")
-      return `退回标记 → 条目 ${node.rewindTo ?? "?"}`;
-    if (node.role) return ROLE_LABELS[node.role] ?? node.role;
-    return KIND_LABELS[node.type] ?? node.type;
-  };
-
-  const element = (tag, className, text) => {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  };
-
+  function choose(id) {
+    selected = id;
+    render();
+    [...(container?.querySelectorAll("[data-round-node]") ?? [])]
+      .find((node) => node.dataset.roundNode === id)
+      ?.focus();
+  }
+  function toggle(id, identity) {
+    if (!loader.isCurrent(identity)) return;
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    render();
+  }
+  function renderGraph(rounds, identity) {
+    const byId = new Map(rounds.map((round) => [round.id, round]));
+    const hidden = (round) => {
+      const seen = new Set();
+      for (
+        let parent = byId.get(round.parentId);
+        parent && !seen.has(parent.id);
+        parent = byId.get(parent.parentId)
+      ) {
+        if (collapsed.has(parent.id)) return true;
+        seen.add(parent.id);
+      }
+      return false;
+    };
+    const visible = rounds.filter((round) => !hidden(round));
+    if (!visible.some((round) => round.id === selected))
+      selected =
+        visible.find((round) => round.current)?.id ?? visible.at(-1)?.id;
+    const svg = vector("svg", {
+      "data-round-tree": "true",
+      role: "tree",
+      "aria-label": "对话轮次与分支路径",
+      viewBox: `0 0 ${GRAPH_WIDTH} ${visible.length * ROW_HEIGHT + 16}`,
+      class: "branch-round-graph",
+    });
+    const positions = new Map();
+    const usedParents = new Set();
+    let nextLane = 1;
+    for (const [index, round] of visible.entries()) {
+      const parent = positions.get(round.parentId);
+      let lane = parent?.lane ?? 0;
+      if (parent && usedParents.has(round.parentId))
+        lane = nextLane++ % MAX_LANES;
+      usedParents.add(round.parentId);
+      positions.set(round.id, {
+        lane,
+        x: 24 + lane * 18,
+        y: 42 + index * ROW_HEIGHT,
+      });
+    }
+    for (const [index, round] of visible.entries()) {
+      const point = positions.get(round.id);
+      const parent = positions.get(round.parentId);
+      if (parent)
+        svg.append(
+          vector("path", {
+            d: `M ${parent.x} ${parent.y} C ${parent.x} ${point.y - 32}, ${point.x} ${point.y - 32}, ${point.x} ${point.y}`,
+            class: `branch-round-edge${round.active ? " is-active" : ""}`,
+            "aria-hidden": "true",
+            fill: "none",
+          }),
+        );
+      svg.append(
+        vector("path", {
+          d: `M ${point.x} ${point.y} H 102`,
+          class: "branch-round-stem",
+          "aria-hidden": "true",
+        }),
+      );
+      const row = vector("g", {
+        "data-round-node": round.id,
+        "data-node-id": round.id,
+        "data-active": String(round.active),
+        "data-current": String(round.current),
+        role: "treeitem",
+        tabindex: round.id === selected ? 0 : -1,
+        "aria-selected": String(round.id === selected),
+        "aria-label": `第 ${round.number} 轮，${round.prompt}${round.current ? "，当前位置" : "，历史节点"}`,
+        class: `branch-round-node${round.id === selected ? " is-selected" : ""}${round.current ? " is-current" : ""}${round.active ? " is-active" : ""}`,
+      });
+      row.append(vector("title", {}, round.prompt));
+      row.append(
+        vector("circle", {
+          cx: point.x,
+          cy: point.y,
+          r: round.current ? 7 : 5,
+          class: "branch-round-dot",
+        }),
+      );
+      row.append(
+        vector("rect", {
+          x: 102,
+          y: point.y - 32,
+          width: 342,
+          height: 66,
+          rx: 12,
+          class: "branch-round-card",
+        }),
+      );
+      row.append(
+        vector(
+          "text",
+          { x: 116, y: point.y - 13, class: "branch-round-number" },
+          `第 ${round.number} 轮${round.current ? " · 当前位置" : round.active ? "" : " · 历史路径"}`,
+        ),
+      );
+      row.append(
+        vector(
+          "text",
+          { x: 116, y: point.y + 7, class: "branch-round-question" },
+          clipped(round.prompt),
+        ),
+      );
+      row.append(
+        vector(
+          "text",
+          { x: 116, y: point.y + 24, class: "branch-round-answer" },
+          clipped(round.answer || "本轮尚无文本回复", 28),
+        ),
+      );
+      row.onclick = () => {
+        if (row.isConnected && loader.isCurrent(identity)) choose(round.id);
+      };
+      const children = rounds.filter((child) => child.parentId === round.id);
+      if (children.length) {
+        row.setAttribute("aria-expanded", String(!collapsed.has(round.id)));
+        const disclosure = vector("g", {
+          "data-toggle-node": round.id,
+          role: "button",
+          "aria-label": collapsed.has(round.id)
+            ? "展开后续轮次"
+            : "折叠后续轮次",
+          "aria-expanded": String(!collapsed.has(round.id)),
+          class: "branch-round-disclosure",
+        });
+        disclosure.append(
+          vector("rect", {
+            x: 410,
+            y: point.y - 28,
+            width: 30,
+            height: 28,
+            rx: 6,
+          }),
+        );
+        disclosure.append(
+          vector("path", {
+            d: collapsed.has(round.id)
+              ? `M 419 ${point.y - 14} H 431 M 425 ${point.y - 20} V ${point.y - 8}`
+              : `M 419 ${point.y - 14} H 431`,
+            fill: "none",
+          }),
+        );
+        disclosure.onclick = (event) => {
+          event.stopPropagation();
+          if (disclosure.isConnected) toggle(round.id, identity);
+        };
+        row.append(disclosure);
+      }
+      row.onkeydown = (event) => {
+        if (!loader.isCurrent(identity)) return;
+        const keys = [
+          "ArrowDown",
+          "ArrowUp",
+          "Home",
+          "End",
+          "Enter",
+          " ",
+          "ArrowLeft",
+          "ArrowRight",
+        ];
+        if (!keys.includes(event.key)) return;
+        event.preventDefault();
+        if (
+          event.key === "ArrowLeft" &&
+          children.length &&
+          !collapsed.has(round.id)
+        )
+          toggle(round.id, identity);
+        else if (event.key === "ArrowRight" && collapsed.has(round.id))
+          toggle(round.id, identity);
+        else if (event.key === "ArrowLeft" && byId.has(round.parentId))
+          choose(round.parentId);
+        else {
+          const next =
+            event.key === "Home"
+              ? visible[0]
+              : event.key === "End"
+                ? visible.at(-1)
+                : event.key === "ArrowDown"
+                  ? visible[index + 1]
+                  : event.key === "ArrowUp"
+                    ? visible[index - 1]
+                    : round;
+          if (next) choose(next.id);
+        }
+      };
+      svg.append(row);
+    }
+    return {
+      svg,
+      selectedRound: visible.find((round) => round.id === selected),
+    };
+  }
   function render() {
-    // 工作台可能在刷新时重建内容节点；容器已脱离文档时请它重画，而不是写进旧节点。
     if (!container?.isConnected || !loader.available) {
       if (container) repaint?.();
       return;
     }
+    const focused = container.contains(document.activeElement)
+      ? document.activeElement.dataset.roundNode
+      : undefined;
     const { data, error, loading } = loader;
-    const sessionId = loader.context.sessionId;
     const identity = loader.capture();
+    const sessionId = loader.context.sessionId;
+    const view = projectRoundTree(data, limit);
     const root = element("div", "branch-tree");
     root.dataset.branchTree = sessionId;
     const header = element("header", "branch-tree-header");
-    header.append(
-      element("strong", "", data?.name ?? "分支树"),
+    const heading = element("div", "branch-tree-heading");
+    heading.append(
+      element("strong", "", data?.name ?? "对话分支"),
       element(
         "small",
         "",
-        data?.native
-          ? `${data.native.nodes.length} 个条目 · ${data.branches?.length ?? 0} 个分支`
-          : data
-            ? `${data.branches?.length ?? 0} 个分支 · 无原生会话记录`
-            : loading
-              ? "读取中…"
-              : "",
+        data
+          ? `${view.total} 轮对话 · ${data.branches?.length ?? 0} 个分支`
+          : loading
+            ? "读取中…"
+            : "",
       ),
     );
+    header.append(heading);
+    const settings = element("label", "branch-round-limit", "最近");
+    const input = element("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = String(MAX_ROUND_LIMIT);
+    input.value = String(limit);
+    input.dataset.roundLimit = "true";
+    input.setAttribute("aria-label", "分支树显示的最近对话轮数");
+    input.onchange = () => {
+      if (!input.isConnected || !loader.isCurrent(identity)) return;
+      const value = Number(input.value);
+      if (
+        !Number.isSafeInteger(value) ||
+        value < 1 ||
+        value > MAX_ROUND_LIMIT
+      ) {
+        input.value = String(limit);
+        toast(`显示轮数须为 1 到 ${MAX_ROUND_LIMIT} 的整数`);
+        return;
+      }
+      limit = value;
+      try {
+        localStorage.setItem(LIMIT_KEY, String(limit));
+      } catch {
+        toast("无法保存显示偏好，本次页面仍使用所选轮数");
+      }
+      render();
+    };
+    settings.append(input, document.createTextNode("轮"));
+    header.append(settings);
     const refresh = element("button", "outline-button", "刷新");
     refresh.type = "button";
     refresh.dataset.branchRefresh = "true";
-    refresh.onclick = () => void loader.refresh({ force: true });
+    refresh.onclick = () => {
+      if (refresh.isConnected) void loader.refresh({ force: true });
+    };
     header.append(refresh);
     root.append(header);
-    // 从会话栏的「打开分支树」进来时可能看的是另一个会话；显式标出并提供跟随当前会话的出口。
     if (target && owner && target !== owner) {
       const note = element("div", "branch-tree-target");
       note.append(element("small", "", `正在显示会话 ${data?.name ?? target}`));
@@ -115,6 +358,7 @@ export function createBranchTreePanel({
       follow.onclick = () => {
         if (!follow.isConnected || !loader.isCurrent(identity)) return;
         target = "";
+        selected = undefined;
         collapsed.clear();
         updateContext(context);
         render();
@@ -124,132 +368,84 @@ export function createBranchTreePanel({
       root.append(note);
     }
     if (error) root.append(element("p", "branch-tree-note", error));
-    if (data && !data.native)
+    if (view.rounds.length) {
       root.append(
         element(
           "p",
           "branch-tree-note",
-          loader.canManage
-            ? "该会话没有绑定原生 Pi 记录：创建分支仍可用，退回需要原生记录。"
-            : "该会话没有绑定原生 Pi 记录，当前仅可查看分支信息。",
+          `显示 ${view.rounds.length} 轮；选择历史节点可退回，只有当前位置可创建分支。原始记录不会被删除。`,
         ),
       );
-
-    const nodes = data?.native?.nodes ?? [];
-    if (nodes.length) {
-      const byId = new Map(nodes.map((node) => [node.id, node]));
-      const parentOf = (node) =>
-        node.parentId ? byId.get(node.parentId) : undefined;
-      const hidden = (node) => {
-        for (let up = parentOf(node); up; up = parentOf(up))
-          if (collapsed.has(up.id)) return true;
-        return false;
-      };
-      const depth = (node) => {
-        let value = 0;
-        for (let up = parentOf(node); up; up = parentOf(up)) value++;
-        return value;
-      };
-      const list = element("div", "branch-tree-list");
-      for (const node of nodes) {
-        if (hidden(node)) continue;
-        const row = element(
-          "div",
-          `branch-tree-row${node.active ? " is-active" : " is-abandoned"}${node.leaf ? " is-leaf" : ""}${node.branchPoint ? " is-branch-point" : ""}`,
-        );
-        row.dataset.nodeId = node.id;
-        row.dataset.active = String(!!node.active);
-        row.dataset.leaf = String(!!node.leaf);
-        row.style.setProperty("--branch-depth", String(depth(node)));
-        const toggle = element(
-          "button",
-          "branch-tree-toggle",
-          node.children ? (collapsed.has(node.id) ? "▸" : "▾") : "·",
-        );
-        toggle.type = "button";
-        toggle.dataset.toggleNode = node.id;
-        toggle.setAttribute("aria-expanded", String(!collapsed.has(node.id)));
-        toggle.setAttribute(
-          "aria-label",
-          collapsed.has(node.id) ? "展开子条目" : "折叠子条目",
-        );
-        toggle.disabled = !node.children;
-        toggle.onclick = () => {
-          if (!toggle.isConnected || !loader.isCurrent(identity)) return;
-          if (collapsed.has(node.id)) collapsed.delete(node.id);
-          else collapsed.add(node.id);
-          render();
-        };
-        row.append(
-          toggle,
+      const { svg, selectedRound } = renderGraph(view.rounds, identity);
+      const canvas = element("div", "branch-round-canvas");
+      canvas.append(svg);
+      root.append(canvas);
+      if (selectedRound) {
+        const detail = element("section", "branch-round-detail");
+        detail.append(
           element(
-            "span",
-            "branch-tree-marker",
-            node.leaf ? "●" : node.active ? "○" : "·",
+            "strong",
+            "",
+            `第 ${selectedRound.number} 轮${selectedRound.current ? " · 当前位置" : ""}`,
           ),
-          element("span", "branch-tree-label", nodeLabel(node)),
         );
-        if (node.preview) row.append(element("small", "", node.preview));
-        const badges = element("span", "branch-tree-badges");
-        if (node.leaf) badges.append(element("span", "tag", "当前位置"));
-        if (node.branchPoint) badges.append(element("span", "tag", "分支点"));
-        if (!node.active) badges.append(element("span", "tag", "已放弃"));
-        if (node.rewindTo !== null && node.rewindTo !== undefined)
-          badges.append(element("span", "tag", "退回点"));
-        row.append(badges);
-        const actions = element("span", "branch-tree-actions");
-        if (typeof node.entryId === "number") {
-          const fork = element("button", "outline-button", "创建分支");
-          fork.type = "button";
-          fork.dataset.branchAction = "fork";
-          fork.dataset.entryId = String(node.entryId);
-          fork.disabled = !loader.canManage;
-          if (fork.disabled)
-            fork.title = "当前会话只提供分支树查看，不提供管理操作";
-          fork.onclick = () => {
-            if (fork.isConnected) void act("fork", node.entryId, identity);
-          };
-          const rewind = element("button", "outline-button", "退回");
-          rewind.type = "button";
-          rewind.dataset.branchAction = "rewind";
-          rewind.dataset.entryId = String(node.entryId);
-          rewind.disabled = !loader.canManage;
-          if (rewind.disabled)
-            rewind.title = "当前会话只提供分支树查看，不提供管理操作";
-          rewind.onclick = () => {
-            if (rewind.isConnected) void act("rewind", node.entryId, identity);
-          };
-          actions.append(fork, rewind);
-        } else {
-          actions.append(
-            element("small", "branch-tree-note", "该条目尚未写入会话存储"),
+        detail.append(
+          element("p", "branch-round-prompt", selectedRound.prompt),
+        );
+        if (selectedRound.answer)
+          detail.append(
+            element("p", "branch-round-reply", selectedRound.answer),
           );
-        }
-        row.append(actions);
-        list.append(row);
+        const kind = selectedRound.current ? "fork" : "rewind";
+        const action = element(
+          "button",
+          "outline-button",
+          kind === "fork" ? "从当前位置创建分支" : "退回到这一轮",
+        );
+        action.type = "button";
+        action.dataset.branchAction = kind;
+        action.dataset.entryId = String(selectedRound.entryId ?? "");
+        action.disabled =
+          !loader.canManage ||
+          !Number.isSafeInteger(selectedRound.entryId) ||
+          (kind === "rewind" && data?.idle === false);
+        action.title = !loader.canManage
+          ? "当前会话只提供分支树查看，不提供管理操作"
+          : kind === "rewind" && data?.idle === false
+            ? "请等待当前任务结束"
+            : !Number.isSafeInteger(selectedRound.entryId)
+              ? "这一轮尚未映射到会话记录"
+              : "";
+        action.onclick = () => {
+          if (action.isConnected)
+            void act(kind, selectedRound.entryId, identity);
+        };
+        detail.append(action);
+        root.append(detail);
       }
-      root.append(list);
-    } else if (data?.native) {
-      root.append(element("p", "branch-tree-note", "还没有可显示的条目。"));
-    }
-
+    } else if (data)
+      root.append(
+        element(
+          "p",
+          "branch-tree-note",
+          data.native
+            ? "还没有可显示的对话轮次。"
+            : "该会话没有原生树记录，可从会话栏创建当前位置的分支。",
+        ),
+      );
     if (data?.branches?.length) {
       const branches = element("section", "branch-tree-branches");
-      branches.append(element("strong", "", "分支会话"));
+      branches.append(element("strong", "", "独立分支会话"));
       for (const branch of data.branches) {
         const row = element(
           "button",
-          `branch-tree-branch${branch.id === sessionId ? " active" : ""}`,
+          `branch-tree-branch${String(branch.id) === sessionId ? " active" : ""}`,
         );
         row.type = "button";
         row.dataset.branchSession = branch.id;
         row.append(
           element("span", "", branch.name),
-          element(
-            "small",
-            "",
-            `${branch.idle ? "空闲" : "运行中"} · 来自条目 ${branch.forkOf?.entryId ?? "?"}`,
-          ),
+          element("small", "", branch.idle ? "空闲" : "运行中"),
         );
         row.onclick = () => {
           if (row.isConnected && loader.isCurrent(identity))
@@ -260,19 +456,23 @@ export function createBranchTreePanel({
       root.append(branches);
     }
     container.replaceChildren(root);
+    if (focused)
+      [...root.querySelectorAll("[data-round-node]")]
+        .find((node) => node.dataset.roundNode === focused)
+        ?.focus({ preventScroll: true });
   }
-
   async function act(kind, entryId, identity) {
     if (!loader.isCurrent(identity) || !loader.canManage) return;
     const input = Object.freeze({
       id: Number(identity.sessionId),
       entryId,
       sessionId: identity.sessionId,
+      ...(kind === "fork" ? { mode: "tail", expectedEntryId: entryId } : {}),
     });
     try {
       const result = await command(kind, input);
       if (!loader.isCurrent(identity)) return;
-      toast(kind === "fork" ? "已从该条目创建分支" : "已退回到该条目");
+      toast(kind === "fork" ? "已从当前位置创建分支" : "已退回到所选轮次");
       if (kind === "fork" && result?.sessionId)
         await switchSession(result.sessionId);
       else await loader.refresh({ force: true });
@@ -280,18 +480,17 @@ export function createBranchTreePanel({
       if (loader.isCurrent(identity)) toast(failure.message);
     }
   }
-
   return {
     key: "desktop:branch-tree",
-    view: { label: "Desktop", title: "分支树", status: "" },
+    view: { label: "Desktop", title: "对话分支", status: "" },
     get available() {
       return loader.available;
     },
-    /* 显示别的会话时不能混用页面当前会话的命令目标。 */
     setSession(id) {
       const next = String(id ?? "");
       if (next === target) return;
       target = next;
+      selected = undefined;
       collapsed.clear();
       updateContext(context);
       render();

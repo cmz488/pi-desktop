@@ -1200,8 +1200,8 @@ function activityProgress(value, key) {
     )
     .join("")}</span>`;
 }
-/* 消息动作：右键消息可退回或分叉。退回让模型上下文从该消息之后重建；分叉从该消息创建
- * 独立会话。两者都由 Host 写回 Pi JSONL 会话树，因此 TUI 看到同一棵树。 */
+/* 历史消息只提供退回，当前位置才提供分支入口；实际上下文与分支仍由原生 API 处理。
+ * 当前位置意图附带检查点，防止菜单打开后新消息使它悄悄变成历史分叉。 */
 /* 通用动作菜单：消息菜单与会话栏菜单共用同一套打开/定位/关闭逻辑，避免第二套实现。
  * 键盘可达：触发元素（消息右键、会话行 Shift+F10／菜单键）打开后焦点落到第一项，
  * ArrowUp／ArrowDown 在项间移动，Esc 或点击外部关闭。 */
@@ -1281,6 +1281,10 @@ async function runAgentCommand(command, input, message) {
 function openMessageMenu(x, y, entryId) {
   const sessionId = readPanelContext().sessionId;
   const target = Object.freeze({ id: Number(sessionId), entryId, sessionId });
+  const currentEntryId = (state?.messages ?? [])
+    .filter((row) => Number.isSafeInteger(row.entryId))
+    .at(-1)?.entryId;
+  const atCurrent = currentEntryId === entryId;
   openActionMenu({
     x,
     y,
@@ -1296,9 +1300,21 @@ function openMessageMenu(x, y, entryId) {
       },
       {
         command: "fork",
-        label: "从此消息分叉",
-        disabled: !canManageBranches(),
-        run: () => runAgentCommand("fork", target, "已分叉"),
+        label: "从当前位置创建分支",
+        disabled: !canManageBranches() || !atCurrent,
+        title: atCurrent
+          ? "从当前活跃上下文创建独立分支"
+          : "请先退回到该历史位置，再创建分支",
+        run: () =>
+          runAgentCommand(
+            "fork",
+            {
+              ...target,
+              mode: "tail",
+              expectedEntryId: currentEntryId,
+            },
+            "已创建分支",
+          ),
       },
     ],
   });
