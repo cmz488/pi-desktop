@@ -2,6 +2,7 @@
 
 本目录保留研究、版本与环境证据；当前规范从 [文献入口](../README.md) 查阅。
 
+- [branch-session-archive-research.md](branch-session-archive-research.md)：分支 JSONL 路径、整族归档与独立分支接入边界。
 - [herta-workspace.md](herta-workspace.md)：固定源码、校验、设计取舍与扩展工作台边界。
 - [layout-settings-research.md](layout-settings-research.md)
 - [package-catalog-research.md](package-catalog-research.md)
