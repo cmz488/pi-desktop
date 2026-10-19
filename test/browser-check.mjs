@@ -1596,6 +1596,10 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     "2.0.0",
   );
   await evaluate(`document.querySelector('[data-filter="all"]').click()`);
+  // 对话框关闭早于资源清单补刷，必须观察原生安装结果真正进入界面。
+  await wait(
+    `document.querySelector('#plugin-grid').textContent.includes('已安装 v2.0.0')&&document.querySelector('#reload-notice').checkVisibility()`,
+  );
   assert(
     await evaluate(
       `document.querySelector('#plugin-grid').textContent.includes('已安装 v2.0.0')&&document.querySelector('#reload-notice').checkVisibility()`,
