@@ -21,17 +21,18 @@ import {createExtensionWorkbench} from '/extension-workbench.js';
 import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
-let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false};
+let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={};
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
 const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,name:'后台资料整理',conversationId:Number(id),owner:null,background:true,status:'waiting'}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
 const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
 const root=document.querySelector('#view-extensions');root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,options),command:async(name,input)=>{commands.push({command:name,...input});return{};},toast:text=>notices.push(text),switchSession:async()=>{}});
-const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),command:async input=>{commands.push(input);return{};},toast:text=>notices.push(text),currentSession:()=>owner});
+const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),command:async input=>{commands.push(input);return taskReply;},toast:text=>notices.push(text),currentSession:()=>owner});
 const pages=[branch,task];
 const controller=createExtensionWorkbench({root,registry:createExtensionAdapterRegistry(),builtinPages:pages,sanitize:text=>text,onCount:count=>root.dataset.count=count,onError:text=>notices.push(text)});
 const update=()=>controller.update([],{sessionId:owner,capabilities,sessionCommands:true});
 window.panelFixture={requests,commands,notices,pages,
+reply(value){taskReply=value;},
 update(id,caps=capabilities){owner=String(id);capabilities=caps;update();for(const page of pages)void page.refresh();},
 select(kind){return controller.select(kind==='tasks'?task.key:branch.key);},
 hold(kind,id){held.add(kind+':'+id);},
@@ -92,6 +93,70 @@ try {
   await until("!!window.panelFixture");
   await evaluate("panelFixture.select('tasks')");
   await until("!!document.querySelector('[data-task-id=\"101\"]')");
+  for (const [status, label] of [
+    ["completed", "任务已完成"],
+    ["failed", "任务失败"],
+    ["aborted", "任务已中止"],
+    ["orphaned", "任务无法恢复"],
+    ["faulted", "任务执行故障"],
+  ]) {
+    const before = await evaluate("panelFixture.notices.length");
+    await evaluate(
+      `panelFixture.reply({task:{id:101,status:'terminal',outcome:{status:${JSON.stringify(status)}}}});document.querySelector('[data-task-action="wait:101"]').click()`,
+    );
+    await until(`panelFixture.notices.length>${before}`);
+    assert.equal(
+      await evaluate("panelFixture.notices.at(-1)"),
+      label,
+      `工作台按原生 ${status} 回执提示，不把等待成功冒充执行成功`,
+    );
+  }
+  await evaluate(
+    "panelFixture.reply({abortStatus:'terminal',task:{id:101,status:'terminal',outcome:{status:'completed'}}});document.querySelector('[data-task-action=\"cancel:101\"]').click()",
+  );
+  await until(
+    "!!document.querySelector('[data-task-action=\"cancel:101\"][data-armed=true]')",
+  );
+  const cancelledNotices = await evaluate("panelFixture.notices.length");
+  await evaluate(
+    "document.querySelector('[data-task-action=\"cancel:101\"][data-armed=true]').click()",
+  );
+  await until(`panelFixture.notices.length>${cancelledNotices}`);
+  assert.equal(
+    await evaluate("panelFixture.notices.at(-1)"),
+    "任务已完成",
+    "已完成任务的中止回执不能改写成已中止",
+  );
+  await evaluate(
+    "panelFixture.reply({abortStatus:'marked',task:{id:101,status:'completing',outcome:null}});document.querySelector('[data-task-action=\"cancel:101\"]').click()",
+  );
+  await until(
+    "!!document.querySelector('[data-task-action=\"cancel:101\"][data-armed=true]')",
+  );
+  const markedNotices = await evaluate("panelFixture.notices.length");
+  await evaluate(
+    "document.querySelector('[data-task-action=\"cancel:101\"][data-armed=true]').click()",
+  );
+  await until(`panelFixture.notices.length>${markedNotices}`);
+  assert.equal(
+    await evaluate("panelFixture.notices.at(-1)"),
+    "已提交任务中止请求，尚未确认终态",
+    "原生 marked 回执不冒充 aborted",
+  );
+  await evaluate("panelFixture.reply({})");
+  const legacyNotices = await evaluate("panelFixture.notices.length");
+  await evaluate(
+    "document.querySelector('[data-task-action=\"wait:101\"]').click()",
+  );
+  await until(`panelFixture.notices.length>${legacyNotices}`);
+  assert.equal(
+    await evaluate("panelFixture.notices.at(-1)"),
+    "任务已结束",
+    "旧宿主没有原生终态字段时不补造完成结果",
+  );
+  await evaluate(
+    "panelFixture.reply({});panelFixture.commands.length=0;panelFixture.notices.length=0",
+  );
   if (process.env.PI_SIDEBAR_UI_SCREENSHOTS)
     await mkdir(process.env.PI_SIDEBAR_UI_SCREENSHOTS, { recursive: true });
   for (const theme of ["light", "dark"]) {

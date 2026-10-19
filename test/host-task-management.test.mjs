@@ -217,6 +217,12 @@ test(
     assert.equal(waited.status, 200);
     assert.equal(waited.body.task?.status, "terminal", "回执保留原生任务终态");
     assert.equal(waited.body.task.id, launched.body.taskId);
+    for (const key of ["input", "checkpoint", "state"])
+      assert.equal(
+        Object.hasOwn(waited.body.task, key),
+        false,
+        "命令回执不泄露原始任务输入或检查点",
+      );
     assert.equal(waited.body.task.outcome.status, "completed");
     assert.equal(
       waited.body.task.outcome.result.answer,

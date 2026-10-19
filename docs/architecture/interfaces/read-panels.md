@@ -27,6 +27,7 @@ loader.dispose();
 createBranchTreePanel({ fetchTree, command, toast, switchSession });
 createTaskPanel({ fetchTasks, command, toast, currentSession? });
 // 任务 command(input, { signal }?)：wait 必须遵守 signal；非 wait 不增加生命周期选项。
+// 兼容旧空回执；原生单任务回执可含 task／abortStatus，提示语只读取原生终态。
 // 返回 key/view/available、builtin.update/render、refresh、setActive、dispose；
 // 分支树另有 setSession(id)，空字符串表示跟随当前会话。
 ```
@@ -40,6 +41,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - 取消首次点击只确认；再次点击的确认必须属于同一代会话／任务目标，4 秒后撤销。旧 DOM 回调不可发送命令；命令已开始后的过期结果不可提示成功、刷新另一会话或改选分支。
 - 同一身份补刷不清折叠、滚动与轮次按钮焦点；改变 owner／目标可重置其阅读状态。分支动作在每个节点标签内，当前位置只有 fork，历史只有 rewind；hover 与 focus 同等可用，触屏无需 hover。内置页入口是紧凑页签，不冒充“会话记录”；其他扩展页类型与生命周期不变。
 - 任务面板以紧凑执行行区分名称、原生状态、标识／拥有者与操作；中止仍需两次独立点击，“确认中止”只缩短文案，不授予第二次执行资格。工具／子会话已有内容时不重复空任务说明。
+- 工作台与 Host 共用原生回执提示：completed／failed／aborted／orphaned／faulted 分开显示，`marked` 只提示已请求中止、尚未确认终态。没有新回执字段的旧宿主保留泛化提示，不补造终态；任何提示仍受同一身份令牌校验。
 - 这是 UI 缓存与 affordance，不代替后端会话归属、权限、目标 409 或远程路径裁剪。
 
 ## 能力与权限
@@ -75,6 +77,6 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁；另验证细指针真实 hover、Tab／Enter、按钮焦点、busy 互斥、390px、触屏、减少动态效果及 SVG 实际底色上的双主题 4.5:1 文本对比度。
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
 - `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
-- `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task、跨发起表单目标管理、关闭／快速重开失效、聚合更新保留键盘焦点。
+- `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task、跨发起表单目标管理、关闭／快速重开失效、聚合更新保留键盘焦点；原生完成提示、回答条目编号，以及发起回执晚到不得抢走用户随后选择的任务。
 - `test/bridge.test.mjs`：完整／chat 快照都只按 Host 声明返回读能力。
 - `npm run test:extensions:browser`、`test:workspace:browser` 纳入上述浏览器证据；静态 module 统一经资产清单发布并由 `package:check` 验证。

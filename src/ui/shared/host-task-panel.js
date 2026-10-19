@@ -65,7 +65,8 @@ export function createHostTaskPanel({ root, request }) {
     detailSignature;
   let alive = true,
     initialized = false,
-    launching = false;
+    launching = false,
+    inspectionEpoch = 0;
   const visible = () => alive && root.open && !document.hidden;
   const notify = (message) => {
     const note = $("[data-host-action-status]");
@@ -466,6 +467,12 @@ export function createHostTaskPanel({ root, request }) {
       ),
       element("small", "", `原生任务 #${data.task.id}`),
     );
+    const answerEntryId = data.task.outcome?.result?.answerEntryId;
+    if (Number.isSafeInteger(answerEntryId) && answerEntryId >= 0) {
+      const reference = element("small", "", `原生回答 #${answerEntryId}`);
+      reference.dataset.hostAnswerReference = String(answerEntryId);
+      heading.append(reference);
+    }
     content.append(heading, element("p", "host-task-detail-label", label));
     if (data.task.outcome?.error)
       content.append(
@@ -588,6 +595,7 @@ export function createHostTaskPanel({ root, request }) {
     if (attempt?.signature !== signature)
       attempt = { signature, requestId: crypto.randomUUID() };
     const controller = new AbortController();
+    const epoch = inspectionEpoch;
     launchRequest = controller;
     launching = true;
     updateParents();
@@ -603,15 +611,18 @@ export function createHostTaskPanel({ root, request }) {
       $("[data-host-launch-status]").textContent =
         `${worker.name} · 已创建原生任务 #${result.taskId}，尚不表示执行完成。`;
       attempt = undefined;
-      inspection = Object.freeze({
-        agentId: worker.agentId,
-        generation: worker.generation,
-        conversationId: parent.id,
-        taskId: result.taskId,
-        label: `${worker.name} / ${payload.name || "子代理"} · #${result.taskId}`,
-      });
-      cancelDetail();
-      $("[data-host-detail]").textContent = "读取原生回执…";
+      // 发起不拥有用户后续的查看选择，晚到回执只更新自己的准入提示。
+      if (inspectionEpoch === epoch) {
+        inspection = Object.freeze({
+          agentId: worker.agentId,
+          generation: worker.generation,
+          conversationId: parent.id,
+          taskId: result.taskId,
+          label: `${worker.name} / ${payload.name || "子代理"} · #${result.taskId}`,
+        });
+        cancelDetail();
+        $("[data-host-detail]").textContent = "读取原生回执…";
+      }
       await monitor.refresh({ force: true });
     } catch (error) {
       if (visible() && !controller.signal.aborted)
@@ -642,6 +653,7 @@ export function createHostTaskPanel({ root, request }) {
   };
   field("conversation").onchange = updateParents;
   $("[data-host-inspect]").onchange = () => {
+    inspectionEpoch++;
     cancelDetail();
     inspection = inspectionTargets.get($("[data-host-inspect]").value);
     $("[data-host-detail]").textContent = "读取原生回执…";

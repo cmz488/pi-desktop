@@ -18,6 +18,25 @@ const STATUS_LABELS = {
   waiting: "等待",
   completing: "收尾",
 };
+const OUTCOME_NOTICES = {
+  completed: "任务已完成",
+  failed: "任务失败",
+  aborted: "任务已中止",
+  orphaned: "任务无法恢复",
+  faulted: "任务执行故障",
+};
+const receiptNotice = (result, fallback) => {
+  const outcome =
+    result?.task?.status === "terminal" ? result.task.outcome?.status : null;
+  return (
+    OUTCOME_NOTICES[outcome] ??
+    (result?.abortStatus === "marked"
+      ? "已提交任务中止请求，尚未确认终态"
+      : result?.abortStatus === "terminal"
+        ? "任务此前已结束，请查看原生结果"
+        : fallback)
+  );
+};
 const KIND_LABELS = {
   "pi.generation": "模型回合",
   "pi.tool": "工具调用",
@@ -168,7 +187,7 @@ export function createTaskPanel({
       waiting = undefined;
       clearTimeout(entry.timer);
       render();
-      toast("任务已结束");
+      toast(receiptNotice(result, "任务已结束"));
       await loader.refresh({ force: true });
       return result;
     } catch (failure) {
@@ -189,7 +208,7 @@ export function createTaskPanel({
     try {
       const result = await command(Object.freeze(input));
       if (!loader.isCurrent(identity)) return result;
-      toast(message);
+      toast(receiptNotice(result, message));
       await loader.refresh({ force: true });
       return result;
     } catch (failure) {

@@ -144,6 +144,35 @@ try {
     bTask.id,
     "受控两个 SQLite 产生同号任务，必须靠 Agent 命名空间隔离",
   );
+  await evaluate(`(() => {
+    window.__nativeTaskFetch=window.fetch;
+    window.fetch=async (...args)=>{
+      const response=await window.__nativeTaskFetch(...args);
+      if(typeof args[1]?.body==='string' && JSON.parse(args[1].body).name==='晚到回执') {
+        window.__lateLaunchHeld=true;
+        await new Promise(resolve=>window.__releaseLateLaunch=resolve);
+      }
+      return response;
+    };
+  })()`);
+  await selectAgent(a.id);
+  await evaluate(
+    "(() => {const form=document.querySelector('#host-subagent-form');form.elements.name.value='晚到回执';form.elements.prompt.value='LATE_REPLY';form.requestSubmit();})()",
+  );
+  await until("window.__lateLaunchHeld===true");
+  await selectAgent(b.id);
+  const bInspection = `${b.id}:0:${bTask.scopeId}:${bTask.id}`;
+  await evaluate(
+    `(() => {const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${a.id}:0:${aTask.scopeId}:${aTask.id}`)};select.dispatchEvent(new Event('change'));select.value=${JSON.stringify(bInspection)};select.dispatchEvent(new Event('change'));window.__releaseLateLaunch();window.fetch=window.__nativeTaskFetch;})()`,
+  );
+  await until(
+    "!document.querySelector('[data-host-spawn]').disabled && document.querySelector('[data-host-launch-status]').textContent.includes('Host A · 已创建')",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('[data-host-inspect]').value"),
+    bInspection,
+    "发起 A 的回执晚到不能抢走用户随后选择的 B 原生任务",
+  );
   await evaluate(
     "document.querySelector('[data-host-toggle-compose]').click()",
   );
@@ -353,10 +382,27 @@ try {
     true,
     "任务图 ETag 不变也必须读取新的原生过程片段",
   );
+  await evaluate(
+    `${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').click()`,
+  );
+  await until(`${row(b.id, bTask.id)}?.querySelector('[data-waiting="true"]')`);
   streamDone.resolve();
+  await until(
+    "document.querySelector('[data-host-action-status]').textContent==='任务已完成'",
+  );
   await until(
     "document.querySelector('[data-host-detail]').textContent.includes('已完成') && document.querySelector('[data-host-detail]').textContent.includes('HOST_B')",
     { timeoutMs: 15000 },
+  );
+  const nativeAnswer = (await f.call(detailPath)).task.outcome.result
+    .answerEntryId;
+  assert.ok(Number.isSafeInteger(nativeAnswer));
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-host-detail]').textContent.includes(${JSON.stringify("原生回答 #")}+${nativeAnswer})`,
+    ),
+    true,
+    "详情标明 submission 指向的原生回答，不把当前上下文冒充任务结果",
   );
   await until(
     `!!document.querySelector('#host-subagent-form option[value="${ro.id}:0"]')`,
@@ -368,13 +414,14 @@ try {
     true,
   );
   for (const mode of ["light", "dark"]) {
+    // 主题属于共享设置；仅改属性会被子页面的 storage 通知还原。
     await evaluate(
-      `(async()=>{document.documentElement.dataset.theme=${JSON.stringify(mode)};for(const frame of document.querySelectorAll('iframe'))frame.contentDocument?.body?.classList.toggle('dark',${mode === "dark"});getComputedStyle(document.body).color;await Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));})()`,
+      `(async()=>{localStorage.setItem('pi-web-theme',${JSON.stringify(mode)});window.dispatchEvent(new Event('storage'));for(const frame of document.querySelectorAll('iframe'))frame.contentDocument?.body?.classList.toggle('dark',${mode === "dark"});getComputedStyle(document.body).color;await Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));})()`,
     );
     const contrast = await evaluate(
-      `(${measureSurfaceContrast.toString()})(['.host-task-heading h2','[data-host-status]','.host-task-worker h3','.task-panel-label','.task-panel-meta','.task-panel-state','.host-task-result-heading strong','.host-task-message > small','.host-task-message-body','[data-host-toggle-compose]'])`,
+      `(${measureSurfaceContrast.toString()})(['.host-task-heading h2','[data-host-status]','.host-task-worker h3','.task-panel-label','.task-panel-meta','.task-panel-state','.host-task-result-heading strong','[data-host-answer-reference]','.host-task-message > small','.host-task-message-body','[data-host-toggle-compose]'])`,
     );
-    assert.equal(contrast.length, 10);
+    assert.equal(contrast.length, 11);
     assert.ok(
       contrast.every((item) => item.ratio >= 4.5),
       `${mode} Host 任务文字对比度：${JSON.stringify(contrast)}`,
