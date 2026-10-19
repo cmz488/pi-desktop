@@ -69,6 +69,29 @@ try {
       `return (await d.defaultView.fetch(${JSON.stringify(`/agents/${actor.id}/api/state`)} + '?sessionId=' + ${JSON.stringify(id)}, {cache:'no-store'})).json()`,
     );
   const before = await snapshot(source);
+  await evaluate(
+    `document.querySelector('#projects [data-agent-id="${actor.id}"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}))`,
+  );
+  await until("!document.querySelector('#agent-menu').hidden");
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('#agent-menu [role=menuitem]')].some(button=>button.textContent==='创建分支')",
+    ),
+    true,
+    "左侧工作区会话右键菜单提供创建分支",
+  );
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+  });
   const openMenu = (id) =>
     chat(
       `const row = d.querySelector('[data-session-id="${id}"]'); row.dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true, clientX:90, clientY:120}));`,
@@ -84,6 +107,17 @@ try {
     "return d.querySelector('#sessions .session.active').dataset.sessionId",
   );
   assert.equal((await snapshot(branch)).stats.tokens.total, 0);
+  const leftBranch = `#projects [data-project-id="${project.id}"] button[data-agent-id="${actor.id}"][data-conversation-id="${branch}"]`;
+  await until(`!!document.querySelector(${JSON.stringify(leftBranch)})`, {
+    timeoutMs: 4000,
+  });
+  assert.equal(
+    await evaluate(
+      `document.querySelector(${JSON.stringify(leftBranch)}).classList.contains('selected')`,
+    ),
+    true,
+    "分支创建后在原工作区侧栏出现，并与内层当前会话同步选中",
+  );
   await openMenu(branch);
   assert.equal(
     await chat(
@@ -193,6 +227,109 @@ try {
     f.requests.length,
     4,
     "退回历史节点后从当前位置分支，不重放模型",
+  );
+  await evaluate(
+    `document.querySelector('#projects [data-agent-id="${actor.id}"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}))`,
+  );
+  await evaluate(
+    "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
+  );
+  await chatUntil(
+    `d.querySelectorAll('#sessions [data-session-id]').length === 5 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(replayFork)}`,
+  );
+  const sidebarFork = await chat(
+    "return d.querySelector('#sessions .session.active').dataset.sessionId",
+  );
+  const sidebarTree = await f.call(
+    `/agents/${actor.id}/api/tree?id=${sidebarFork}`,
+  );
+  assert.equal(
+    sidebarTree.forkOf.conversationId,
+    Number(source),
+    "外层会话菜单固定原会话，不能偷用 iframe 当前选中的分支",
+  );
+  assert.deepEqual(
+    (await snapshot(sidebarFork)).messages.map((row) => row.text),
+    ["Q1"],
+  );
+  assert.equal(
+    f.requests.length,
+    4,
+    "外层右键创建的是继承当前位置的新会话，不重放模型",
+  );
+  await call("Page.reload");
+  await chatUntil(
+    `d.querySelector('#connection-status')?.textContent === 'Pi 已连接' && d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(sidebarFork)}`,
+  );
+  await until(`!!document.querySelector(${JSON.stringify(leftBranch)})`);
+  await evaluate(
+    `document.querySelector('#projects button[data-agent-id="${actor.id}"]:not([data-conversation-id])').click()`,
+  );
+  await chatUntil(
+    `d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(source)}`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(leftBranch)}).click()`,
+  );
+  await chatUntil(
+    `d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(branch)}`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(leftBranch)}).focus()`,
+  );
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "F10",
+    code: "F10",
+    modifiers: 8,
+    windowsVirtualKeyCode: 121,
+  });
+  await until("!document.querySelector('#agent-menu').hidden");
+  assert.equal(
+    await evaluate("document.querySelectorAll('#agent-menu button').length"),
+    1,
+    "历史分支菜单不把进程归档、人格或重命名误施加给外层 Agent",
+  );
+  await evaluate(
+    "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
+  );
+  await chatUntil(
+    `d.querySelectorAll('#sessions [data-session-id]').length === 6 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(branch)}`,
+  );
+  const branchMenuFork = await chat(
+    "return d.querySelector('#sessions .session.active').dataset.sessionId",
+  );
+  assert.equal(
+    (await f.call(`/agents/${actor.id}/api/tree?id=${branchMenuFork}`)).forkOf
+      .conversationId,
+    Number(branch),
+  );
+  assert.deepEqual(
+    (await snapshot(branchMenuFork)).messages.map((row) => row.text),
+    ["Q1", "answer: Q1"],
+  );
+  assert.equal(f.requests.length, 4);
+  await until(
+    `document.querySelector('#projects button[data-conversation-id="${branchMenuFork}"]')?.classList.contains('selected')`,
+  );
+  await f.command("agent.stop", { id: actor.id });
+  await until(
+    "document.querySelector('#process-count').textContent === '0 个进程'",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('#agent-boot').hidden"),
+    false,
+    "已停止的分支不能冒充根会话的只读转录，应先启动原 worker",
+  );
+  await call("Page.reload");
+  await until("!document.querySelector('#agent-boot').hidden");
+  await evaluate("document.querySelector('#agent-boot-start').click()");
+  await chatUntil(
+    `d.querySelector('#connection-status')?.textContent === 'Pi 已连接' && d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(branchMenuFork)}`,
+  );
+  assert.deepEqual(
+    (await snapshot(branchMenuFork)).messages.map((row) => row.text),
+    ["Q1", "answer: Q1"],
   );
   assert.deepEqual(driver.errors, []);
   console.log(

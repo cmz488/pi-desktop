@@ -42,6 +42,17 @@ const frames = new Map();
 const collapsedProjects = {};
 const expandedSessions = new Set();
 const pendingDrafts = new Map();
+const selectedConversations = new Map();
+let navigationEpoch = 0;
+const conversationKey = (agent) =>
+  `pi-desktop:conversation:${agent.id}:${agent.generation ?? 0}`;
+function rememberConversation(agent, id) {
+  selectedConversations.set(agent.id, {
+    generation: agent.generation ?? 0,
+    id,
+  });
+  sessionStorage.setItem(conversationKey(agent), String(id));
+}
 let storedView;
 try {
   storedView = JSON.parse(
@@ -88,7 +99,7 @@ function visibleAgents(projectId, all = false) {
         (sidebarView.archived === "show" ||
           !!row.archived === (sidebarView.archived === "only")) &&
         (!search ||
-          `${row.name} ${state.projects.find((project) => project.id === row.projectId)?.name ?? ""}`
+          `${row.name} ${(row.branches ?? []).map((branch) => branch.name).join(" ")} ${state.projects.find((project) => project.id === row.projectId)?.name ?? ""}`
             .toLowerCase()
             .includes(search)),
     ),
@@ -205,6 +216,18 @@ function updateMenu() {
     } else if (!reason && !projectMenu) {
       if (["starting", "stopping"].includes(target.status))
         reason = "会话进程正在启动或停止，请稍候";
+      else if (
+        command === "conversation.fork" &&
+        (target.status !== "running" ||
+          target.projectId === null ||
+          document.body.classList.contains("remote-client"))
+      )
+        reason =
+          target.projectId === null
+            ? "只读会话不能创建分支"
+            : target.status !== "running"
+              ? "请先启动会话"
+              : "远程连接不提供创建分支";
       else if (command === "agent.archive" && active)
         reason = "请先停止会话进程再归档";
       else if (command === "agent.archive" && target.archived)
@@ -223,7 +246,11 @@ function updateMenu() {
         reason = "此会话尚未归档";
     }
     item.disabled = !!reason;
-    item.title = reason;
+    item.title =
+      reason ||
+      (command === "conversation.fork"
+        ? "创建继承此会话当前上下文的新会话，原会话保持不变"
+        : "");
   }
 }
 function confirmRemoveProject(project) {
@@ -266,38 +293,70 @@ function openProjectMenu(project, event, anchor) {
   menu.style.top = `${Math.max(8, Math.min(event.clientY || rect.bottom, innerHeight - menu.offsetHeight - 8))}px`;
   menu.firstChild.focus();
 }
-function openMenu(id, event, anchor) {
+function openMenu(id, event, anchor, conversationId) {
   const agent = state.agents.find((row) => row.id === id);
   if (!agent) return;
+  const branch =
+    conversationId === undefined
+      ? undefined
+      : agent.branches?.find((row) => row.id === conversationId);
+  if (conversationId !== undefined && !branch) return;
   menuTarget = id;
   menuAnchor = anchor;
   const menu = $("#agent-menu");
   const entries = agent.archived
     ? [["恢复会话", "agent.restore"]]
-    : agent.source === "pi"
-      ? [["在 Desktop 中继续", "agent.resume"]]
-      : agent.status === "running"
-        ? [
-            ["停止进程", "agent.stop"],
-            ["重启进程", "agent.restart"],
-          ]
-        : [
-            ["启动会话", "agent.start"],
-            ...(agent.nativeSessionAvailable
-              ? [["接管 Pi 最新记录", "agent.resume"]]
-              : []),
-          ];
+    : branch
+      ? [["创建分支", "conversation.fork"]]
+      : agent.source === "pi"
+        ? [["在 Desktop 中继续", "agent.resume"]]
+        : agent.status === "running"
+          ? [
+              ["停止进程", "agent.stop"],
+              ["重启进程", "agent.restart"],
+            ]
+          : [
+              ["启动会话", "agent.start"],
+              ...(agent.nativeSessionAvailable
+                ? [["接管 Pi 最新记录", "agent.resume"]]
+                : []),
+            ];
+  if (!branch && !agent.archived && agent.source !== "pi")
+    entries.unshift(["创建分支", "conversation.fork"]);
   menu.replaceChildren(
     ...entries.map(([label, command]) => {
-      const node = button(label, () => {
+      const node = button(label, async () => {
         closeMenu();
-        void action(command, id);
+        const epoch = navigationEpoch;
+        const result = await action(
+          command,
+          id,
+          command === "conversation.fork"
+            ? {
+                generation: agent.generation ?? 0,
+                ...(branch ? { conversationId: branch.id } : {}),
+              }
+            : {},
+        );
+        if (
+          command === "conversation.fork" &&
+          result?.sessionId &&
+          epoch === navigationEpoch &&
+          state.agents.some(
+            (row) =>
+              row.id === id &&
+              row.status === "running" &&
+              !row.archived &&
+              (row.generation ?? 0) === (agent.generation ?? 0),
+          )
+        )
+          selectAgent(agent, Number(result.sessionId));
       });
       node.dataset.command = command;
       node.setAttribute("role", "menuitem");
       return node;
     }),
-    ...(!agent.archived
+    ...(!branch && !agent.archived
       ? [
           button(agent.pinned ? "取消置顶" : "置顶", () => {
             closeMenu();
@@ -313,7 +372,7 @@ function openMenu(id, event, anchor) {
           }),
         ]
       : []),
-    ...(sidebarView.orderBy === "manual"
+    ...(!branch && sidebarView.orderBy === "manual"
       ? [
           button("上移", () => {
             closeMenu();
@@ -325,7 +384,7 @@ function openMenu(id, event, anchor) {
           }),
         ]
       : []),
-    ...(agent.source === "pi"
+    ...(branch || agent.source === "pi"
       ? []
       : [
           button("人格设置", () => {
@@ -465,6 +524,23 @@ window.addEventListener("message", (event) => {
     );
     pendingDrafts.delete(selected);
   }
+  if (event.data?.type === "pi-desktop:session-changed") {
+    const conversationId = event.data.conversationId;
+    const agent = state.agents.find((row) => row.id === frame.dataset.owner);
+    if (!agent || !Number.isSafeInteger(conversationId) || conversationId < 0)
+      return;
+    const prior = selectedConversations.get(agent.id);
+    if (
+      prior?.id !== conversationId ||
+      prior.generation !== (agent.generation ?? 0)
+    ) {
+      rememberConversation(agent, conversationId);
+      navigationEpoch++;
+      render();
+    }
+    void refresh().catch((error) => notice(error.message));
+    return;
+  }
   if (event.data?.type === "pi-desktop:project")
     void createInProject(event.data.projectId, event.data.draft);
   if (event.data?.type === "pi-desktop:resume")
@@ -557,61 +633,90 @@ function button(text, action, className = "") {
   node.addEventListener("click", action);
   return node;
 }
-function selectAgent(agent) {
+function selectAgent(agent, conversationId) {
   closeMenu();
+  navigationEpoch++;
+  if (conversationId !== undefined) rememberConversation(agent, conversationId);
   selected = agent.id;
   tab = "workspace";
   localStorage.setItem("pi-desktop-selected", selected);
   navigation(false);
   render();
   sendView();
+  if (conversationId !== undefined)
+    frames.get(frameKey)?.contentWindow?.postMessage(
+      {
+        type: "pi-desktop:select-conversation",
+        conversationId,
+        generation: agent.generation ?? 0,
+      },
+      location.origin,
+    );
 }
-function agentButton(agent) {
+function agentButton(agent, branch) {
+  const conversation = selectedConversations.get(agent.id);
+  const current =
+    conversation?.generation === (agent.generation ?? 0)
+      ? conversation.id
+      : undefined;
+  const active =
+    agent.id === selected &&
+    (branch
+      ? branch.id === current
+      : !(agent.branches ?? []).some((row) => row.id === current));
   const item = button(
     "",
-    () => selectAgent(agent),
-    "agent" + (agent.id === selected ? " selected" : ""),
+    () => selectAgent(agent, branch?.id ?? agent.rootConversationId),
+    "agent" + (active ? " selected" : ""),
   );
   const dot = document.createElement("i");
   dot.className = "dot " + agent.status;
   const label = document.createElement("span");
-  label.textContent = agent.name;
-  if (agent.pinned) {
+  label.textContent = branch?.name ?? agent.name;
+  if (branch) {
+    dot.className = "session-branch-icon";
+    dot.innerHTML = dshIcon("branch");
+  }
+  if (agent.pinned && !branch) {
     dot.className = "session-pin";
     dot.innerHTML = dshIcon("pin");
   }
   const status = document.createElement("small");
-  status.textContent =
-    pendingOperation?.id === agent.id
+  status.textContent = branch
+    ? `#${branch.id}`
+    : pendingOperation?.id === agent.id
       ? pendingOperation.label
       : ["running", "history"].includes(agent.status)
         ? relativeTime(agent.updatedAt ?? agent.createdAt)
         : statuses[agent.status];
   if (
+    !branch &&
     pendingOperation?.id !== agent.id &&
     ["running", "history"].includes(agent.status) &&
     (agent.updatedAt ?? agent.createdAt)
   )
     status.dataset.updatedAt = agent.updatedAt ?? agent.createdAt;
   item.append(dot, label, status);
-  item.title =
-    agent.error ??
-    `${agent.name} · ${statuses[agent.status]}${agent.pid ? " · PID " + agent.pid : ""} · 右键管理`;
+  item.title = branch
+    ? `${branch.name} · 从会话 #${branch.forkOf.conversationId} 创建的分支 · 右键管理`
+    : (agent.error ??
+      `${agent.name} · ${statuses[agent.status]}${agent.pid ? " · PID " + agent.pid : ""} · 右键管理`);
   item.dataset.agentId = agent.id;
+  if (branch) item.dataset.conversationId = String(branch.id);
   item.setAttribute("aria-busy", String(pendingOperation?.id === agent.id));
   const row = document.createElement("div");
-  row.className = "agent-row";
+  row.className = "agent-row" + (branch ? " native-branch" : "");
   const more = iconButton(
     "more",
-    (event) => openMenu(agent.id, event, more),
+    (event) => openMenu(agent.id, event, more, branch?.id),
     "agent-more",
   );
-  more.setAttribute("aria-label", `管理 ${agent.name}`);
+  more.setAttribute("aria-label", `管理 ${branch?.name ?? agent.name}`);
   more.setAttribute("aria-haspopup", "menu");
   row.append(item, more);
   row.addEventListener("contextmenu", (event) => {
     event.preventDefault();
-    openMenu(agent.id, event, item);
+    openMenu(agent.id, event, item, branch?.id);
   });
   row.addEventListener("keydown", (event) => {
     if (
@@ -619,10 +724,19 @@ function agentButton(agent) {
       (event.shiftKey && event.key === "F10")
     ) {
       event.preventDefault();
-      openMenu(agent.id, event, item);
+      openMenu(agent.id, event, item, branch?.id);
     }
   });
-  return row;
+  if (branch || !agent.branches?.length) return row;
+  const family = document.createElement("div");
+  family.className = "agent-family";
+  family.setAttribute("role", "group");
+  family.setAttribute("aria-label", `${agent.name} 的会话`);
+  family.append(
+    row,
+    ...agent.branches.map((member) => agentButton(agent, member)),
+  );
+  return family;
 }
 function render() {
   if (selected) sessionStorage.setItem("pi-desktop-selected-agent", selected);
@@ -632,6 +746,7 @@ function render() {
     state.projects,
     state.agents,
     selected,
+    [...selectedConversations],
     collapsedProjects,
     search,
     sidebarView,
@@ -642,7 +757,7 @@ function render() {
     navigationSignature = signature;
     $("#conversations").replaceChildren(
       ...(sidebarView.groupBy === "flat" ? [] : visibleAgents(null)).map(
-        agentButton,
+        (agent) => agentButton(agent),
       ),
     );
     const nodes = state.projects
@@ -738,7 +853,7 @@ function render() {
       });
     if (sidebarView.groupBy === "flat")
       $("#projects").replaceChildren(
-        ...visibleAgents(null, true).map(agentButton),
+        ...visibleAgents(null, true).map((agent) => agentButton(agent)),
       );
     else {
       $("#projects").replaceChildren(...nodes);
@@ -759,9 +874,15 @@ function render() {
     `${state.agents.filter((row) => row.status === "running").length} 个进程`;
   const agent = state.agents.find((row) => row.id === selected);
   const project = state.projects.find((row) => row.id === agent?.projectId);
+  const conversation = agent && selectedConversations.get(agent.id);
+  const branch =
+    conversation?.generation === (agent?.generation ?? 0)
+      ? agent?.branches?.find((row) => row.id === conversation.id)
+      : undefined;
   const running =
     ["running", "history"].includes(agent?.status) ||
-    (agent?.historyAvailable &&
+    (!branch &&
+      agent?.historyAvailable &&
       ["workspace", "extensions"].includes(tab) &&
       !["starting", "stopping"].includes(agent?.status));
   document.body.classList.toggle("runtime-active", !!running);
@@ -804,22 +925,27 @@ function render() {
       ? agent.status === "stopping"
         ? `正在停止 ${agent.name}`
         : `正在启动 ${agent.name}`
-      : agent.name;
+      : (branch?.name ?? agent.name);
     $("#agent-boot-note").textContent = transitioning
       ? "正在连接 Pi 会话、工具与扩展…"
       : (agent.error ??
-        `${statuses[agent.status] ?? "未运行"} · 启动后继续此 Agent 的会话与后台任务`);
+        (branch
+          ? "此分支由原 Agent 的同一进程承载，启动后继续此分支。"
+          : `${statuses[agent.status] ?? "未运行"} · 启动后继续此 Agent 的会话与后台任务`));
     $("#agent-boot-start").hidden =
       transitioning || !["stopped", "failed"].includes(agent.status);
     $("#agent-boot-start").disabled = pending;
   }
-  const key = running ? `${agent.id}:${agent.pid ?? "history"}` : "";
+  const key = running
+    ? `${agent.id}:${agent.generation ?? 0}:${agent.pid ?? "history"}`
+    : "";
   for (const [id, frame] of frames) {
-    const [owner, pid] = id.split(":");
+    const [owner, generation, pid] = id.split(":");
     if (
       !state.agents.some(
         (row) =>
           row.id === owner &&
+          String(row.generation ?? 0) === generation &&
           String(row.pid ?? "history") === pid &&
           (["running", "history"].includes(row.status) ||
             row.historyAvailable) &&
@@ -846,7 +972,8 @@ function render() {
       const frame = document.createElement("iframe");
       frame.title = `${agent.name} · Pi Agent 工作空间`;
       frame.dataset.owner = agent.id;
-      frame.src = `/agents/${agent.id}/?embed=1#${tab}`;
+      const conversation = selectedConversations.get(agent.id);
+      frame.src = `/agents/${agent.id}/?embed=1${conversation?.generation === (agent.generation ?? 0) ? `&agent=${conversation.id}` : ""}#${tab}`;
       frame.addEventListener("load", () => {
         sendConfiguration(frame);
         if (frame.dataset.owner === selected) sendView();
@@ -887,6 +1014,17 @@ async function refresh() {
     );
     if (generation !== refreshGeneration) return;
     state = value;
+    for (const agent of state.agents) {
+      if (
+        selectedConversations.get(agent.id)?.generation ===
+        (agent.generation ?? 0)
+      )
+        continue;
+      selectedConversations.delete(agent.id);
+      const stored = sessionStorage.getItem(conversationKey(agent));
+      if (/^\d+$/.test(stored ?? "") && Number.isSafeInteger(Number(stored)))
+        rememberConversation(agent, Number(stored));
+    }
     if (
       !state.agents.some(
         (row) =>
@@ -956,14 +1094,16 @@ async function action(command, id = selected, patch = {}) {
         "agent.start": "正在启动…",
         "agent.restart": "正在重启…",
         "agent.resume": "正在接管…",
+        "conversation.fork": "正在创建分支…",
       }[command] ?? "正在处理…",
   };
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), 20000);
-  let succeeded = false;
+  let succeeded = false,
+    result;
   render();
   try {
-    await api(
+    result = await api(
       "/api/workspace/command",
       {
         command,
@@ -986,7 +1126,7 @@ async function action(command, id = selected, patch = {}) {
     await refresh().catch((error) => notice(error.message));
     render();
   }
-  return succeeded;
+  return command === "conversation.fork" ? result : succeeded;
 }
 async function newChat(projectId = null, draft) {
   if (pending) return;

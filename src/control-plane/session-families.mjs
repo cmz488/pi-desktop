@@ -52,10 +52,11 @@ export function createSessionFamilies({ store, directory }) {
         throw error;
       }
       if (!manifest) return;
-      const members = mergeNativeSessions(
-        agent.nativeSessions,
-        manifest.members,
-      );
+      const published = manifest.members.map((row) => ({
+        ...row,
+        generation: agent.generation ?? 0,
+      }));
+      const members = mergeNativeSessions(agent.nativeSessions, published);
       if (
         JSON.stringify(members) === JSON.stringify(agent.nativeSessions) &&
         !agent.familyError
@@ -64,10 +65,7 @@ export function createSessionFamilies({ store, directory }) {
       await store.update({}, (data) => {
         const row = data.agents.find((entry) => entry.id === agent.id);
         if (!row) return;
-        row.nativeSessions = mergeNativeSessions(
-          row.nativeSessions,
-          manifest.members,
-        );
+        row.nativeSessions = mergeNativeSessions(row.nativeSessions, published);
         delete row.familyError;
       });
     },

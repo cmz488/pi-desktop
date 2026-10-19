@@ -18,7 +18,7 @@ import { openNativeTranscript } from "./pi-session-storage.mjs";
 const FAMILY_FILE = "native-sessions.json";
 const FAMILY_VERSION = 1;
 
-/** @returns {Promise<{ version: number, root: number, members: { id: number, path: string, nativeSessionId: string }[] } | null>} */
+/** @returns {Promise<{ version: number, root: number, members: { id: number, path: string, nativeSessionId: string, name?: string, forkOf?: { conversationId: number, entryId: number } | null }[] } | null>} */
 export async function readNativeTranscriptFamily(directory) {
   let value;
   try {
@@ -38,6 +38,12 @@ export async function readNativeTranscriptFamily(directory) {
       (row) =>
         !Number.isSafeInteger(row?.id) ||
         row.id < 0 ||
+        (row.name !== undefined && typeof row.name !== "string") ||
+        (row.forkOf != null &&
+          (!Number.isSafeInteger(row.forkOf.conversationId) ||
+            row.forkOf.conversationId < 0 ||
+            !Number.isSafeInteger(row.forkOf.entryId) ||
+            row.forkOf.entryId < 0)) ||
         typeof row.path !== "string" ||
         !isAbsolute(row.path) ||
         row.path.includes("\0") ||
@@ -74,6 +80,7 @@ export async function openNativeTranscriptFamily({
   const root = agents[0].id;
   const handles = new Map();
   let records = agents;
+  const summaries = new Map(agents.map((record) => [record.id, record]));
   let queue = Promise.resolve();
   let closing = false;
   let closed;
@@ -81,11 +88,21 @@ export async function openNativeTranscriptFamily({
   const manifest = () => ({
     version: FAMILY_VERSION,
     root,
-    members: [...handles].map(([id, handle]) => ({
-      id,
-      path: handle.metadata.path,
-      nativeSessionId: handle.metadata.nativeSessionId,
-    })),
+    members: [...handles].map(([id, handle]) => {
+      const record = summaries.get(id);
+      return {
+        id,
+        name: record?.name,
+        forkOf: record?.parent
+          ? {
+              conversationId: record.parent.conversationId,
+              entryId: record.parent.at,
+            }
+          : null,
+        path: handle.metadata.path,
+        nativeSessionId: handle.metadata.nativeSessionId,
+      };
+    }),
   });
   const serial = (run) => {
     const next = queue.then(run);
@@ -152,7 +169,11 @@ export async function openNativeTranscriptFamily({
     sync(next) {
       if (closing) return Promise.reject(new DeskError(409, "会话族已关闭"));
       return serial(async () => {
-        if (next) records = next;
+        if (next) {
+          records = next;
+          // 较旧的读取可能漏掉已绑定的新分支，不能把它的导航身份清空。
+          for (const record of next) summaries.set(record.id, record);
+        }
         await synchronize();
       });
     },

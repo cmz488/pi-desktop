@@ -246,6 +246,7 @@ button > svg,
 .project-title:focus-within > button {
   opacity: 1;
 }
+.project.collapsed > .agent-family,
 .project.collapsed > .agent-row,
 .project.collapsed > .nested-project,
 .project.collapsed > .more-sessions {
@@ -253,6 +254,24 @@ button > svg,
 }
 .nested-project {
   margin-left: 14px;
+}
+.native-branch.agent-row {
+  padding-left: 34px;
+  min-height: 34px;
+  margin-block: 0;
+}
+.native-branch .agent {
+  font-size: 12px;
+  color: var(--muted);
+}
+.native-branch .agent.selected {
+  color: var(--text);
+}
+.session-branch-icon {
+  display: flex;
+  width: 12px;
+  color: var(--accent);
+  flex-shrink: 0;
 }
 .agent-row {
   display: flex;

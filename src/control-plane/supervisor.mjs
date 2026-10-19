@@ -31,6 +31,7 @@ import { projectPiRecord } from "./pi-sessions.mjs";
  * 错误：DeskError 表达“未启动”“记录已丢失”“视图已关闭”“归档进行中”等状态。
  */
 
+const FORK_REQUEST_MS = 12000;
 const runningState = (state) =>
   ["starting", "running", "stopping"].includes(state.status);
 
@@ -360,9 +361,11 @@ export function createSupervisor(store, options) {
     monitorTasks: hostTasks.read,
     manageTask: hostTasks.command,
     taskDetail: hostTasks.detail,
-    noteActivity(id) {
+    noteActivity(id, { metadataOnly = false } = {}) {
       return serial(async () => {
         if (closing) return;
+        await families.remember((await lookup(id)).agent);
+        if (metadataOnly) return;
         await store.update({}, (data) => {
           const agent = data.agents.find((row) => row.id === id);
           if (agent) agent.updatedAt = new Date().toISOString();
@@ -398,8 +401,20 @@ export function createSupervisor(store, options) {
               const state = processes.get(row.id);
               // 文件清单只供宿主迁移使用，不把新增的内部文件路径发给客户端。
               const { nativeSessions, ...metadata } = row;
+              const members = (nativeSessions ?? []).filter(
+                (member) => member.generation === (row.generation ?? 0),
+              );
               return {
                 ...metadata,
+                rootConversationId: members.find(
+                  (member) => member.forkOf === null,
+                )?.id,
+                branches: members
+                  .filter(
+                    (member) =>
+                      member.forkOf && typeof member.name === "string",
+                  )
+                  .map(({ id, name, forkOf }) => ({ id, name, forkOf })),
                 status:
                   row.source === "pi"
                     ? row.missing && !row.archived && !row.archivePending
@@ -453,6 +468,53 @@ export function createSupervisor(store, options) {
         const catalog = await store.read();
         if (input.revision !== undefined && input.revision !== catalog.revision)
           throw new DeskError(409, "项目清单已变化，请刷新后重试");
+        if (command === "conversation.fork") {
+          const { agent, project } = await lookup(input.id);
+          if (agent.source === "pi" || !project || agent.archived)
+            throw new DeskError(403, "此会话不提供创建分支");
+          if (!Number.isSafeInteger(input.generation) || input.generation < 0)
+            throw new DeskError(422, "Agent 存储代际无效");
+          if (input.generation !== (agent.generation ?? 0))
+            throw new DeskError(409, "Agent 存储代际已变化，请刷新后重试");
+          const options = {
+            expectedGeneration: input.generation,
+            signal: AbortSignal.timeout(FORK_REQUEST_MS),
+          };
+          const request = async (path, payload) => {
+            try {
+              return await worker(agent.id, path, payload, options);
+            } catch (error) {
+              if (options.signal.aborted)
+                throw new DeskError(
+                  503,
+                  "创建分支超时，请刷新会话清单确认结果后再重试",
+                );
+              throw error;
+            }
+          };
+          const selected =
+            input.conversationId ?? (await request("/api/agent")).active.id;
+          if (!Number.isSafeInteger(selected) || selected < 0)
+            throw new DeskError(422, "会话 ID 无效");
+          const snapshot = await request(
+            `/api/state?view=chat&sessionId=${selected}`,
+          );
+          if (
+            snapshot.sessionCommands !== true ||
+            snapshot.capabilities?.readOnly === true
+          )
+            throw new DeskError(403, "此会话不提供创建分支");
+          if (!snapshot.agents.some((row) => row.id === selected))
+            throw new DeskError(404, "会话不存在");
+          const result = await request(`/api/command?sessionId=${selected}`, {
+            command: "fork",
+            id: selected,
+            sessionId: String(selected),
+            mode: "tail",
+          });
+          await families.remember(agent);
+          return result;
+        }
         if (command === "project.rename") {
           if (
             typeof input.name !== "string" ||

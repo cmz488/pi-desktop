@@ -15,7 +15,7 @@
 export function createSupervisor(store, options); // -> supervisor
 
 supervisor.shared(run)              // 串行化一段跨 Agent 的宿主操作
-supervisor.noteActivity(id)         // 记录活动时间（不触发全局 revision）
+supervisor.noteActivity(id, {metadataOnly = false} = {}) // 同步原生会话导航；仅普通模式更新活动时间
 supervisor.revision()               // async -> { catalog, workspace }：轻量变更探测
 supervisor.read()                   // async -> 目录 + 每 Agent 状态（含会话文件 stat）
 supervisor.execute(command, input?) // async -> 命令结果（下表）
@@ -40,7 +40,11 @@ class DeskError extends Error { status }
 | `project.save`、`project.rename`、`project.remove`                        | 项目目录维护     |
 | `agent.save`、`agent.rename`、`agent.policy`、`agent.prompt`、`agent.pin` | Agent 目录维护   |
 | `agent.archive`、`agent.restore`、`agent.resume`                          | 归档／恢复／续跑 |
-| `conversation.create`、`prompt.save`                                      | 会话与提示词     |
+| `conversation.create`、`conversation.fork`、`prompt.save`                 | 会话与提示词     |
+
+`conversation.fork` 输入 `{ id: desktopAgentId, generation, conversationId? }`，只在本地受管、非只读且运行中的 worker 上执行。省略 `conversationId` 指向该 Agent 的根会话；指定时必须是它的受管历史会话。它薄转发现有 `fork { mode: "tail" }`，创建继承目标当前位置的新会话，不新建 Desktop Agent／SQLite／worker，不重放模型；忙碌快照仍可分叉。返回原生命令的 `{ id, sessionId, ... }`。缺少或非法 generation／会话 id 为 422，代际过期或进程未运行为 409，无权限或远程入口为 403，不存在的会话为 404。实际进程转发再次检查 generation；整次原生 RPC 预算 12 秒，超时为 503，提示刷新确认是否已提交，不把超时解释为中止任务。
+
+`read()` 与 `GET /api/workspace?view=index` 的每个 Agent 追加 `rootConversationId?: number`、`branches: [{ id, name, forkOf: { conversationId, entryId } }]`，并在 index 保留 `generation`。它们是当前代际的导航投影，来自 worker 发布的清单，不暴露内部文件路径，不承载上下文或权限；旧清单升级前可为空。停止、重启、归档不把分支伪装成另一个 Agent。客户端选择按 Agent／generation 存在 sessionStorage；停止的历史分支必须先启动原 worker，再进入原数值会话，不能把根的单文件只读历史冒充为该分支。
 
 ## 不变量
 
@@ -78,12 +82,13 @@ class DeskError extends Error { status }
 
 - **`revision()` 是轮询入口**：省掉每 Agent 的会话文件 stat；客户端的交互／MCP／工作区轮询先探它（见 04 性能深化）。
 - **历史视图上限 8**：同时打开的只读历史不会线性增长；淘汰是 LRU。
-- **`noteActivity` 不写全局 revision**：活动时间戳不引起所有客户端重取目录。
+- **原生导航按变化发布**：成功的 worker `/api/command` 同步会话族元数据，但观察类命令不更新时间戳；无清单变化时不重写 catalog。`/api/prompt` 仍更新活动时间。
 - **锁是文件级 O_EXCL**（`wx`，0600）加临时文件 rename，避免部分写入。
 - 归档／恢复是**冷路径**：只在启动、归档或恢复时发生，不在请求热路径上。
 
 ## 可执行证据
 
+- `test/desktop-sidebar-fork.test.mjs`：跨项目同号会话、当前位置继承、忙碌快照、只读／远程／停止／代际门禁、停止和 Host 重启后的导航保留，以及 SIGSTOP worker 的有界超时。
 - `test/desktop-control-plane.test.mjs`：目录发现、命令表与目标校验（`npm run test:workspace`）。
 - `test/desktop-process-recovery.test.mjs`：进程重启与恢复意图先于启动完成。
 - `test/desktop-pi-sessions.test.mjs`：Pi 会话扫描与投影。

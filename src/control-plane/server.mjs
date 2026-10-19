@@ -434,9 +434,12 @@ export async function startDesktopHost(options = {}) {
             route[2] + url.search,
             request.method === "POST" && route[2] === "/api/prompt"
               ? () => supervisor.noteActivity(route[1])
-              : settingsMutation
-                ? () => scheduleSettingsReload()
-                : undefined,
+              : request.method === "POST" && route[2] === "/api/command"
+                ? () =>
+                    supervisor.noteActivity(route[1], { metadataOnly: true })
+                : settingsMutation
+                  ? () => scheduleSettingsReload()
+                  : undefined,
           );
         const sharedMutation =
           request.method === "POST" &&

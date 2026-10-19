@@ -497,6 +497,27 @@ window.addEventListener("message", (event) => {
     runtimePrefix &&
     event.origin === location.origin &&
     event.source === window.parent &&
+    event.data?.type === "pi-desktop:select-conversation"
+  ) {
+    const id = event.data.conversationId;
+    if (
+      state?.host !== "durable" ||
+      event.data.generation !==
+        (desktopConfiguration?.agent?.generation ?? 0) ||
+      !Number.isSafeInteger(id) ||
+      id < 0
+    )
+      return;
+    chooseDurableAgent(String(id));
+    void api("/api/switch-session", { id: String(id), sessionId: String(id) })
+      .then(() => refresh())
+      .catch((error) => toast(error.message));
+    return;
+  }
+  if (
+    runtimePrefix &&
+    event.origin === location.origin &&
+    event.source === window.parent &&
     event.data?.type === "pi-desktop:restore-draft" &&
     state?.sessionId
   ) {
@@ -1922,8 +1943,19 @@ function renderLiveConversation() {
     renderMessages(messageRows, { liveOnly: true });
   });
 }
+let desktopSessionSignature = "";
 function renderSessions() {
   const current = state?.sessionId;
+  if (runtimePrefix && state?.host === "durable") {
+    const signature = JSON.stringify([
+      current,
+      sessions.map(({ id, name }) => [id, name]),
+    ]);
+    if (signature !== desktopSessionSignature) {
+      desktopSessionSignature = signature;
+      desktopMessage("session-changed", { conversationId: Number(current) });
+    }
+  }
   $("#sessions").innerHTML = sessions.length
     ? sessions
         .map(
