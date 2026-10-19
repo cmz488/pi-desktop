@@ -5,7 +5,8 @@ import { dshIcon } from "./dsh-icons.mjs";
  * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
  *
  * 接口：`createTaskPanel` 的 builtin.update/render 接收工作台上下文，refresh、
- *   setActive／dispose 管理读取；命令与权限见 docs/architecture/interfaces/read-panels.md。
+ *   setActive／dispose 管理读取；taskStatusLabel 共享原生活跃态文案，未知值原样返回。
+ *   命令与权限见 docs/architecture/interfaces/read-panels.md。
  * 不变量：来源、确认与命令目标绑定同一代不可变身份；切会话立即清数据和确认；
  *   只读管理禁用，远程本会话操作不额外禁用；等待只拥有一个可取消观察，不拥有任务。
  * 错误：当前读取／命令失败可见，408 仅续租；取消／到期明确保留任务，过期结果忽略。
@@ -42,6 +43,10 @@ const KIND_LABELS = {
   "pi.tool": "工具调用",
   "desk.subagent-run": "子代理",
 };
+
+export function taskStatusLabel(status) {
+  return STATUS_LABELS[status] ?? status;
+}
 
 export function createTaskPanel({
   fetchTasks,
@@ -83,7 +88,6 @@ export function createTaskPanel({
     });
   }
   const kindLabel = (kind) => KIND_LABELS[kind] ?? kind;
-  const statusLabel = (status) => STATUS_LABELS[status] ?? status;
 
   function arm(key, identity) {
     armed = Object.freeze({ key, identity });
@@ -310,7 +314,7 @@ export function createTaskPanel({
             "task-panel-label",
             task.name ?? kindLabel(task.kind),
           ),
-          element("span", "task-panel-state", statusLabel(task.status)),
+          element("span", "task-panel-state", taskStatusLabel(task.status)),
         );
         if (task.abortRequested)
           title.append(element("span", "task-panel-state", "中止中"));
@@ -428,11 +432,7 @@ export function createTaskPanel({
         const title = element("div", "task-panel-title");
         title.append(
           element("span", "task-panel-label", tool.name),
-          element(
-            "span",
-            "task-panel-state",
-            statusLabel(tool.status) ?? tool.status,
-          ),
+          element("span", "task-panel-state", taskStatusLabel(tool.status)),
         );
         copy.append(
           title,

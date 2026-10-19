@@ -1,5 +1,5 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
-import { createTaskPanel } from "./task-panel.js";
+import { createTaskPanel, taskStatusLabel } from "./task-panel.js";
 
 /**
  * 全 Host 任务窗口：适配聚合 API，复用会话任务面板的确认、等待租约与权限生命周期。
@@ -19,12 +19,6 @@ const OUTCOMES = {
   aborted: "已中止",
   orphaned: "无法恢复",
   faulted: "执行故障",
-};
-const TASK_STATES = {
-  pending: "排队",
-  running: "运行中",
-  waiting: "等待",
-  completing: "收尾",
 };
 const MESSAGE_ROLES = {
   user: "用户",
@@ -463,7 +457,7 @@ export function createHostTaskPanel({ root, request }) {
       element(
         "strong",
         "",
-        OUTCOMES[outcome] ?? TASK_STATES[data.task.status] ?? data.task.status,
+        OUTCOMES[outcome] ?? taskStatusLabel(data.task.status),
       ),
       element("small", "", `原生任务 #${data.task.id}`),
     );
@@ -516,7 +510,7 @@ export function createHostTaskPanel({ root, request }) {
       for (const tool of child.tools) {
         const node = message("toolResult", tool.output);
         node.querySelector("small").textContent =
-          `${tool.name} · ${OUTCOMES[tool.status] ?? TASK_STATES[tool.status] ?? tool.status}`;
+          `${tool.name} · ${OUTCOMES[tool.status] ?? taskStatusLabel(tool.status)}`;
         conversation.append(node);
       }
       content.append(conversation);

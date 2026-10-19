@@ -24,6 +24,7 @@ loader.isCurrent(token);
 loader.setActive(boolean);
 loader.dispose();
 
+taskStatusLabel(status); // 共用原生活跃态中文文案；未知值原样返回，不推断终态。
 createBranchTreePanel({ fetchTree, command, toast, switchSession });
 createTaskPanel({ fetchTasks, command, toast, currentSession? });
 // 任务 command(input, { signal }?)：wait 必须遵守 signal；非 wait 不增加生命周期选项。

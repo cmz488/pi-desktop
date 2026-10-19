@@ -21,6 +21,8 @@ const GRAPH_WIDTH = 460;
 const MIN_GRAPH_WIDTH = 280;
 const MAX_GRAPH_WIDTH = 760;
 const MAX_LANES = 4;
+const clampGraphWidth = (width) =>
+  Math.max(MIN_GRAPH_WIDTH, Math.min(MAX_GRAPH_WIDTH, width));
 
 const element = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -109,10 +111,7 @@ export function createBranchTreePanel({
     if (!visible.some((round) => round.id === selected))
       selected =
         visible.find((round) => round.current)?.id ?? visible.at(-1)?.id;
-    graphWidth = Math.max(
-      MIN_GRAPH_WIDTH,
-      Math.min(MAX_GRAPH_WIDTH, container.clientWidth || GRAPH_WIDTH),
-    );
+    graphWidth = clampGraphWidth(container.clientWidth || GRAPH_WIDTH);
     const svg = vector("svg", {
       "data-round-tree": "true",
       role: "tree",
@@ -543,10 +542,7 @@ export function createBranchTreePanel({
           resizeObserver?.disconnect();
           resizeObserver = new ResizeObserver(() => {
             if (!container?.isConnected || !container.clientWidth) return;
-            const width = Math.max(
-              MIN_GRAPH_WIDTH,
-              Math.min(MAX_GRAPH_WIDTH, container.clientWidth),
-            );
+            const width = clampGraphWidth(container.clientWidth);
             if (width !== graphWidth) render();
           });
           resizeObserver.observe(node);
