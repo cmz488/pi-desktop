@@ -4,7 +4,8 @@ import { extensionAdapterRegistry } from "./extension-adapters.mjs";
  * 轻量读视图：导航、聊天窗口、时间线展示与页面内 ETag 缓存。
  *
  * 接口：workspaceIndex／chatSnapshot／projectConversationTimeline 只投影展示；
- *   createIndexedFetch 返回有界读取器。导航见 interfaces/lifecycle.md，面板见 read-panels.md。
+ *   createIndexedFetch 返回有界读取器；契约见 docs/architecture/interfaces/lifecycle.md
+ *   与 read-panels.md。
  * 不变量：不改原生转录、模型上下文或任务归属；私有响应只缓存于本页面内存，
  *   workspaceIndex 不增加内部会话文件路径，304 复用已缓存的同一 URL。
  * 错误：HTTP 失败保留 status；网络、JSON 与投影错误向调用方传播，不伪装空结果。

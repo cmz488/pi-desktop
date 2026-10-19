@@ -638,7 +638,7 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     "cancelling the tool task drains the panel",
   );
 
-  // 真实后台任务：面板显示后台标记，顶部「取消后台任务」两步确认后把它终结。
+  // 后台语义位于行的元信息；“中止后台”仍需两次独立确认。
   faux.setResponses([
     fauxAssistantMessage(
       [
@@ -666,7 +666,7 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   );
   assert(
     await evaluate(
-      "!!document.querySelector('#view-extensions [data-task-id] .tag') && [...document.querySelectorAll('#view-extensions [data-task-id] .tag')].some((node)=>node.textContent==='后台')",
+      "[...document.querySelectorAll('#view-extensions [data-task-id] .task-panel-meta')].some((node)=>node.textContent.includes('后台'))",
     ),
     "the background task is marked in the panel",
   );
