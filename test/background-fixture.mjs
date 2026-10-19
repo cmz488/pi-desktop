@@ -23,7 +23,7 @@ export function createBackgroundFixture() {
     initial: () => ({ phase: "hold" }),
     phases: {
       hold: async (task, runtime, context) => {
-        // sleep 在调用被中止时会拒绝，任务因此进入终态；没有中止则 20 秒后自己结束。
+        // 锚点必须跨过普通回合的终态；有界 sleep 避免失败测试永久遗留后台任务。
         await runtime.sleep(Date.now() + BACKGROUND_HOLD_MS, context);
       },
     },

@@ -1,16 +1,21 @@
 # 验证说明
 
 ```bash
-npm run check
-npm run package:check
 npm test
-npm run test:workspace:browser
-npm run test:workspace:desktop
-npm run test:browser
-npm run test:extensions:browser
-npm run test:context:browser
+npm run check
 npm run format:check
+npm run test:durable
+npm run test:workspace
+npm run test:durable:recovery
+npm run test:browser
+npm run test:durable:browser
+npm run test:workspace:browser
+npm run test:remote:desktop
+npm run test:extensions:browser
+npm run package:check
 ```
+
+Electron 的 `test:workspace:desktop`、`test:context:browser` 为额外的平台专项；环境要求见下文。
 
 架构深化专项由 `test/host-interface.test.mjs`、`test/agent-snapshot.test.mjs`、`test/target-guard.test.mjs`、`test/agent-runtime.test.mjs`、`test/goal-panel.test.mjs`、`test/extension-workbench.test.mjs`、`test/git-review.test.mjs` 和 `test/bridge.test.mjs` 覆盖：Host 能力声明与动态 TUI slot、snapshot 统一 shape/typed activity、请求目标竞态、声明式面板动作、Durable runtime adapter，以及 Git limits／permitted actions。其中 `test/bridge.test.mjs` 明确验证“回调存在但未声明能力不会启用功能”，包括 `requestContext`、`sessionCommand`、会话新建／切换、`effectiveSettings` 和包管理清单（`updatesSupported`／`writable`）；`test/durable-server.test.mjs` 断言 Durable 的 `/api/sessions` 仍返回 `supported:true` 与 Agent 行，并验证 `/api/new-session`／`/api/switch-session` 仍返回 200，避免 capability 声明和既有会话管理行为分叉。`test/conversation-timeline-browser-check.mjs` 验证新增 activity 不改变旧的思考／生成文案。浏览器回归继续验证真实页面上的目标面板和 Git 审阅 affordance。
 
@@ -22,7 +27,7 @@ npm run format:check
 
 `npm run test:extensions:browser` 使用真实页面标记、CSS 与扩展工作台 controller，覆盖状态去重、选择／展开／滚动保持、键盘操作、懒详情恢复、失败重试与切换会话竞态、通用文本转义、注册 renderer 的 HTML 清理／回退、目标操作面板与动作转发、375–1280px、双主题与减少动态效果。`test/goal-panel.test.mjs` 另验证目标工具合一面板、工具覆盖声明、验收／起草／完成状态与 adapter 面板过滤。工作区浏览器和 Electron 回归另验证外层入口与顶部页签同步，扩展页不进入设置布局。
 
-果冻式界面回归还检查默认浅色、父子 iframe 的透明背景／根节点主题同步，以及桌面横向扩展页面架。第三轮追加：非活跃 Agent 使用 `#agent-boot` 载入面且不闪项目主视觉、首帧主题引导脚本、`--ease-jelly` 驱动的 shell／视图／会话动画、整颗胶囊可点的主题下拉、消息链接在右侧浏览器打开且聊天 iframe 不导航。附件回归分别断言本机只发送绝对路径、远程上传写入受控缓存并在提示词中只给缓存路径。`test/surface-contrast.mjs` 对静态底光取保守色域边界，逐层合成透明表面后测量文本对比度；降低透明度偏好会启用实色表面并关闭局部背景模糊。页面切换动画、放宽后的对话流宽、单行读数标签与窄屏堆叠在 `test/browser-check.mjs` 中断言；输入框上方的项目／提示词／权限胶囊和文件查看器树在桌面回归中覆盖，树只在容器宽度足够时显示，点击文件切换到已有标签。
+果冻式界面回归还检查默认浅色、父子 iframe 的透明背景／根节点主题同步，以及桌面横向扩展页面架。还覆盖：非活跃 Agent 使用 `#agent-boot` 载入面且不闪项目主视觉、首帧主题引导脚本、`--ease-jelly` 驱动的 shell／视图／会话动画、整颗胶囊可点的主题下拉、消息链接在右侧浏览器打开且聊天 iframe 不导航。附件回归分别断言本机只发送绝对路径、远程上传写入受控缓存并在提示词中只给缓存路径。`test/surface-contrast.mjs` 对静态底光取保守色域边界，逐层合成透明表面后测量文本对比度；降低透明度偏好会启用实色表面并关闭局部背景模糊。页面切换动画、放宽后的对话流宽、单行读数标签与窄屏堆叠在 `test/browser-check.mjs` 中断言；输入框上方的项目／提示词／权限胶囊和文件查看器树在桌面回归中覆盖，树只在容器宽度足够时显示，点击文件切换到已有标签。
 
 Electron 专项若继承 `ELECTRON_RUN_AS_NODE=1`，应使用 `env -u ELECTRON_RUN_AS_NODE npm run test:workspace:desktop` 和 `env -u ELECTRON_RUN_AS_NODE npm run test:context:browser`；仅取消当前测试命令的变量，不改用户全局环境。
 
@@ -30,7 +35,7 @@ Electron 专项若继承 `ELECTRON_RUN_AS_NODE=1`，应使用 `env -u ELECTRON_R
 
 ## 原生压缩会话恢复回归
 
-此前续跑超时已修复：原生自定义消息曾以 `role: custom` 进入 Durable 模型上下文，导致请求前的 token 估算失败。现在统一复用 Pi 的 `convertToLlm`，原消息元数据单独保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。
+模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。
 
 相关回归覆盖压缩摘要、保留历史、图片、工具结果、自定义卡片、重启与旧记录分支续跑，保持实际模型请求及原生 session ID 的断言。诊断和修复证据见 [恢复续跑验收](../history/native-custom-context-review.md)。
 
@@ -48,17 +53,11 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 `npm run test:durable:recovery`（`test/durable-recovery-check.mjs` + `test/durable-recovery-worker.mjs`）用同一个 faux 夹具跑三次：一次不中断的对照运行、一次在回答生成流式中途 SIGKILL、一次在两个工具调用在途时 SIGKILL。每次中断后等待被杀死进程的租约到期（约 10.5 s）再重开同一 SQLite。
 
-本机实测（一组固定夹具）：
-
-| 场景                        | provider 请求 | 转录条目 | 用量 tokens | recovery                |
-| --------------------------- | ------------- | -------- | ----------- | ----------------------- |
-| 对照（不中断）              | 2             | 6        | 2306        | null                    |
-| 中断生成（中断前 + 恢复后） | 2 + 1         | 7        | 1490 → 3863 | 1 项，outstanding 1 → 0 |
-| 中断工具（中断前 + 恢复后） | 1 + 1         | 6        | 1490 → 3085 | 3 项，outstanding 2 → 0 |
+固定夹具的历史请求数、条目数与用量见[恢复测量记录](../history/durable-recovery-measurement.md)；当前验收以命令实际输出与断言为准。
 
 断言：重开后 `read().recovery` 非空、至少一个任务以 `pending` 出现且 `resumedAt` 是时间戳；恢复完成后 `outstanding` 归零、`count` 保持不变；回答文本只出现一次；带工具调用的已提交生成不再被请求（恢复进程只发一次请求）；可安全重放的工具在崩溃后重跑，而一次性副作用不重跑并以错误结果出现在转录中。`/api/state` 的同名字段与聊天页状态旁的“已从检查点恢复 N 项”提示是同一读模型；`test/desktop-process-recovery.test.mjs` 在 `npm test` 内守住该字段的存在。
 
-上游语义与限制（本地实测，非官方承诺）：
+本地夹具的覆盖范围与限制（不扩大为上游承诺）：
 
 - **至少一次**：中断的回合会被重新发起；被中断的尝试会留下标记条目（生成场景是一条空 assistant 条目，工具场景是错误结果条目），已提交且不依赖中断工作的条目不会被重发。
 - **用量**：中断尝试与恢复尝试都计入 `pi.usage`，因此恢复后的会话用量高于未中断的对照；已提交的生成不会被重复记账。
@@ -75,7 +74,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 扩展工作台的任务与子代理面板同样在 `test/durable-browser-check.mjs` 中断言：空闲 Agent 显示空态、真实 `bash` 在跑任务出现在任务树与在跑工具里、第一步点击只进入待确认状态而任务仍在、第二步取消后面板清空、`等待` 返回时回答已提交，以及切到另一个 Agent 并重新打开面板后看到的是那个 Agent 自己的任务（面板跟随当前会话）。扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：树行、活跃/已放弃标记、唯一 leaf 与徽标、折叠子树后行数减少、刷新后折叠状态保持、再从节点创建分支（切到新会话）与从节点退回后树仍区分被放弃路径。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、在该单进程注入夹具中，分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
 
-任务管理由 `POST /api/command` 的 `wait`／`cancel` 提供；真实后台任务由 `test/background-fixture.mjs`（`tx.createTask(..., { background: true })`）造出，API 测试断言它在会话空闲时仍存活、取消后台任务返回它的 id 并让它进入终态，浏览器回归在面板上完成同一条路径（后台标记 + 两步确认取消）；任务管理（取消支持单任务、后台任务与该会话当前工作；只读宿主返回 403，远程取消自己的任务属于允许动作）；`test/durable-task-graph.test.mjs` 另外断言按任务 id 取消后任务图清空、子会话不产生孤儿、`wait` 在回答提交后才返回、未知任务 404、后台取消不打断前台运行，并用临时去掉只读门控的方式验证这些断言确实敏感。任务图与子会话读模型由 `GET /api/tasks`（capability `tasks`）提供：`test/durable-task-graph.test.mjs` 用真实子代理夹具断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具进入 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation` 与 `waitingOn` 关系。
+任务管理由 `POST /api/command` 的 `wait`／`cancel` 提供；真实后台任务由 `test/background-fixture.mjs`（`tx.createTask(..., { background: true })`）造出，API 测试断言它在会话空闲时仍存活、取消后台任务返回它的 id 并让它进入终态，浏览器回归在面板上完成同一条路径（后台标记 + 两步确认取消）；任务管理（取消支持单任务、后台任务与该会话当前工作；只读宿主返回 403，远程取消自己的任务属于允许动作）；`test/durable-task-graph.test.mjs` 另外断言按任务 id 取消后任务图清空、子会话不产生孤儿、`wait` 在回答提交后才返回、未知任务 404、后台取消不打断前台运行。任务图与子会话读模型由 `GET /api/tasks`（capability `tasks`）提供：`test/durable-task-graph.test.mjs` 用真实子代理夹具断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具进入 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation` 与 `waitingOn` 关系。
 
 分支树读模型由 `GET /api/tree`（capability `sessionTree`）提供：Durable 侧给出分叉来源与会话 id，原生侧给出 parent 链与 leaf；`test/durable-session-tree.test.mjs` 断言分支点、被放弃路径不在活跃路径上、`forkOf` 与 branches 一致、无原生转录时为 `null`，`test/bridge.test.mjs` 断言未声明能力的宿主返回 `supported: false`。
 
@@ -85,9 +84,9 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 接口契约（[docs/architecture/interfaces/](../architecture/interfaces/README.md)）每条都必须在“可执行证据”里指向测试或命令；新增或改变契约时必须同时补上断言，未登记的对外行为不算契约。运行归属与两条 seam 见 [边界文档](../architecture/pi-boundary.md)。
 
-形状与能力集由一个专门文件守住：`test/boundary-contracts.test.mjs` 断言 Host 的 40 个 capability、资源目标 token 的 409 语义、AgentRuntime 的固定选项与停止预算（8 s SIGTERM／10 s SIGKILL）、pi-sdk 的七条深路径在已安装包里真实存在且导出形状正确、workspace／facade／native／supervisor 的键与命令表，以及上述文档与链接仍然存在。敏感性已实测：临时删掉一个 capability 或重命名一个 workspace 键都会使断言失败，还原后恢复全绿。
+形状与能力集由一个专门文件守住：`test/boundary-contracts.test.mjs` 断言 Host 的 40 个 capability、资源目标 token 的 409 语义、AgentRuntime 的固定选项与停止预算（8 s SIGTERM／10 s SIGKILL）、pi-sdk 的七条深路径在已安装包里真实存在且导出形状正确、workspace／facade／native／supervisor 的键与命令表，以及上述文档与链接仍然存在。接口变更须在隔离副本反向修改对应能力或键名，确认断言失败，再还原复测；各阶段结果保存在历史修复记录。
 
-代码与文档规范（[代码与文档规范](../guides/code-style.md)）本轮不引入自动检查器：靠评审清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
+代码与文档规范（[代码与文档规范](../guides/code-style.md)）不新增自动风格检查器，按清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
 
 ## 会话只读面板
 

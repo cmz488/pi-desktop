@@ -11,9 +11,11 @@
 ## 签名
 
 ```
-GET /api/tree?id=<agentId>        // 也接受 sessionId；省略时用当前选中的 Agent
+GET /api/tree?id=<conversationId> // 也接受 sessionId；省略时用当前选中的 Agent
 Host capability: sessionTree      // 未声明时返回 { supported: false }（HTTP 200）
 ```
+
+默认 Desktop 的外层路由为 `/agents/<desktopAgentId>/api/tree`；查询参数是该 worker 内的数值会话 id，不是外层 Agent UUID。
 
 返回（`supported: true` 时）：
 
@@ -24,7 +26,7 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
   forkOf,      // { conversationId, entryId } | null
   leaf,        // 原生 leaf 的条目 id，无原生转录时为 null
   native,      // { leafId, nodes: [...] } | null
-  rewinds: [{ entryId, rewindTo }],
+  rewinds: [{ entryId, rewindTo }], // entryId: number（Durable 标记）；rewindTo: number | null（目标）
   branches: [{ id, name, forkOf, idle }],
 }
 ```
@@ -33,15 +35,15 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 ```js
 {
-  id,
-  parentId,
+  id,           // string：Pi 原生条目 id
+  parentId,     // string | null：Pi 原生父条目 id
   type,
   role,
   customType,
   label,
-  preview,      // string | null：首段文本预览
+  preview,      // string | null：合并文本段后的预览，最多 80 个 UTF-16 代码单元
   entryId,      // number | null：对应的 Durable entry id，未映射时为 null
-  rewindTo,     // number | null：退回标记指向的 Durable entry id，非标记为 null
+  rewindTo,     // number | null：Desktop 退回标记的 Durable 目标；没有该数据为 null
   active,       // 是否在当前活跃路径上
   leaf,         // 是否是当前叶子
   branchPoint,  // 是否有多个子节点
@@ -51,10 +53,11 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 ## 不变量
 
-- **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变（本任务只新增端点，`read()` 的 `agents[]` 追加 `parent`，本接口映射为 `forkOf`）。
+- **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变；`read()` 的会话 `parent` 在本接口映射为 `forkOf`。
 - **每个分支都是独立会话**：`branches[].id` 就是会话栏里的会话 id；`forkOf` 来自 Durable 的会话记录 `parent`，重启后仍可读，不依赖原生文件。
-- **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认多进程 Desktop 每个 Agent 一个 worker，因此都有）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。默认 worker 的历史分支同样各自绑定转录；未启用会话族的单进程／注入 workspace 模式仍只绑定最初的会话。
+- **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认 worker 的根与历史分支各自绑定转录）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。未启用会话族的单进程／注入 workspace 模式仍只绑定最初的会话。
 - **活跃/放弃由 `active` 表达**：`active === true` 的节点在活跃路径上（leaf 必然在其中）；其余节点是被放弃的路径，仍保留在树里。
+- **两类条目身份不可混用**：`native.nodes[].id`／`parentId`／`leafId` 是原生字符串 id；节点 `entryId`、退回 `rewindTo` 和 `rewinds[].entryId` 是 Durable 数值 id。未建立 Durable 映射时 `entryId` 为 null，不能拿原生 id 发命令。`preview` 是展示文本，不是节点身份；空文本和非消息节点返回 null。
 - **分支点**：`branchPoint` 表示该节点有多个子条目（退回会制造一个）。
 
 ## 顺序约束
@@ -70,7 +73,7 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 | 宿主未声明 `sessionTree`        | `{ supported: false }`（HTTP 200） |
 | `id` 指向不存在的会话           | `DeskError(404, "Agent 不存在")`   |
 | 既没有 `id`，宿主也没有任何会话 | `DeskError(422, "请选择 Agent")`   |
-| `id` 不是数字                   | 解析为 `NaN` → 会话不存在（404）   |
+| `id` 不是非负安全整数           | `DeskError(422, "Agent ID 无效")`  |
 
 ## 会话清单与命令模式
 
@@ -117,7 +120,7 @@ Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契�
 
 ## 可执行证据
 
-- `test/durable-session-tree.test.mjs`：原生 parent 链与 leaf、分支点、被放弃路径不在活跃路径上、`rewinds` 记录退回目标、`branches` 列出全部分支且 `forkOf` 指向同一来源、无原生转录的会话返回 `native: null`。
+- `test/durable-session-tree.test.mjs`：原生 parent 链与 leaf、分支点、被放弃路径不在活跃路径上、`rewinds` 记录退回目标、`branches` 列出全部分支且 `forkOf` 指向同一来源、无原生转录的会话返回 `native: null`；另断言数值 entry／rewind 目标、80 代码单元预览、无映射 null 与无效 id 的 422。
 - `test/bridge.test.mjs`：未声明能力的宿主返回 `supported: false`；声明后按 `id` 传参且只调用一次。
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（40 个键）。
 

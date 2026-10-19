@@ -213,7 +213,10 @@ test(
     );
 
     // 退回后继续：新回合从该点继续，只提交一份回答。
-    const fourth = await turn("第四轮", answers[3]);
+    const previewPrefix = "第四轮：" + "预览".repeat(38);
+    assert.equal(previewPrefix.length, 80);
+    const fourthInput = previewPrefix + "不应进入预览的余文";
+    const fourth = await turn(fourthInput, answers[3]);
     assert.equal(
       fourth.messages.filter((row) => row.text === answers[3]).length,
       1,
@@ -306,6 +309,45 @@ test(
       (row) => row.customType === "pi-desktop-rewind",
     );
     assert.ok(rewindNode?.active, "the rewind marker is on the active branch");
+    assert.equal(
+      rewindNode.rewindTo,
+      target.entryId,
+      "原生退回标记暴露 Durable 数值目标，不是原生字符串 id",
+    );
+    assert.equal(typeof rewindNode.id, "string");
+    const firstNode = tree.native.nodes.find((row) => row.preview === "第一轮");
+    assert.ok(firstNode, "消息节点提供可读预览，不能只返回空结构");
+    assert.equal(
+      firstNode.entryId,
+      firstEntry.entryId,
+      "树节点的操作目标是该消息的 Durable entry",
+    );
+    assert.equal(firstNode.rewindTo, null);
+    const longNode = tree.native.nodes.find(
+      (row) => row.preview === previewPrefix,
+    );
+    assert.ok(longNode, "预览只保留消息文本的前 80 个代码单元");
+    assert.equal(
+      longNode.entryId,
+      fourth.messages.find((row) => row.text === fourthInput).entryId,
+    );
+    assert.ok(
+      tree.native.nodes
+        .filter((row) => row.type !== "message")
+        .every((row) => row.preview === null),
+      "非消息条目不伪造文本预览",
+    );
+    assert.ok(
+      tree.native.nodes.some((row) => row.entryId === null),
+      "没有 Durable 映射的原生条目保留 null",
+    );
+    const invalidTree = await fetch(`${origin}/api/tree?id=not-a-number`);
+    assert.equal(
+      invalidTree.status,
+      422,
+      "无效会话 id 使用既有参数错误，不伪装成不存在",
+    );
+    await invalidTree.json();
     assert.ok(
       tree.native.nodes.some((row) => !row.active && row.type === "message"),
       "the abandoned path stays in the tree but off the active path",

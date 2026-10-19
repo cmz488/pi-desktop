@@ -79,7 +79,7 @@ export function createTaskPanel({
     clearTimeout(armTimer);
     armTimer = undefined;
   }
-  /* 两步确认：第一次点击只进入待确认状态，第二次才执行；4 秒后自动撤销。 */
+  /* 破坏性取消需要两次独立点击；重画本身不能授予第二次执行资格。 */
   function confirmButton(key, label, title, run, identity) {
     const confirming = armed?.key === key && armed.identity === identity;
     const button = element(

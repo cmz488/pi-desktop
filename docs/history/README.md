@@ -5,6 +5,8 @@
 - [architecture-deepening-review.md](architecture-deepening-review.md)
 - [fold-scroll-persistence-review.md](fold-scroll-persistence-review.md)
 - [architecture-improvements-review.md](architecture-improvements-review.md)
+- [code-style-baseline.md](code-style-baseline.md)
+- [durable-recovery-measurement.md](durable-recovery-measurement.md)
 - [design-evolution.md](design-evolution.md)
 - [durable-desktop-review.md](durable-desktop-review.md)
 - [git-operations-review.md](git-operations-review.md)

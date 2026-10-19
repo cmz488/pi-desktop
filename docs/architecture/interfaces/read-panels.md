@@ -45,7 +45,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - `/api/state` 和 chat 视图的 `capabilities.sessionTree`／`tasks` 明确来自 Host 声明，不信任 snapshot 自填字段或方法是否存在；没有声明时为 false。
 - 未声明能力不读取、不显示对应内置入口；读模型返回 `supported:false` 后同样隐藏，当前身份不持续探测；会话／能力变化重新判断。
 - 只读宿主可查看声明支持的模型，但管理按钮使用原生 disabled 语义并给出原因。
-- 管理动作要求调用方明确提供会话命令能力；任务的 `taskCommands` 可进一步收窄。控制器不笼统禁用所有 remote 操作，允许调用方提供其合法的本会话管理能力。
+- 管理动作要求调用方明确提供会话命令能力；任务的 `taskCommands` 可进一步收窄。任务控制器不笼统禁用所有 remote 操作，允许调用方提供其合法的本会话管理能力。
 - 生产聊天页继续遵守现有远程网关：远程仍保留会话工作区与 `/api/abort` 等既有动作，不为面板放宽 `/api/command`；该路径被裁剪时不把任务管理按钮伪装可用。远程读模型不因此变成全局读模型。
 
 ## 顺序约束
@@ -65,7 +65,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 
 ## 性能特征
 
-每代身份最多一个在途读取、一个补刷定时器；普通刷新按 1500 ms 节流，密集通知合并为一次补刷，显式 force 可立即请求。unsupported 不形成轮询。关闭后迟到回调不能重启补刷。加载器只管理读模型；命令等待的生命周期见任务契约。
+每代身份最多一个在途读取、一个补刷定时器；普通刷新按 1500 ms 节流，密集通知合并为一次补刷，空闲时 force 跳过节流，在途时只合并一次补刷。unsupported 不形成轮询。关闭后迟到回调不能重启补刷。加载器只管理读模型；命令等待的生命周期见任务契约。
 
 ## 可执行证据
 
