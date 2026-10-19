@@ -4983,7 +4983,7 @@ body.dark {
   cursor: not-allowed;
 }
 
-/* 固定宽度的轮次卡片避免把原生日志深度变成无限右移的排版。 */
+/* 轨道只表达历史关系，标签和管理操作共享同一行，避免第二层卡片。 */
 .branch-tree {
   display: flex;
   flex-direction: column;
@@ -5003,6 +5003,10 @@ body.dark {
   flex: 1;
   min-width: 140px;
 }
+.branch-tree-heading strong {
+  font-size: var(--text-ui-base);
+  font-weight: 600;
+}
 .branch-tree-header small,
 .branch-tree-note {
   color: var(--muted);
@@ -5020,8 +5024,8 @@ body.dark {
   font-size: var(--text-ui-xs);
 }
 .branch-round-limit input {
-  width: 64px;
-  min-height: 34px;
+  width: 58px;
+  min-height: 32px;
   padding: 4px 6px;
   border: 1px solid var(--control-border);
   border-radius: 8px;
@@ -5031,21 +5035,18 @@ body.dark {
 .branch-round-canvas {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--panel);
 }
 .branch-round-graph {
   display: block;
   width: 100%;
   height: auto;
-  min-width: 400px;
-  max-width: 600px;
+  min-width: 280px;
+  max-width: 760px;
   font-family: var(--font-ui);
 }
 .branch-round-edge {
   stroke: var(--control-border);
-  stroke-width: 2;
+  stroke-width: 1.5;
   stroke-dasharray: 4 4;
 }
 .branch-round-edge.is-active {
@@ -5059,7 +5060,7 @@ body.dark {
 .branch-round-dot {
   fill: var(--panel);
   stroke: var(--control-border);
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 .branch-round-node.is-current .branch-round-dot {
   fill: var(--accent);
@@ -5067,54 +5068,140 @@ body.dark {
 }
 .branch-round-card {
   fill: var(--input);
-  stroke: var(--border);
+  stroke: transparent;
 }
 .branch-round-node {
   cursor: pointer;
   outline: none;
 }
-.branch-round-node:hover .branch-round-card,
+.branch-round-node:hover .branch-round-card {
+  fill: var(--hover);
+}
 .branch-round-node.is-selected .branch-round-card {
   fill: var(--accent-surface);
-  stroke: var(--accent);
+}
+.branch-tree .branch-round-graph .branch-round-node:focus-visible {
+  outline: none;
 }
 .branch-round-node:focus-visible .branch-round-card {
   stroke: var(--accent);
-  stroke-width: 3;
+  stroke-width: 2;
 }
-.branch-round-number,
-.branch-round-answer {
+.branch-round-label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  align-items: center;
+  column-gap: 8px;
+  height: 100%;
+  font: 12px/1.35 var(--font-ui);
+  color: var(--text);
+}
+.branch-round-copy {
+  min-width: 0;
+}
+.branch-round-number {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
   font-size: 11px;
-  fill: var(--muted);
+  line-height: 1.5;
+}
+.branch-round-state {
+  font-weight: 500;
+}
+.branch-round-node.is-current .branch-round-state {
+  color: var(--accent);
+}
+.branch-round-question,
+.branch-round-answer {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .branch-round-question {
   font-size: 14px;
-  font-weight: 600;
-  fill: var(--text);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.branch-round-answer {
+  font-size: 12px;
+  color: var(--muted);
+}
+.branch-round-actions {
+  display: flex;
+  justify-content: flex-end;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+}
+.branch-round-node:hover .branch-round-actions,
+.branch-round-node:focus-within .branch-round-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.branch-round-label .branch-round-action {
+  padding: 6px 9px;
+  min-height: 32px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.branch-round-label .branch-round-action:hover {
+  border-color: var(--control-border);
+}
+.branch-round-label .branch-round-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.branch-round-label .branch-round-action:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .branch-round-disclosure rect {
-  fill: var(--panel);
-  stroke: var(--border);
+  fill: transparent;
+  stroke: none;
 }
 .branch-round-disclosure path {
   stroke: var(--accent);
-  stroke-width: 2;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+.branch-round-node.is-current .branch-round-disclosure path {
+  stroke: var(--accent-foreground);
 }
 .branch-round-detail {
-  border-inline-start: 3px solid var(--accent);
-  padding: 8px 12px;
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+  padding: 0 8px;
   overflow-wrap: anywhere;
+}
+.branch-round-detail summary {
+  cursor: pointer;
+  padding-block: 4px;
 }
 .branch-round-detail p {
   margin: 8px 0;
   line-height: 1.6;
+}
+.branch-round-prompt {
+  color: var(--text);
 }
 .branch-round-reply {
   color: var(--muted);
 }
 .branch-tree-branches {
   display: grid;
-  gap: 6px;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-ui-sm);
 }
 .branch-tree-branch {
   display: flex;
@@ -5122,14 +5209,26 @@ body.dark {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  padding: 5px 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  padding: 7px 8px;
+  background: transparent;
+  border: 0;
   border-radius: 8px;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 .branch-tree-branch.active {
-  border-color: var(--accent);
+  background: var(--accent-surface);
+}
+.branch-tree-branch small {
+  color: var(--muted);
+}
+@media (hover: none), (pointer: coarse) {
+  .branch-round-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .branch-round-label .branch-round-action {
+    min-height: 44px;
+  }
 }

@@ -631,6 +631,49 @@ body.chat-shell.desktop-embedded {
   border-color: var(--control-border);
   box-shadow: var(--jelly-shadow);
 }
+.extension-workbench:has(.extension-page-detail.is-builtin)
+  .extension-workbench-header {
+  padding-bottom: 14px;
+}
+.extension-workbench:has(.extension-page-detail.is-builtin)
+  .extension-workbench-header
+  h1 {
+  font-size: calc(22px * var(--ui-font-scale));
+}
+.extension-workbench:has(.extension-page-detail.is-builtin)
+  .extension-workbench-header
+  p {
+  display: none;
+}
+.extension-page-choice.is-builtin {
+  flex: 0 0 auto;
+  min-height: 40px;
+  flex-direction: row;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  /* 主题切换时背景与文字需同步，不能在旧主题底色上先切换文字颜色。 */
+  transition: none;
+}
+.extension-page-choice.is-builtin[aria-current="page"] {
+  border-color: var(--border);
+  background: var(--glass-raised);
+}
+.extension-page-choice.is-builtin > small,
+.extension-page-choice.is-builtin > span {
+  display: none;
+}
+.extension-page-choice.is-builtin > strong {
+  white-space: nowrap;
+  font-size: var(--text-ui-sm);
+  font-weight: 600;
+}
+.extension-page-detail.is-builtin {
+  padding: 18px 20px;
+}
 .extension-page-choice > small {
   font-size: var(--text-ui-xs);
   color: var(--customMessageLabel);

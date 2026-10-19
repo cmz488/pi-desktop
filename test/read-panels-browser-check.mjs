@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publicAssets, assetFile } from "../src/server/asset-manifest.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
+import { measureSurfaceContrast } from "./surface-contrast.mjs";
 
 // 真实面板与工作台，只有读模型和命令受控；故意忽略 abort，才能验证晚到结果的身份检查。
 const source = await readFile(
@@ -69,6 +70,8 @@ try {
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
+      // 无真实鼠标的 headless 默认声明 hover:none；桌面悬浮用例须显式模拟细指针。
+      "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
       "about:blank",
@@ -266,9 +269,17 @@ try {
       ['a','assistant','最终答复第'+(i+1)+'轮',i*10+3],
       ['c',null,null,null],
     ]){const id=suffix+i;nodes.push({id,parentId,type:role?'message':'custom',role,preview,entryId,active:true,leaf:id==='c11',children:id==='c11'?0:1});parentId=id;}
-    return panelFixture.tree('4',{supported:true,sessionId:'4',name:'按轮次展示',idle:true,currentEntryId:113,native:{leafId:'c11',nodes},branches:[]});
+    window.roundModel={supported:true,sessionId:'4',name:'按轮次展示',idle:true,currentEntryId:113,native:{leafId:'c11',nodes},branches:[]};
+    return panelFixture.tree('4',roundModel);
   })()`);
   await until("!!document.querySelector('[data-round-node=u11]')");
+  assert.equal(
+    await evaluate(
+      "!!document.querySelector('[data-round-node=u11] [data-branch-action=fork]')",
+    ),
+    true,
+    "当前位置的创建分支按钮位于节点标签内，而不是树底部",
+  );
   await evaluate(
     "(()=>{const input=document.querySelector('[data-round-limit]');input.value='10';input.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
@@ -281,6 +292,82 @@ try {
   );
   assert.equal(
     await evaluate(
+      "document.querySelectorAll('.branch-round-detail [data-branch-action]').length",
+    ),
+    0,
+    "底部摘要不再重复管理操作",
+  );
+  await evaluate(
+    "document.activeElement.blur();document.querySelector('[data-round-node=u11]').scrollIntoView({block:'center'})",
+  );
+  await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+  assert.equal(
+    await evaluate("matchMedia('(hover:hover) and (pointer:fine)').matches"),
+    true,
+    "悬浮验收运行在真实细指针媒体模式，不能把触屏常显当作 hover 成功",
+  );
+  await until(
+    "getComputedStyle(document.querySelector('[data-round-node=u11] .branch-round-actions')).opacity==='0'",
+  );
+  const currentBox = await evaluate(
+    "(()=>{const box=document.querySelector('[data-round-node=u11] .branch-round-card').getBoundingClientRect();return{x:box.left+20,y:box.top+20}})()",
+  );
+  await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...currentBox });
+  await until(
+    "getComputedStyle(document.querySelector('[data-round-node=u11] .branch-round-actions')).opacity==='1'",
+  );
+  assert.equal(
+    await evaluate(
+      "!!document.querySelector('[data-round-node=u11] [data-branch-action=rewind]')",
+    ),
+    false,
+    "当前位置不能同时提供退回按钮",
+  );
+  await evaluate("document.querySelector('[data-round-node=u11]').focus()");
+  await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+  await until(
+    "getComputedStyle(document.querySelector('[data-round-node=u11] .branch-round-actions')).opacity==='1'",
+  );
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Tab",
+    code: "Tab",
+    windowsVirtualKeyCode: 9,
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Tab",
+    code: "Tab",
+    windowsVirtualKeyCode: 9,
+  });
+  await until("document.activeElement.dataset.branchAction==='fork'");
+  const keyboardCommands = await evaluate("panelFixture.commands.length");
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+    text: "\r",
+    unmodifiedText: "\r",
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+  });
+  await until(`panelFixture.commands.length===${keyboardCommands + 1}`);
+  await until(
+    "document.activeElement.dataset.branchAction==='fork' && document.activeElement.closest('[data-round-node]').dataset.roundNode==='u11'",
+  );
+  assert.equal(
+    await evaluate("panelFixture.commands.at(-1).entryId"),
+    113,
+    "键盘激活命中当前位置，补刷保留按钮焦点",
+  );
+  assert.equal(
+    await evaluate(
       "document.querySelector('[data-round-tree]').textContent.includes('隐藏的工具日志')",
     ),
     false,
@@ -289,19 +376,21 @@ try {
     "document.querySelector('[data-round-node=u10]').dispatchEvent(new MouseEvent('click',{bubbles:true}))",
   );
   assert.equal(
-    await evaluate("!!document.querySelector('[data-branch-action=fork]')"),
+    await evaluate(
+      "!!document.querySelector('[data-round-node=u10] [data-branch-action=fork]')",
+    ),
     false,
     "历史节点只有退回入口",
   );
   assert.equal(
     await evaluate(
-      "document.querySelector('[data-branch-action=rewind]').dataset.entryId",
+      "document.querySelector('[data-round-node=u10] [data-branch-action=rewind]').dataset.entryId",
     ),
     "103",
     "退回目标是整轮最后的已提交答复，不是其中某次工具调用",
   );
   await evaluate(
-    "document.querySelector('[data-branch-action=rewind]').click()",
+    "document.querySelector('[data-round-node=u10] [data-branch-action=rewind]').click()",
   );
   assert.deepEqual(await evaluate("panelFixture.commands.at(-1)"), {
     command: "rewind",
@@ -326,6 +415,116 @@ try {
     mode: "tail",
     expectedEntryId: 113,
   });
+  await evaluate("panelFixture.tree('4',{...roundModel,idle:false})");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-current=true] [data-branch-action=fork]').disabled",
+    ),
+    false,
+    "忙碌时仍可创建原生快照分支",
+  );
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('[data-current=false] [data-branch-action=rewind]')].every(button=>button.disabled)",
+    ),
+    true,
+    "忙碌时每个历史节点都禁止退回",
+  );
+  await evaluate("panelFixture.tree('4',roundModel)");
+  await until(
+    "[...document.querySelectorAll('[data-current=false] [data-branch-action=rewind]')].every(button=>!button.disabled)",
+  );
+  if (process.env.PI_SIDEBAR_UI_SCREENSHOTS)
+    await mkdir(process.env.PI_SIDEBAR_UI_SCREENSHOTS, { recursive: true });
+  for (const theme of ["light", "dark"]) {
+    await evaluate(
+      `document.body.classList.toggle('dark',${theme === "dark"});document.documentElement.dataset.theme=${JSON.stringify(theme)};document.querySelector('[data-round-node=u4]').scrollIntoView({block:'center'});document.querySelector('[data-round-node=u4]').focus()`,
+    );
+    await until(
+      "getComputedStyle(document.querySelector('[data-round-node=u4] .branch-round-actions')).opacity==='1'",
+    );
+    const contrast = await evaluate(
+      `(${measureSurfaceContrast.toString()})(['.branch-round-number','.branch-round-question','.branch-round-answer','[data-round-node=u4] .branch-round-action','.extension-page-choice[aria-current] strong','.extension-page-choice:not([aria-current]) strong'])`,
+    );
+    assert.equal(contrast.length, 6);
+    assert.ok(
+      contrast.every((item) => item.ratio >= 4.5),
+      `${theme} 轮次文本对比度：${JSON.stringify(contrast)}`,
+    );
+    if (process.env.PI_SIDEBAR_UI_SCREENSHOTS) {
+      const screenshot = await call("Page.captureScreenshot", {
+        format: "png",
+      });
+      await writeFile(
+        join(process.env.PI_SIDEBAR_UI_SCREENSHOTS, `branches-${theme}.png`),
+        Buffer.from(screenshot.data, "base64"),
+      );
+    }
+  }
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await evaluate(
+    "document.querySelector('[data-round-node=u11]').scrollIntoView({block:'center'});document.querySelector('[data-round-node=u11]').focus()",
+  );
+  await until(
+    "(()=>{const box=document.querySelector('[data-round-node=u11] [data-branch-action=fork]').getBoundingClientRect();return box.left>=0 && box.right<=390 && box.width>=44})()",
+  );
+  assert.equal(
+    await evaluate("document.documentElement.scrollWidth<=innerWidth"),
+    true,
+    "390px 下页面不横向溢出，节点动作仍可见",
+  );
+  await until(
+    "getComputedStyle(document.querySelector('[data-round-node=u11] .branch-round-actions')).opacity==='1'",
+  );
+  if (process.env.PI_SIDEBAR_UI_SCREENSHOTS) {
+    const screenshot = await call("Page.captureScreenshot", { format: "png" });
+    await writeFile(
+      join(process.env.PI_SIDEBAR_UI_SCREENSHOTS, "branches-narrow.png"),
+      Buffer.from(screenshot.data, "base64"),
+    );
+  }
+  await call("Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 1,
+  });
+  await until("matchMedia('(pointer:coarse)').matches");
+  await evaluate("document.activeElement.blur()");
+  await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+  await until(
+    "getComputedStyle(document.querySelector('[data-round-node=u11] .branch-round-actions')).opacity==='1'",
+  );
+  assert.ok(
+    await evaluate(
+      "document.querySelector('[data-round-node=u11] [data-branch-action=fork]').getBoundingClientRect().height>=44",
+    ),
+    "触屏无需悬浮，主操作保留至少 44px 触达高度",
+  );
+  await call("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+  assert.equal(
+    await evaluate(
+      "getComputedStyle(document.querySelector('.branch-round-actions')).transitionDuration",
+    ),
+    "0s",
+    "减少动态效果偏好覆盖悬浮渐变",
+  );
+  await call("Emulation.setEmulatedMedia", { features: [] });
+  await call("Emulation.setTouchEmulationEnabled", { enabled: false });
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 800,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await evaluate(
+    "document.body.classList.remove('dark');document.documentElement.dataset.theme='light'",
+  );
   await evaluate("panelFixture.tree('4',null)");
   await until("!!document.querySelector('[data-node-id=n439]')");
 

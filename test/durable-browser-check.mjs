@@ -528,13 +528,13 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   })()`);
   assert.equal(
     await evaluate(
-      "!!document.querySelector('#view-extensions [data-branch-action=fork]')",
+      "!!document.querySelector('#view-extensions [data-round-node][aria-selected=true] [data-branch-action=fork]')",
     ),
     false,
     "历史轮次不能直接创建分支",
   );
   await evaluate(
-    "[...document.querySelectorAll('#view-extensions [data-branch-action=rewind]')].find((button)=>!button.disabled).click()",
+    "document.querySelector('#view-extensions [data-round-node][aria-selected=true] [data-branch-action=rewind]').click()",
   );
   await until(
     `document.querySelector('${treeRows}[data-current=true]')?.dataset.roundNode===${JSON.stringify(rewindRound)}`,

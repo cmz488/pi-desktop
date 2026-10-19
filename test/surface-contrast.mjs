@@ -61,6 +61,17 @@ export function measureSurfaceContrast(selectors, doc = document) {
     let backgrounds = backdrop;
     for (const ancestor of ancestors) {
       const s = style(ancestor);
+      // SVG 卡片的 fill 不属于 CSS background；foreignObject 中的文字仍要按真实底色验收。
+      if (
+        ancestor.namespaceURI === "http://www.w3.org/2000/svg" &&
+        ancestor.getAttribute("role") === "treeitem"
+      ) {
+        const rect = ancestor.querySelector("rect");
+        if (rect && style(rect).fill !== "none")
+          backgrounds = backgrounds.map((background) =>
+            over(color(style(rect).fill), background),
+          );
+      }
       backgrounds = backgrounds.map((background) =>
         over(color(s.backgroundColor), background),
       );

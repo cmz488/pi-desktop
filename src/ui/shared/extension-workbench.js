@@ -88,6 +88,7 @@ export function createExtensionWorkbench({
     for (const page of pages) {
       const button = element("button", "extension-page-choice");
       button.type = "button";
+      button.classList.toggle("is-builtin", !!page.builtin);
       button.dataset.extensionKey = page.key;
       if (page.key === selected) button.setAttribute("aria-current", "page");
       button.append(
@@ -163,6 +164,7 @@ export function createExtensionWorkbench({
     const changed = detail.dataset.page !== page?.key;
     detail.replaceChildren();
     detail.dataset.page = page?.key ?? "";
+    detail.classList.toggle("is-builtin", !!page?.builtin);
     if (!page) return;
     const meta = element("div", "extension-page-meta");
     meta.append(
@@ -181,7 +183,7 @@ export function createExtensionWorkbench({
             : "保留在原会话中",
       ),
     );
-    detail.append(meta);
+    if (!page.builtin) detail.append(meta);
     if (page.builtin) {
       const content = element(
         "div",
