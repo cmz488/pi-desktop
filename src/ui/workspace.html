@@ -246,28 +246,31 @@
     <dialog id="host-task-dialog" aria-labelledby="host-task-title">
       <header class="host-task-heading">
         <div>
-          <small>HOST · NATIVE TASKS</small>
           <h2 id="host-task-title">任务与子代理</h2>
-          <p>跨 Agent 监控 · 原生任务所有权 · 同一 worker 内运行</p>
+          <p data-host-status role="status" aria-live="polite">读取中…</p>
         </div>
         <div class="host-task-heading-actions">
+          <button
+            type="button"
+            data-host-toggle-compose
+            aria-expanded="false"
+            aria-controls="host-subagent-form"
+          >
+            新建子代理
+          </button>
           <button type="button" data-host-refresh>刷新</button
           ><button type="button" data-host-close aria-label="关闭任务监控">
             ✕
           </button>
         </div>
       </header>
-      <p data-host-status role="status" aria-live="polite">读取中…</p>
       <p data-host-action-status role="status" aria-live="polite" hidden></p>
       <div class="host-task-layout">
-        <form id="host-subagent-form">
-          <h3>发起子代理</h3>
-          <p>在父会话的原生 owned 子会话中后台执行，不阻塞父会话。</p>
+        <form id="host-subagent-form" hidden>
+          <h3>新建子代理</h3>
+          <p>后台执行，继承所选父会话的原生配置。</p>
           <label
-            >Desktop Agent<select
-              name="agent"
-              aria-label="子代理所属 Agent"
-            ></select
+            >Agent<select name="agent" aria-label="子代理所属 Agent"></select
           ></label>
           <label
             >父会话<select
@@ -288,7 +291,7 @@
             ></textarea>
           </label>
           <details>
-            <summary>原生运行配置（默认继承）</summary>
+            <summary>运行设置（默认继承父会话）</summary>
             <label
               >模型<select name="model">
                 <option value="">继承父会话模型</option>
@@ -323,19 +326,18 @@
           <p data-host-launch-status role="status" aria-live="polite"></p>
         </form>
         <section data-host-workers aria-label="全 Host 原生任务"></section>
+        <section class="host-task-inspection">
+          <label
+            >任务详情<select
+              data-host-inspect
+              aria-label="选择要查看的原生任务"
+            ></select
+          ></label>
+          <div data-host-detail tabindex="0" aria-label="原生任务详情">
+            选择任务查看结果与子会话。
+          </div>
+        </section>
       </div>
-      <section class="host-task-inspection">
-        <label
-          >任务结果与过程<select
-            data-host-inspect
-            aria-label="选择要查看的原生任务"
-          ></select
-        ></label>
-        <p>显示原生回执与最近消息预览；未完成、失败和中止不会记作成功。</p>
-        <pre data-host-detail tabindex="0" aria-label="原生任务详情">
-选择任务查看结果与子会话。</pre
-        >
-      </section>
     </dialog>
     <div id="agent-menu" role="menu" aria-label="会话管理" hidden></div>
     <div id="notice" role="status" hidden></div>

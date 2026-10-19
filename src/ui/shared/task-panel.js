@@ -1,4 +1,5 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
+import { dshIcon } from "./dsh-icons.mjs";
 
 /**
  * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
@@ -86,10 +87,17 @@ export function createTaskPanel({
     const button = element(
       "button",
       "outline-button",
-      confirming ? `${label}（再次点击确认）` : label,
+      confirming ? "确认中止" : label,
     );
     button.type = "button";
     button.dataset.taskAction = key;
+    const targetLabel = key.startsWith("cancel:")
+      ? `${label}任务 #${key.slice(7)}`
+      : label;
+    button.setAttribute(
+      "aria-label",
+      confirming ? `再次点击确认${targetLabel}` : targetLabel,
+    );
     if (title) button.title = title;
     button.disabled = !loader.canManage;
     if (button.disabled)
@@ -208,18 +216,20 @@ export function createTaskPanel({
     const tools = data?.tools ?? [];
     const children = data?.conversations ?? [];
     const header = element("header", "task-panel-header");
-    header.append(
+    const heading = element("div", "task-panel-heading");
+    heading.append(
       element("strong", "", "任务与子代理"),
       element(
         "small",
         "",
         data
-          ? `${tasks.length} 个运行中任务 · ${tools.length} 个在跑工具 · ${children.length} 个子会话`
+          ? `${tasks.length} 项任务 · ${tools.length} 个工具 · ${children.length} 个子会话`
           : loading
             ? "读取中…"
             : "",
       ),
     );
+    header.append(heading);
     const actions = element("span", "task-panel-actions");
     const refresh = element("button", "outline-button", "刷新");
     refresh.type = "button";
@@ -230,7 +240,7 @@ export function createTaskPanel({
       actions.append(
         confirmButton(
           "background",
-          "取消后台任务",
+          "中止后台",
           "只取消带后台标记的任务，不影响前台工作",
           () =>
             act(
@@ -249,12 +259,12 @@ export function createTaskPanel({
     header.append(actions);
     root.append(header);
     if (error) root.append(element("p", "task-panel-note", error));
-    if (data && !tasks.length)
+    if (data && !tasks.length && !tools.length && !children.length)
       root.append(
         element(
           "p",
           "task-panel-empty",
-          "本 Agent 当前没有运行中的任务：发起一次提问或让扩展派生任务后，任务树会出现在这里。",
+          "暂无运行中的任务。发送提问后，可在这里查看执行进度。",
         ),
       );
 
@@ -269,39 +279,42 @@ export function createTaskPanel({
         node.dataset.kind = task.kind;
         node.dataset.status = task.status;
         node.style.setProperty("--task-depth", String(depth));
-        node.append(
-          element("span", "task-panel-marker", "◆"),
+        const marker = element("span", "task-panel-marker");
+        marker.innerHTML = dshIcon(
+          task.kind === "desk.subagent-run" ? "branch" : "tasks",
+        );
+        const copy = element("div", "task-panel-copy");
+        const title = element("div", "task-panel-title");
+        title.append(
           element(
             "span",
             "task-panel-label",
             task.name ?? kindLabel(task.kind),
           ),
-          element("span", "tag", statusLabel(task.status)),
+          element("span", "task-panel-state", statusLabel(task.status)),
         );
-        if (task.background) node.append(element("span", "tag", "后台"));
-        if (task.abortRequested) node.append(element("span", "tag", "中止中"));
+        if (task.abortRequested)
+          title.append(element("span", "task-panel-state", "中止中"));
         if (task.schedulerState === "blocked") {
-          const note = element("span", "tag", "无法调度");
+          const note = element("span", "task-panel-state", "无法调度");
           note.title = task.blockedReason ?? "";
-          node.append(note);
+          title.append(note);
         }
-        if (task.waitingOn?.length)
-          node.append(
-            element(
-              "small",
-              "",
-              `等待 ${task.waitingOn.map((id) => `#${id}`).join("、")}`,
-            ),
-          );
-        node.append(
-          element(
-            "small",
-            "",
-            task.owner === null || task.owner === undefined
-              ? "由会话拥有"
-              : `父任务 #${task.owner}`,
-          ),
+        const metadata = [
+          `#${task.id}`,
+          ...(task.background ? ["后台"] : []),
+          ...(task.owner === null || task.owner === undefined
+            ? []
+            : [`父任务 #${task.owner}`]),
+          ...(task.waitingOn?.length
+            ? [`等待 ${task.waitingOn.map((id) => `#${id}`).join("、")}`]
+            : []),
+        ];
+        copy.append(
+          title,
+          element("small", "task-panel-meta", metadata.join(" · ")),
         );
+        node.append(marker, copy);
         const rowActions = element("span", "task-panel-row-actions");
         const pending = waiting;
         const isWaiting =
@@ -348,7 +361,7 @@ export function createTaskPanel({
         rowActions.append(
           confirmButton(
             `cancel:${task.id}`,
-            "取消",
+            "中止",
             "通过原生中止协议取消这个任务及其拥有的工作",
             () =>
               act(
@@ -392,11 +405,21 @@ export function createTaskPanel({
       for (const tool of tools) {
         const node = element("div", "task-panel-row");
         node.dataset.toolName = tool.name;
-        node.append(
+        const copy = element("div", "task-panel-copy");
+        const title = element("div", "task-panel-title");
+        title.append(
           element("span", "task-panel-label", tool.name),
-          element("span", "tag", statusLabel(tool.status) ?? tool.status),
-          element("small", "", `会话 ${tool.conversationId}`),
+          element(
+            "span",
+            "task-panel-state",
+            statusLabel(tool.status) ?? tool.status,
+          ),
         );
+        copy.append(
+          title,
+          element("small", "task-panel-meta", `会话 #${tool.conversationId}`),
+        );
+        node.append(copy);
         list.append(node);
       }
       root.append(list);
@@ -404,21 +427,27 @@ export function createTaskPanel({
 
     if (children.length) {
       const list = element("section", "task-panel-list");
-      list.append(element("strong", "", "子会话（子代理）"));
+      list.append(element("strong", "", "子代理会话"));
       for (const child of children) {
         const node = element("div", "task-panel-row");
         node.dataset.childId = String(child.id);
-        node.append(
+        const copy = element("div", "task-panel-copy");
+        const title = element("div", "task-panel-title");
+        title.append(
           element("span", "task-panel-label", child.name ?? `会话 ${child.id}`),
-          element("span", "tag", child.idle ? "空闲" : "运行中"),
+          element("span", "task-panel-state", child.idle ? "空闲" : "运行中"),
+        );
+        copy.append(
+          title,
           element(
             "small",
-            "",
+            "task-panel-meta",
             child.owner?.taskId === undefined
-              ? `会话 ${child.id}`
-              : `由任务 #${child.owner.taskId} 创建`,
+              ? `会话 #${child.id}`
+              : `会话 #${child.id} · 任务 #${child.owner.taskId}`,
           ),
         );
+        node.append(copy);
         list.append(node);
       }
       root.append(list);

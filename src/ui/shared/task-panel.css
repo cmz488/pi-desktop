@@ -1,85 +1,168 @@
-/* 任务与子代理面板：任务树（缩进）、在跑工具与子会话列表。 */
+/* 同一执行清单用于工作台与 Host；缩进只呈现原生所有权，不产生另一套任务状态。 */
 .task-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
 }
 .task-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.task-panel-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.task-panel-heading > strong {
+  font-size: var(--text-ui-base);
+  font-weight: 600;
 }
 .task-panel-header small,
 .task-panel-note,
 .task-panel-empty,
-.task-panel-row small {
+.task-panel-meta {
   color: var(--muted);
   font-size: var(--text-ui-xs);
 }
 .task-panel-empty,
 .task-panel-note {
   margin: 0;
+  line-height: 1.6;
 }
 .task-panel-actions,
 .task-panel-row-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .task-panel-tree,
 .task-panel-list {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
-.task-panel-list strong {
+.task-panel-list {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.task-panel-list > strong {
   font-size: var(--text-ui-sm);
+  font-weight: 500;
   margin-bottom: 4px;
+  color: var(--muted);
 }
 .task-panel-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px 3px calc(6px + var(--task-depth, 0) * 14px);
-  border-left: 2px solid var(--border);
-  border-radius: 6px;
+  gap: 10px;
+  min-height: 56px;
+  min-width: 0;
+  padding: 8px 8px 8px calc(8px + min(var(--task-depth, 0), 4) * 12px);
+  border-inline-start: 1px solid var(--border);
+  border-radius: 8px;
   font-size: var(--text-ui-sm);
 }
 .task-panel-row:hover {
   background: var(--hover);
 }
 .task-panel-row[data-status="running"] {
-  border-left-color: var(--accent);
+  border-inline-start-color: var(--accent);
 }
-.task-panel-row[data-armed="true"] {
-  border-left-color: var(--danger);
+.task-panel-row:has([data-armed="true"]) {
+  border-inline-start-color: var(--danger);
 }
 .task-panel-marker {
-  width: 12px;
-  text-align: center;
+  display: flex;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
   color: var(--accent);
 }
-.task-panel-label {
-  white-space: nowrap;
+.task-panel-marker svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
-.task-panel-row small {
+.task-panel-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.task-panel-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.task-panel-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
+}
+.task-panel-state {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+}
+.task-panel-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 .task-panel-row-actions {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
-.task-panel-row-actions button {
-  padding: 2px 8px;
+.task-panel .task-panel-row-actions .outline-button,
+.task-panel .task-panel-actions .outline-button {
+  padding: 5px 9px;
+  min-height: 30px;
+  font: inherit;
   font-size: var(--text-ui-xs);
-  opacity: 0.75;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
 }
-.task-panel-row:hover .task-panel-row-actions button,
-.task-panel-row-actions button[data-armed="true"],
-.task-panel-row-actions button:focus-visible {
-  opacity: 1;
+.task-panel .outline-button:hover {
+  background: var(--panel);
+  border-color: var(--control-border);
 }
-.task-panel-row-actions button[data-armed="true"] {
+.task-panel .outline-button[data-armed="true"] {
   border-color: var(--danger);
   color: var(--danger);
+}
+.task-panel .outline-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.task-panel .outline-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 520px) {
+  .task-panel-row {
+    flex-wrap: wrap;
+    column-gap: 8px;
+  }
+  .task-panel-row-actions {
+    padding-block: 2px;
+  }
+}
+@media (pointer: coarse) {
+  .task-panel .task-panel-row-actions .outline-button,
+  .task-panel .task-panel-actions .outline-button {
+    min-height: 44px;
+  }
 }

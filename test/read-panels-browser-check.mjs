@@ -23,7 +23,7 @@ import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
 let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false};
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
-const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,conversationId:Number(id),owner:null,background:true,status:'waiting'}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
+const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,name:'后台资料整理',conversationId:Number(id),owner:null,background:true,status:'waiting'}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
 const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
 const root=document.querySelector('#view-extensions');root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,options),command:async(name,input)=>{commands.push({command:name,...input});return{};},toast:text=>notices.push(text),switchSession:async()=>{}});
@@ -92,6 +92,31 @@ try {
   await until("!!window.panelFixture");
   await evaluate("panelFixture.select('tasks')");
   await until("!!document.querySelector('[data-task-id=\"101\"]')");
+  if (process.env.PI_SIDEBAR_UI_SCREENSHOTS)
+    await mkdir(process.env.PI_SIDEBAR_UI_SCREENSHOTS, { recursive: true });
+  for (const theme of ["light", "dark"]) {
+    await evaluate(
+      `document.body.classList.toggle('dark',${theme === "dark"});document.documentElement.dataset.theme=${JSON.stringify(theme)}`,
+    );
+    const contrast = await evaluate(
+      `(${measureSurfaceContrast.toString()})(['.task-panel-heading strong','.task-panel-heading small','.task-panel-label','.task-panel-state','.task-panel-meta','[data-task-action="wait:101"]'])`,
+    );
+    assert.equal(contrast.length, 6);
+    assert.ok(
+      contrast.every((item) => item.ratio >= 4.5),
+      `${theme} 工作台任务文字对比度：${JSON.stringify(contrast)}`,
+    );
+    if (process.env.PI_SIDEBAR_UI_SCREENSHOTS) {
+      const shot = await call("Page.captureScreenshot", { format: "png" });
+      await writeFile(
+        join(process.env.PI_SIDEBAR_UI_SCREENSHOTS, `tasks-${theme}.png`),
+        Buffer.from(shot.data, "base64"),
+      );
+    }
+  }
+  await evaluate(
+    "document.body.classList.remove('dark');document.documentElement.dataset.theme='light'",
+  );
   await evaluate(
     "panelFixture.hold('tasks','1');document.querySelector('[data-task-refresh]').click()",
   );

@@ -101,6 +101,8 @@ createManagedSubagents({createChild,prepareChild}); // -> {extension,task}
 
 worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=...&taskId=...`。它们同样拒绝远程全 worker 读取；未声明检查能力时返回 `{supported:false}`。发起、等待与中止继续复用既有 `/api/command`，未知 task 与越界目标均为 404。
 
+界面默认先显示任务清单，发起表单按需展开并保留草稿；展开／收起不开始或中止任务。桌面清单与详情并列，窄屏纵向阅读。结果按原生 outcome、子会话、消息角色与实时片段分区，以纯文本写入 DOM；终态、工具名及预览裁剪标记仍可见。图不变也读取新片段；相同详情不重建 DOM，更新保留阅读位置，失败后同内容的成功读取可恢复显示。
+
 ## 不变量
 
 - Durable 是任务、submission、终态、所有权及恢复的唯一真相；Host 仅聚合视图和转发，不维护另一份任务状态或调度队列。
@@ -146,7 +148,7 @@ worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=
 ## 可执行证据
 
 - `test/host-task-management.test.mjs`：真实 Host／worker HTTP 聚合、幂等、owned 关系／单 writer、失败与终态回执、等待断连、非串行观察、权限／非法与越界目标、重启与原生工具 scope、单 worker 暂停的局部超时。
-- `test/host-tasks-browser-check.mjs`：真实 Chromium 发起 A/B、两个 SQLite 的同号 task 隔离、等待取消、快速关闭／重开与 Escape、图不变时的真实流式片段、结果、只读能力、聚合更新的键盘焦点与 390px 窄屏边界。
+- `test/host-tasks-browser-check.mjs`：真实 Chromium 发起 A/B、两个 SQLite 的同号 task 隔离、等待取消、快速关闭／重开与 Escape、图不变时的真实流式片段、结果、只读能力、聚合更新的键盘焦点、默认收起／按需发起与草稿保留、结构化实时输出、浅／深色 4.5:1 文本对比度与 390px 窄屏边界。
 - `test/durable-task-graph.test.mjs`、`test/task-waits.test.mjs` 与 `test/long-task-wait-browser-check.mjs`：复用的所有权、租约与等待生命周期。
 - `test/boundary-contracts.test.mjs`：追加的 workspace／supervisor 接口和命令形状。
 - `npm run test:workspace:browser`、`npm test`、`npm run check`、`npm run package:check`。

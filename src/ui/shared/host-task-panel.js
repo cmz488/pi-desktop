@@ -20,6 +20,18 @@ const OUTCOMES = {
   orphaned: "无法恢复",
   faulted: "执行故障",
 };
+const TASK_STATES = {
+  pending: "排队",
+  running: "运行中",
+  waiting: "等待",
+  completing: "收尾",
+};
+const MESSAGE_ROLES = {
+  user: "用户",
+  assistant: "助手",
+  toolResult: "工具",
+  custom: "扩展",
+};
 const STATES = {
   running: "运行中",
   stopped: "已停止",
@@ -44,7 +56,13 @@ export function createHostTaskPanel({ root, request }) {
   const field = (name) => form.elements.namedItem(name);
   const panels = new Map();
   const inspectionTargets = new Map();
-  let timer, published, inspection, detailRequest, launchRequest, attempt;
+  let timer,
+    published,
+    inspection,
+    detailRequest,
+    launchRequest,
+    attempt,
+    detailSignature;
   let alive = true,
     initialized = false,
     launching = false;
@@ -75,9 +93,16 @@ export function createHostTaskPanel({ root, request }) {
     }
   }
   function cancelDetail() {
+    detailSignature = undefined;
     detailRequest?.abort();
     detailRequest = undefined;
     $("[data-host-detail]").setAttribute("aria-busy", "false");
+  }
+  function showComposer(open) {
+    form.hidden = !open;
+    const toggle = $("[data-host-toggle-compose]");
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "收起表单" : "新建子代理";
   }
   function clearPanels() {
     for (const entry of panels.values()) entry.panel.dispose();
@@ -86,6 +111,7 @@ export function createHostTaskPanel({ root, request }) {
     cancelDetail();
     $("[data-host-workers]").replaceChildren();
     $("[data-host-spawn]").disabled = true;
+    showComposer(false);
     $("[data-host-action-status]").hidden = true;
     $("[data-host-detail]").textContent = "选择任务查看结果与子会话。";
   }
@@ -244,7 +270,7 @@ export function createHostTaskPanel({ root, request }) {
       );
       if (!roots.length)
         block.append(
-          element("p", "host-task-note", "当前没有运行任务或 owned 子会话。"),
+          element("p", "host-task-note", "暂无运行任务或子代理会话。"),
         );
       for (const scope of roots) {
         const key = `${workerKey(worker)}:${scope.id}`;
@@ -401,11 +427,13 @@ export function createHostTaskPanel({ root, request }) {
     if (!visible()) return;
     const data = monitor.data;
     $("[data-host-status]").setAttribute("aria-busy", String(monitor.loading));
-    $("[data-host-status]").textContent = monitor.error
+    const status = monitor.error
       ? `读取失败：${monitor.error}；不推断任务已停止。`
       : data
-        ? `${data.workers.length} 个 Agent · ${data.workers.reduce((n, row) => n + (row.data?.tasks.length ?? 0), 0)} 个原生任务${data.partial ? " · 部分 worker 不可读取" : ""}${monitor.loading ? " · 更新中…" : ""}`
+        ? `${data.workers.length} 个 Agent · ${data.workers.reduce((n, row) => n + (row.data?.tasks.length ?? 0), 0)} 项任务${data.partial ? " · 部分 Agent 暂不可读" : ""}`
         : "读取中…";
+    if ($("[data-host-status]").textContent !== status)
+      $("[data-host-status]").textContent = status;
     if (!data) return;
     if (data === published) {
       // 任务图的 ETag 不涵盖 pi.live 片段；图未变不代表所选子会话没有新输出。
@@ -416,6 +444,85 @@ export function createHostTaskPanel({ root, request }) {
     updateForm(data.workers);
     renderWorkers(data.workers);
     updateInspection(data.workers);
+  }
+  function renderDetail(data, label) {
+    const signature = JSON.stringify({
+      label,
+      task: data.task,
+      children: data.children,
+    });
+    if (signature === detailSignature) return;
+    const detail = $("[data-host-detail]");
+    const scroll = detail.scrollTop;
+    const content = element("div", "host-task-result");
+    const outcome = data.task.outcome?.status;
+    content.dataset.hostOutcome = outcome ?? data.task.status;
+    const heading = element("header", "host-task-result-heading");
+    heading.append(
+      element(
+        "strong",
+        "",
+        OUTCOMES[outcome] ?? TASK_STATES[data.task.status] ?? data.task.status,
+      ),
+      element("small", "", `原生任务 #${data.task.id}`),
+    );
+    content.append(heading, element("p", "host-task-detail-label", label));
+    if (data.task.outcome?.error)
+      content.append(
+        element("p", "host-task-error", data.task.outcome.error.message),
+      );
+    const message = (role, text, partial = false) => {
+      const node = element("section", "host-task-message");
+      node.dataset.hostMessageRole = role;
+      if (partial) node.dataset.hostPartial = "true";
+      node.append(
+        element(
+          "small",
+          "",
+          partial ? "正在输出" : (MESSAGE_ROLES[role] ?? role),
+        ),
+        element("div", "host-task-message-body", text),
+      );
+      return node;
+    };
+    for (const child of data.children) {
+      const conversation = element("section", "host-task-conversation");
+      const title = element("h4", "", child.name);
+      title.append(element("small", "", `子会话 #${child.id}`));
+      conversation.append(title);
+      for (const entry of child.messages) {
+        const block = message(entry.role, entry.text);
+        if (entry.toolName)
+          block.querySelector("small").textContent = `工具 ${entry.toolName}`;
+        conversation.append(block);
+      }
+      if (child.partial)
+        conversation.append(message("assistant", child.partial.text, true));
+      if (child.messagesTruncated || child.toolsTruncated)
+        conversation.append(
+          element(
+            "p",
+            "host-task-note",
+            "仅显示最近的消息与工具记录，完整内容仍保存在子会话。",
+          ),
+        );
+      for (const tool of child.tools) {
+        const node = message("toolResult", tool.output);
+        node.querySelector("small").textContent =
+          `${tool.name} · ${OUTCOMES[tool.status] ?? TASK_STATES[tool.status] ?? tool.status}`;
+        conversation.append(node);
+      }
+      content.append(conversation);
+    }
+    if (!data.children.length && data.task.outcome?.result?.answer)
+      content.append(message("assistant", data.task.outcome.result.answer));
+    if (data.hasMoreChildren)
+      content.append(
+        element("p", "host-task-note", "部分子会话未显示，完整记录仍保留。"),
+      );
+    detail.replaceChildren(content);
+    detail.scrollTop = scroll;
+    detailSignature = signature;
   }
   async function inspect() {
     if (!visible() || !inspection || detailRequest) return;
@@ -432,28 +539,12 @@ export function createHostTaskPanel({ root, request }) {
       );
       if (!visible() || inspection !== target || controller.signal.aborted)
         return;
-      const lines = [
-        `${label}\n原生状态：${data.task.status}${data.task.outcome ? ` · ${OUTCOMES[data.task.outcome.status] ?? data.task.outcome.status}` : ""}`,
-      ];
-      if (data.task.outcome?.error) lines.push(data.task.outcome.error.message);
-      for (const child of data.children) {
-        lines.push(`── ${child.name} · 会话 #${child.id} ──`);
-        for (const message of child.messages)
-          lines.push(
-            `${message.role}${message.toolName ? ` / ${message.toolName}` : ""}: ${message.text}`,
-          );
-        if (child.partial) lines.push(`当前片段: ${child.partial.text}`);
-        for (const tool of child.tools)
-          lines.push(`工具 ${tool.name} · ${tool.status}\n${tool.output}`);
-      }
-      if (!data.children.length && data.task.outcome?.result?.answer)
-        lines.push(data.task.outcome.result.answer);
-      const text = lines.join("\n\n");
-      if ($("[data-host-detail]").textContent !== text)
-        $("[data-host-detail]").textContent = text;
+      renderDetail(data, label);
     } catch (error) {
-      if (visible() && inspection === target && !controller.signal.aborted)
+      if (visible() && inspection === target && !controller.signal.aborted) {
+        detailSignature = undefined;
         $("[data-host-detail]").textContent = error.message;
+      }
     } finally {
       if (detailRequest === controller) {
         detailRequest = undefined;
@@ -557,6 +648,10 @@ export function createHostTaskPanel({ root, request }) {
     void inspect();
   };
   form.onsubmit = launch;
+  $("[data-host-toggle-compose]").onclick = () => {
+    showComposer(form.hidden);
+    if (!form.hidden) field("prompt").focus();
+  };
   $("[data-host-refresh]").onclick = () =>
     void monitor.refresh({ force: true });
   $("[data-host-close]").onclick = () => {

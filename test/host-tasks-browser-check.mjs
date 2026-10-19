@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { desktopFixture, until as untilValue } from "./desktop-fixture.mjs";
 import { writeFile } from "node:fs/promises";
 import { browserDriver } from "./durable-browser-driver.mjs";
+import { measureSurfaceContrast } from "./surface-contrast.mjs";
 
 // 使用默认 Host→worker→原生 SDK 与本地 provider；不能用独立面板假数据替代跨 writer 验证。
 const gates = {
@@ -85,6 +86,32 @@ try {
   await until(
     "document.querySelector('#host-task-dialog').open && document.querySelector('#host-subagent-form').elements.agent.options.length===3",
   );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('#host-subagent-form').hidden && !document.querySelector('#host-subagent-form').getClientRects().length",
+    ),
+    true,
+    "任务监控默认先展示清单，发起表单按需打开",
+  );
+  await evaluate(
+    "document.querySelector('[data-host-toggle-compose]').click()",
+  );
+  await until(
+    "!document.querySelector('#host-subagent-form').hidden && document.activeElement.name==='prompt'",
+  );
+  await evaluate(
+    "document.querySelector('#host-subagent-form').elements.prompt.value='保留的草稿';document.querySelector('[data-host-toggle-compose]').click()",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('#host-subagent-form').hidden && document.querySelector('#host-subagent-form').elements.prompt.value==='保留的草稿'",
+    ),
+    true,
+    "收起表单仅改变展示，不丢发起草稿",
+  );
+  await evaluate(
+    "document.querySelector('[data-host-toggle-compose]').click()",
+  );
   await selectAgent(a.id);
   await evaluate(
     "(() => {const f=document.querySelector('#host-subagent-form');f.elements.name.value='代理 A';f.elements.prompt.value='HOST_A';f.requestSubmit();})()",
@@ -118,6 +145,23 @@ try {
     "受控两个 SQLite 产生同号任务，必须靠 Agent 命名空间隔离",
   );
   await evaluate(
+    "document.querySelector('[data-host-toggle-compose]').click()",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.host-task-inspection').getBoundingClientRect().left > document.querySelector('[data-host-workers]').getBoundingClientRect().right",
+    ),
+    true,
+    "桌面任务清单与详情并列，不把详情推到发起表单下方",
+  );
+  if (process.env.PI_HOST_TASK_SCREENSHOTS) {
+    const shot = await call("Page.captureScreenshot", { format: "png" });
+    await writeFile(
+      join(process.env.PI_HOST_TASK_SCREENSHOTS, "host-tasks-active.png"),
+      Buffer.from(shot.data, "base64"),
+    );
+  }
+  await evaluate(
     `${row(a.id, aTask.id)}.querySelector('[data-task-action="wait:${aTask.id}"]').click()`,
   );
   await until(`${row(a.id, aTask.id)}?.querySelector('[data-waiting="true"]')`);
@@ -137,6 +181,13 @@ try {
     `${row(a.id, aTask.id)}.querySelector('[data-task-action="cancel:${aTask.id}"]').click()`,
   );
   await until(`${row(a.id, aTask.id)}?.querySelector('[data-armed="true"]')`);
+  assert.equal(
+    await evaluate(
+      `${row(a.id, aTask.id)}.querySelector('[data-armed="true"]').textContent`,
+    ),
+    "确认中止",
+    "确认保持独立第二次操作，但不靠长句撑破任务行",
+  );
   assert.equal(
     await evaluate(
       "document.querySelector('#host-subagent-form').elements.agent.value",
@@ -255,6 +306,13 @@ try {
   await until(
     "document.querySelector('[data-host-detail]').textContent.includes('HOST_B_STREAM_FIRST') && document.querySelector('[data-host-detail]').getAttribute('aria-busy')==='false'",
   );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-host-detail] [data-host-partial]')?.textContent.includes('HOST_B_STREAM_FIRST')",
+    ),
+    true,
+    "子代理实时输出使用独立可读段，不挤成等宽日志串",
+  );
   const beforeStream = await f.call("/api/host/tasks");
   streamNext.resolve();
   await untilValue(
@@ -295,11 +353,19 @@ try {
     ),
     true,
   );
-  if (process.env.PI_HOST_TASK_SCREENSHOTS) {
-    for (const mode of ["light", "dark"]) {
-      await evaluate(
-        `(async()=>{document.documentElement.dataset.theme=${JSON.stringify(mode)};for(const frame of document.querySelectorAll('iframe'))frame.contentDocument?.body?.classList.toggle('dark',${mode === "dark"});getComputedStyle(document.body).color;await Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));})()`,
-      );
+  for (const mode of ["light", "dark"]) {
+    await evaluate(
+      `(async()=>{document.documentElement.dataset.theme=${JSON.stringify(mode)};for(const frame of document.querySelectorAll('iframe'))frame.contentDocument?.body?.classList.toggle('dark',${mode === "dark"});getComputedStyle(document.body).color;await Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));})()`,
+    );
+    const contrast = await evaluate(
+      `(${measureSurfaceContrast.toString()})(['.host-task-heading h2','[data-host-status]','.host-task-worker h3','.task-panel-label','.task-panel-meta','.task-panel-state','.host-task-result-heading strong','.host-task-message > small','.host-task-message-body','[data-host-toggle-compose]'])`,
+    );
+    assert.equal(contrast.length, 10);
+    assert.ok(
+      contrast.every((item) => item.ratio >= 4.5),
+      `${mode} Host 任务文字对比度：${JSON.stringify(contrast)}`,
+    );
+    if (process.env.PI_HOST_TASK_SCREENSHOTS) {
       const shot = await call("Page.captureScreenshot", { format: "png" });
       await writeFile(
         join(process.env.PI_HOST_TASK_SCREENSHOTS, `host-tasks-${mode}.png`),
@@ -321,6 +387,13 @@ try {
     true,
     "窄屏窗口有界，不把任务横向滚动扩散到页面",
   );
+  if (process.env.PI_HOST_TASK_SCREENSHOTS) {
+    const shot = await call("Page.captureScreenshot", { format: "png" });
+    await writeFile(
+      join(process.env.PI_HOST_TASK_SCREENSHOTS, "host-tasks-narrow.png"),
+      Buffer.from(shot.data, "base64"),
+    );
+  }
   assert.deepEqual(driver.errors, [], "真实 Host 任务窗口不产生浏览器错误");
   console.log(
     "Host tasks browser: launch A/B, scoped wait/cancel, observer disposal, native result and read-only capability passed",
