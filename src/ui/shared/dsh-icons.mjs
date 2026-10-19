@@ -1,5 +1,7 @@
 // SVG artwork adapted from DeepSeek Harness (MIT). See NOTICE.
 const artwork = {
+  tasks:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m6 11 3 3 4-5m2 0h3m-3 6h3"/></svg>',
   // Original workbench glyph, matched to the existing 1.5px stroke system.
   extensions:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7m-3.5-3.5v7"/></svg>',

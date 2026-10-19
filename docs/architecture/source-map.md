@@ -33,6 +33,10 @@
 
 归档位置同时受代码规范约束：调用者视角的契约写在 `docs/architecture/interfaces/`，实现原因写在源码注释，命名与术语见 [代码与文档规范](../guides/code-style.md)。
 
+## 原生任务管理 seam
+
+`src/control-plane/host-tasks.mjs` 只聚合与定向转发；`src/agent/managed-subagents.mjs` 用原生 task／owned conversation／submission 组合一次委托；`src/ui/shared/host-task-panel.js` 复用会话面板的确认与观察生命周期。状态、模型循环、调度与恢复继续属于 Durable，子会话资源仍经既有能力 seam 绑定。接口和可执行证据见 [全 Host 任务与子代理](interfaces/host-tasks.md)。
+
 ## 迁移范围
 
 此次只整理归属与路径，没有顺手拆分聊天大文件、改写 Pi 执行链或删除兼容模式。旧文献原文保存在历史／参考目录。后续提取行为时，应让调用者和测试通过同一 interface 验证，避免增加 shallow 转发 module。

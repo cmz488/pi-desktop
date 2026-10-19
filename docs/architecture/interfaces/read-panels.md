@@ -6,6 +6,7 @@
 - `src/ui/shared/branch-tree-panel.js`、`task-panel.js`：分别展示分支树与任务读模型，业务动作沿用既有命令路径。
 - `src/ui/shared/extension-workbench.js`：为所有内置页更新上下文，包括当前未选中的页；只列可用入口。
 - `src/ui/chat/chat.js`：传入选中会话与权限，在切换开始时立即使旧面板失效，在页面暂停／恢复时管理读取。
+- `src/ui/shared/host-task-panel.js`：在全 Host 窗口中复用任务面板与加载器；每个实例额外固定 Agent／generation／owner scope，协议见 [Host 任务契约](host-tasks.md)。
 
 ## 签名
 
@@ -73,5 +74,6 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁。
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
 - `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
+- `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task、跨发起表单目标管理、关闭／快速重开失效、聚合更新保留键盘焦点。
 - `test/bridge.test.mjs`：完整／chat 快照都只按 Host 声明返回读能力。
 - `npm run test:extensions:browser`、`test:workspace:browser` 纳入上述浏览器证据；静态 module 统一经资产清单发布并由 `package:check` 验证。

@@ -20,6 +20,7 @@ const STATUS_LABELS = {
 const KIND_LABELS = {
   "pi.generation": "模型回合",
   "pi.tool": "工具调用",
+  "desk.subagent-run": "子代理",
 };
 
 export function createTaskPanel({
@@ -239,7 +240,7 @@ export function createTaskPanel({
                 sessionId,
                 background: true,
               },
-              "已取消后台任务",
+              "已提交后台任务中止请求",
               identity,
             ),
           identity,
@@ -270,10 +271,20 @@ export function createTaskPanel({
         node.style.setProperty("--task-depth", String(depth));
         node.append(
           element("span", "task-panel-marker", "◆"),
-          element("span", "task-panel-label", kindLabel(task.kind)),
+          element(
+            "span",
+            "task-panel-label",
+            task.name ?? kindLabel(task.kind),
+          ),
           element("span", "tag", statusLabel(task.status)),
         );
         if (task.background) node.append(element("span", "tag", "后台"));
+        if (task.abortRequested) node.append(element("span", "tag", "中止中"));
+        if (task.schedulerState === "blocked") {
+          const note = element("span", "tag", "无法调度");
+          note.title = task.blockedReason ?? "";
+          node.append(note);
+        }
         if (task.waitingOn?.length)
           node.append(
             element(
@@ -338,7 +349,7 @@ export function createTaskPanel({
           confirmButton(
             `cancel:${task.id}`,
             "取消",
-            "中止这个任务；被中止的工作放开后命令才会返回",
+            "通过原生中止协议取消这个任务及其拥有的工作",
             () =>
               act(
                 {
@@ -347,7 +358,7 @@ export function createTaskPanel({
                   sessionId,
                   taskId,
                 },
-                "已取消该任务",
+                "已提交任务中止请求",
                 identity,
               ),
             identity,

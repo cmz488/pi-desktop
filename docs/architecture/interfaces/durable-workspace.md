@@ -42,7 +42,13 @@ workspace.importNative(id, entries)                  // 导入原生树（归档
 workspace.install(extension)                         // 运行期装入 Durable 扩展
 workspace.subscribe(listener)                        // -> unsubscribe；变更通知
 workspace.close()                                    // 释放 Harness、锁与资源
+workspace.capabilities;                              // 显式 taskInspection/manageTasks/spawnSubagent
+workspace.monitor();                                 // 跨内部会话的原生任务检查读模型
+workspace.taskDetail(id, taskId);                      // 同 owned 范围的持久回执与展示预览
+workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，须先于 resume
 ```
+
+全 Host 组合、子代理准入与上述追加接口见 [Host 任务契约](host-tasks.md)；受管 owned 子会话仍只出现在 `children`，不变成第二个 Desktop Agent。
 
 `read()` 的 `recovery` 形状（追加字段，不影响既有消费方）：
 
@@ -57,18 +63,19 @@ workspace.close()                                    // 释放 Harness、锁与�
 
 `execute` 的命令表：
 
-| 命令        | 输入                                  | 语义                                                                                     |
-| ----------- | ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `create`    | `{ patch, profile }`                  | 新建会话；未指定扩展时用 registry 当前安装集                                             |
-| `send`      | `{ id, message, ... }`                | 提交一次 input；run 结束时回答作为 entry 落盘                                            |
-| `abort`     | `{ id }`                              | 中止当前 run，队列中的消息保留                                                           |
-| `compact`   | `{ id, ... }`                         | 触发压缩（插入 summary entry，原 entry 保留）                                            |
-| `configure` | `{ id, patch }`                       | 修改该会话的 agent 文档（模型／思考级别／扩展／工具）                                    |
-| `fork`      | `{ id, entryId }`                     | 从某个 entry 分叉出**新的会话**，名称追加"· 分支"                                        |
-| `rewind`    | `{ id, entryId, messages, origins? }` | 退回：追加 `desk.rewind` 头部标记，其 `model` 就是退回点之前的模型上下文；原条目全部保留 |
-| `wait`      | `{ id, taskId? }`                     | 只观察指定任务终态或会话空闲；可选第三参数 signal 仅取消这次观察，不中止任务             |
-| `cancel`    | `{ id, taskId?, background? }`        | 中止范围内任务，完整归属与后台语义见任务契约                                             |
-| 其他        | —                                     | `DeskError(404, "不支持的 Agent 操作")`                                                  |
+| 命令             | 输入                                        | 语义                                                                                     |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `create`         | `{ patch, profile }`                        | 新建会话；未指定扩展时用 registry 当前安装集                                             |
+| `send`           | `{ id, message, ... }`                      | 提交一次 input；run 结束时回答作为 entry 落盘                                            |
+| `abort`          | `{ id }`                                    | 中止当前 run，队列中的消息保留                                                           |
+| `compact`        | `{ id, ... }`                               | 触发压缩（插入 summary entry，原 entry 保留）                                            |
+| `configure`      | `{ id, patch }`                             | 修改该会话的 agent 文档（模型／思考级别／扩展／工具）                                    |
+| `fork`           | `{ id, entryId }`                           | 从某个 entry 分叉出**新的会话**，名称追加"· 分支"                                        |
+| `rewind`         | `{ id, entryId, messages, origins? }`       | 退回：追加 `desk.rewind` 头部标记，其 `model` 就是退回点之前的模型上下文；原条目全部保留 |
+| `wait`           | `{ id, taskId? }`                           | 只观察指定任务终态或会话空闲；可选第三参数 signal 仅取消这次观察，不中止任务             |
+| `cancel`         | `{ id, taskId?, background? }`              | 中止范围内任务，完整归属与后台语义见任务契约                                             |
+| `subagent.spawn` | `{ id, requestId, prompt, name?, config? }` | 原生 background task + owned conversation + 幂等 submission；详见 Host 任务契约          |
+| 其他             | —                                           | `DeskError(404, "不支持的 Agent 操作")`                                                  |
 
 ## 不变量
 
@@ -84,6 +91,7 @@ workspace.close()                                    // 释放 Harness、锁与�
 - **`rewind` 只改上下文起点，不删历史**：`desk.rewind` 是头部标记（`head: "self"`），Durable 内核因此把模型上下文重建为该标记携带的消息（退回点之前的前缀），其后的条目不再进入上下文；原生日志的 leaf 移动由会话模块用 Pi 的 `branch()` 在同一文件里完成。前缀消息由 Host 用 Pi 自己的推导从原生日志取得，命令本身不自行推导上下文。
 - **退回来源必须可对齐**：Host 从同一个 Pi 投影同时取得消息与 `origins: number[]`，按可见 `user`／`assistant`／`toolResult`／`custom` 顺序排列，不包含 UI 摘要和 system。来源必须是该会话的已知 entry；原点与标记原子提交，不能因数量不符就省略映射。直接调用方的简单旧调用仍兼容，不能对齐的复杂历史返回 409，不再伪装成标记来源。
 - **模型与 UI 角色分离**：退回消息通过 Pi `convertToLlm` 写入 model；有摘要／custom 等原生角色时，原始贡献保存在同一标记的只读 UI 数据里，卡片与消息原点不会因规范化而丢失。
+- **原生子代理不产生新 writer**：原生 task 检查点、owned 会话与 submission 复用当前 Harness；模型与工具循环、取消与恢复仍由 Durable 承担。子资源绑定在恢复前完成，不借用父会话工具闭包。
 - **等待不拥有执行生命周期**：`execute("wait", input, { signal })` 把 signal 仅用于 Durable 的等待 Context；其他命令沿用原有上下文。取消观察不会 abort 任务，指定任务的所有权校验不变。HTTP 额外的租约／配额、前端续租与总预算见 [任务契约](task-graph.md)。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
 
@@ -123,6 +131,7 @@ workspace.close()                                    // 释放 Harness、锁与�
 - `test/durable-features.test.mjs`：会话、工具、权限、归档与重启语义。
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
+- 全 Host 与子代理：`test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`，覆盖同 writer、重启幂等、原生工具 scope 与管理身份。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
 - 会话树与分叉来源：`test/durable-session-tree.test.mjs`；任务图与子会话：`test/durable-task-graph.test.mjs` —— 分叉（独立会话与独立用量）与退回（上下文重建到该点、被放弃的回合仍在存储与原生日志里、JSONL 的 parent id 与 active entry 一致）。
 - 定点重启：`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）在回答生成与工具调用两种中断点分别 SIGKILL 宿主，断言恢复可见、回答只提交一次、已提交的生成不被重发、未安全重放的工具不重复执行。

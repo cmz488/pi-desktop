@@ -2,7 +2,7 @@
 
 ## 位置与职责
 
-- `src/agent/durable-resources.mjs`：每个 Agent 一个 Pi 资源会话宿主（经 `startWebSlot`），把 Pi 的工具、扩展、技能、MCP、交互、包管理与审批能力投影成一个**只读工具来源 + 动作入口**。
+- `src/agent/durable-resources.mjs`：每个受管原生会话（含 owned 子代理）一个 Pi 资源会话宿主（经 `startWebSlot`），把 Pi 的工具、扩展、技能、MCP、交互、包管理与审批能力投影成一个**只读工具来源 + 动作入口**。
 - `src/agent/native-runtime.mjs`：把 Durable 的回合镜像成 Pi 会话生命周期事件，并把 Pi 的消息入口委托给当前 Durable Agent。
 - `src/server/web.mjs` 的 `startWebSlot(options)`：真正创建 Pi 资源会话的 adapter。
 
@@ -65,6 +65,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 
 ## 不变量
 
+- **owned 资源 scope 独立**：发起前绑定子会话自己的工具 scope，恢复时也先于 Harness resume 注册；不会为此创建第二个 worker／SQLite，也不借用父会话工具闭包。`attach` 在 workspace 显式声明 `spawnSubagent` 时注册其 owned preparer；具体契约见 [Host 任务](host-tasks.md)。
 - **资源会话不跑模型循环**：它只提供工具与交互；所有被接受的模型回合都由 Durable 拥有（源码注释：`The resource Session never runs a second model loop`）。
 - **事件方向单向**：Durable 提交 → `record`／`beforeRequest`／`afterResponse`／`afterTools` → Pi 生命周期事件（`message_start`／`message_end`／`turn_end`／`tool_execution_end` 等）；Pi 事件不得反向驱动 Durable 状态。
 - **`ensure(active)` 幂等且按会话缓存**：同一 `active.id` 多次调用返回同一 facade（`readyHosts` 缓存）；`active` 变化时才新建宿主。

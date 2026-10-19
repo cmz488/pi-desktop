@@ -1,5 +1,6 @@
 import { mkdir, realpath, stat, chmod } from "node:fs/promises";
 import { dirname, resolve, basename } from "node:path";
+import { createHash } from "node:crypto";
 import lockfile from "proper-lockfile";
 import {
   BACKGROUND_CONTEXT,
@@ -25,11 +26,37 @@ import { projectMessage } from "../shared/conversation.mjs";
 import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
+import {
+  createManagedSubagents,
+  MANAGED_SUBAGENT_KIND,
+} from "./managed-subagents.mjs";
 import { loadPiMessages, loadPiSessionManager } from "./pi-sdk.mjs";
 
 import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
 
+/**
+ * Durable workspace：把 Durable Harness 的会话、任务、文档与用量包成一个深 module。
+ *
+ * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
+ *   persistNative, importNative, install, subscribe, close, capabilities, monitor,
+ *   taskDetail, setOwnedPreparer }`；options、命令表、
+ *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
+ * `read()` 额外返回 `recovery`（本次打开时接管的待恢复任务及实时状态，无则 null）。
+ * 不变量：单 writer（proper-lockfile 独占 + SQLite）；先 commit 再显示；每次调用先过
+ *   `guard()`；`read` 是全量摘要、`live` 跳过 transcript；每会话一份 agent 文档。
+ * 错误：DeskError(403／404／409／422／429) 表达权限、目标、生命周期、参数与准入限制。
+ */
+
 const context = BACKGROUND_CONTEXT;
+const MAX_ACTIVE_SUBAGENTS = 16;
+const MAX_SUBAGENT_PROMPT_UNITS = 512000;
+const MAX_SUBAGENT_NAME_UNITS = 120;
+const MAX_SUBAGENT_REQUEST_UNITS = 200;
+const TASK_SCAN_PAGE_SIZE = 200;
+const MAX_DETAIL_CHILDREN = 20;
+const MAX_DETAIL_MESSAGES = 80;
+const MAX_DETAIL_TOOLS = 40;
+const MAX_DETAIL_TEXT_UNITS = 12000;
 const AgentProfile = defineDoc({
   kind: "desk.agent",
   version: 1,
@@ -101,17 +128,6 @@ function contextUsage(view, contextWindow) {
   };
 }
 
-/**
- * Durable workspace：把 Durable Harness 的会话、任务、文档与用量包成一个深 module。
- *
- * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
- *   persistNative, importNative, install, subscribe, close }`；options、命令表、
- *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
- * `read()` 额外返回 `recovery`（本次打开时接管的待恢复任务及实时状态，无则 null）。
- * 不变量：单 writer（proper-lockfile 独占 + SQLite）；先 commit 再显示；每次调用先过
- *   `guard()`；`read` 是全量摘要、`live` 跳过 transcript；每会话一份 agent 文档。
- * 错误：DeskError(404／409／422) 表达“不存在”“存储被占用或宿主已关闭”“参数无效”。
- */
 // 应用侧的 seam：调用者提交具名命令、读取已提交视图；准入、重放、调度、压缩与取消
 // 都由 Durable 拥有。
 export async function openAgentWorkspace(options) {
@@ -146,9 +162,38 @@ export async function openAgentWorkspace(options) {
           ],
     }),
   );
-  if (!options.readOnly)
+  let ownedPreparer;
+  const subagents = createManagedSubagents({
+    createChild: async (tx, task) => {
+      const parent = await tx.doc(AgentProfile, task.conversationId);
+      const profile = {
+        name: task.input.name,
+        shellPath: parent.shellPath ?? "",
+        shellEnv: { ...parent.shellEnv },
+        nativeDefaults: parent.nativeDefaults !== false,
+        nativeInitialized: false,
+        subagent: true,
+      };
+      const child = await tx.createConversation({
+        ownership: { kind: "task", taskId: task.id },
+      });
+      Object.assign(await tx.doc(AgentProfile, child.id), profile);
+      return child.id;
+    },
+    prepareChild: async (id, config, ctx) => {
+      ctx.abortSignal?.throwIfAborted();
+      const active = await agent(id);
+      await ownedPreparer?.(active);
+      ctx.abortSignal?.throwIfAborted();
+      if (Object.keys(config).length)
+        await execute("configure", { id, ...config });
+    },
+  });
+  if (!options.readOnly) {
+    registry.install(subagents.extension);
     for (const extension of options.extensions ?? [])
       registry.install(extension);
+  }
   let release,
     storage = options.storage,
     harness,
@@ -491,6 +536,7 @@ export async function openAgentWorkspace(options) {
       children.push({
         id: record.id,
         name: profile?.name ?? `会话 ${record.id}`,
+        managed: !!profile,
         parent: record.parent ?? null,
         owner: record.owner,
         idle: !foreground(record.id),
@@ -645,6 +691,82 @@ export async function openAgentWorkspace(options) {
       return { id: created.id };
     }
     const selected = await conversation(input.id);
+    if (command === "subagent.spawn") {
+      if (options.readOnly)
+        throw new DeskError(403, "只读会话不提供子代理发起操作");
+      const prompt = text(
+        input.prompt,
+        MAX_SUBAGENT_PROMPT_UNITS,
+        "子代理任务",
+      ).trim();
+      const name =
+        text(
+          input.name ?? "子代理",
+          MAX_SUBAGENT_NAME_UNITS,
+          "子代理名称",
+        ).trim() || "子代理";
+      const requestId = text(
+        input.requestId,
+        MAX_SUBAGENT_REQUEST_UNITS,
+        "请求 ID",
+      );
+      if (!prompt || !requestId)
+        throw new DeskError(422, "请提供子代理任务与请求 ID");
+      const supplied = input.config === undefined ? {} : input.config;
+      if (
+        !supplied ||
+        typeof supplied !== "object" ||
+        Array.isArray(supplied) ||
+        Object.keys(supplied).some(
+          (key) =>
+            !["model", "thinkingLevel", "instructions", "tools"].includes(key),
+        )
+      )
+        throw new DeskError(422, "子代理配置无效");
+      const prior = await summary(selected);
+      const { patch } = await changes(supplied, prior);
+      const config = {};
+      for (const key of ["model", "thinkingLevel", "instructions"])
+        if (patch[key] !== undefined) config[key] = patch[key];
+      if (patch.tools) config.tools = patch.tools.map((tool) => tool.name);
+      const modelRef = config.model ?? (await selected.agent(context)).model;
+      const model =
+        modelRef && models.getModel(modelRef.provider, modelRef.modelId);
+      if (!model || !(await models.getAuth(model)))
+        throw new DeskError(422, "请先为子代理选择已配置的模型");
+      const signature = createHash("sha256")
+        .update(JSON.stringify({ name, prompt, config }))
+        .digest("hex");
+      const taskId = await selected.commit(async (tx) => {
+        let cursor,
+          active = 0;
+        do {
+          const page = await tx.scanTasks(
+            { conversationId: selected.id, kind: MANAGED_SUBAGENT_KIND },
+            TASK_SCAN_PAGE_SIZE,
+            cursor,
+          );
+          for (const task of page.items) {
+            if (task.input.requestId === requestId) {
+              if (task.input.signature !== signature)
+                throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+              return task.id;
+            }
+            if (task.state.status !== "terminal") active++;
+          }
+          cursor = page.next;
+        } while (cursor !== undefined);
+        if (active >= MAX_ACTIVE_SUBAGENTS)
+          throw new DeskError(429, "该会话的子代理任务过多，请先等待或取消");
+        return tx.createTask(
+          subagents.task,
+          { name, prompt, config, requestId, signature },
+          { ownership: { kind: "conversation" }, background: true },
+        );
+      }, context);
+      harness.resume();
+      return { id: selected.id, taskId };
+    }
     if (command === "send") {
       const message = text(input.message, 512000, "消息");
       if (!message.trim() && !input.images?.length)
@@ -865,6 +987,168 @@ export async function openAgentWorkspace(options) {
     throw compromised;
   }
   const workspace = {
+    capabilities: Object.freeze({
+      taskInspection: true,
+      manageTasks: !options.readOnly,
+      spawnSubagent: !options.readOnly,
+    }),
+    setOwnedPreparer(prepare) {
+      guard();
+      if (typeof prepare !== "function")
+        throw new DeskError(422, "子代理资源适配器无效");
+      ownedPreparer = prepare;
+    },
+    async monitor() {
+      guard();
+      const inspection = await harness.inspect(context);
+      const snapshot = await read();
+      const scopes = new Map();
+      for (const root of snapshot.agents)
+        for (const id of ownedConversationIds(root.id, snapshot.children))
+          scopes.set(id, root.id);
+      const conversations = [
+        ...snapshot.agents.map((row) => ({
+          id: row.id,
+          name: row.name,
+          idle: row.idle,
+          parent: row.parent,
+          owner: null,
+          managed: true,
+          model: row.model,
+          tools: row.tools,
+        })),
+        ...snapshot.children,
+      ]
+        .map((row) => ({ ...row, scopeId: scopes.get(row.id) ?? null }))
+        .sort((a, b) => a.id - b.id);
+      const graphTasks = new Map(snapshot.tasks.map((task) => [task.id, task]));
+      const tools = [];
+      for (const id of new Set(
+        inspection.tasks.map((row) => row.record.conversationId),
+      )) {
+        if (!scopes.has(id)) continue;
+        const active = await live(id);
+        for (const call of active.liveTools ?? [])
+          if (call.status !== "done")
+            tools.push({
+              conversationId: id,
+              scopeId: scopes.get(id),
+              callId: call.callId,
+              name: call.name,
+              status: call.status,
+            });
+      }
+      return {
+        supported: true,
+        capabilities: workspace.capabilities,
+        scheduling: inspection.scheduling,
+        recovery: snapshot.recovery,
+        conversations,
+        tools,
+        models: snapshot.models,
+        tasks: inspection.tasks.map(({ record, state }) => ({
+          id: record.id,
+          conversationId: record.conversationId,
+          scopeId: scopes.get(record.conversationId) ?? null,
+          name:
+            record.kind === MANAGED_SUBAGENT_KIND ? record.input.name : null,
+          abortRequested: record.abortRequested,
+          kind: record.kind,
+          status: record.state.status,
+          background: !!record.background,
+          owner: graphTasks.get(record.id)?.owner ?? record.owner ?? null,
+          ownedConversations:
+            graphTasks.get(record.id)?.ownedConversations ?? [],
+          waitingOn: record.state.on ?? [],
+          phase: record.state.checkpoint?.phase ?? null,
+          schedulerState: state.kind,
+          blockedReason: state.kind === "blocked" ? state.reason : null,
+        })),
+        submissions: inspection.submissions.map((row) => ({
+          id: row.id,
+          conversationId: row.conversationId,
+          status: row.status,
+          type: row.type,
+        })),
+      };
+    },
+    async taskDetail(id, taskId) {
+      guard();
+      await conversation(id);
+      const task = await scopedTask(id, taskId);
+      const records = (await scanAll()).filter(
+        (row) => row.owner?.taskId === task.id,
+      );
+      const children = [];
+      for (const row of records.slice(0, MAX_DETAIL_CHILDREN)) {
+        const active = await projectActive(row.id, { allowOwned: true });
+        children.push({
+          id: row.id,
+          name: active.name,
+          idle: active.idle,
+          model: active.model,
+          usage: active.usage,
+          messages: active.messages
+            .slice(-MAX_DETAIL_MESSAGES)
+            .map((message) => ({
+              role: message.role,
+              text: message.text.slice(0, MAX_DETAIL_TEXT_UNITS),
+              toolName: message.toolName ?? null,
+              entryId: message.entryId,
+            })),
+          partial: active.partial
+            ? {
+                role: active.partial.role,
+                text: active.partial.text.slice(-MAX_DETAIL_TEXT_UNITS),
+              }
+            : null,
+          messagesTruncated:
+            active.messages.length > MAX_DETAIL_MESSAGES ||
+            active.messages.some(
+              (message) => message.text.length > MAX_DETAIL_TEXT_UNITS,
+            ),
+          toolsTruncated: (active.liveTools?.length ?? 0) > MAX_DETAIL_TOOLS,
+          tools: (active.liveTools ?? [])
+            .slice(-MAX_DETAIL_TOOLS)
+            .map((call) => ({
+              name: call.name,
+              status: call.status,
+              output: String(call.output ?? "").slice(-MAX_DETAIL_TEXT_UNITS),
+            })),
+        });
+      }
+      const nativeOutcome = task.state.outcome;
+      const outcome = nativeOutcome
+        ? {
+            status: nativeOutcome.status,
+            ...(nativeOutcome.error
+              ? { error: { message: nativeOutcome.error.message } }
+              : {}),
+            ...(nativeOutcome.reason ? { reason: nativeOutcome.reason } : {}),
+            ...(task.kind === MANAGED_SUBAGENT_KIND && nativeOutcome.result
+              ? { result: nativeOutcome.result }
+              : {}),
+          }
+        : null;
+      return {
+        supported: true,
+        task: {
+          id: task.id,
+          conversationId: task.conversationId,
+          kind: task.kind,
+          status: task.state.status,
+          outcome,
+        },
+        children,
+        hasMoreChildren: records.length > children.length,
+        previewLimits: {
+          children: MAX_DETAIL_CHILDREN,
+          messages: MAX_DETAIL_MESSAGES,
+          tools: MAX_DETAIL_TOOLS,
+          textUnits: MAX_DETAIL_TEXT_UNITS,
+        },
+      };
+    },
     read,
     async persistNative(id, entries, messages = []) {
       guard();

@@ -28,13 +28,41 @@ export async function desktopFixture(options = {}) {
     const input = JSON.parse(Buffer.concat(chunks).toString());
     requests.push(input);
     await options.beforeModelResponse?.(input);
-    const text = `answer: ${input.messages.at(-1).content}`;
+    // 只在本地 provider 边界编排工具回合，实际模型准入、工具执行与恢复仍走原生 SDK。
+    const reply = await options.modelReply?.(input);
+    if (reply?.error) {
+      response.writeHead(reply.error.status, {
+        "Content-Type": "application/json",
+      });
+      response.end(JSON.stringify({ error: { message: reply.error.message } }));
+      return;
+    }
+    const text = reply?.text ?? `answer: ${input.messages.at(-1).content}`;
     const chunk = (delta, finish_reason) =>
       `data: ${JSON.stringify({ id: "local", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta, finish_reason }], ...(finish_reason ? { usage: { prompt_tokens: 1200, completion_tokens: 32, total_tokens: 1232, prompt_tokens_details: { cached_tokens: 900 } } } : {}) })}\n\n`;
     response.writeHead(200, { "Content-Type": "text/event-stream" });
+    if (reply?.stream) {
+      for await (const text of reply.stream)
+        response.write(chunk({ role: "assistant", content: text }, null));
+      response.end(chunk({}, "stop") + "data: [DONE]\n\n");
+      return;
+    }
     response.end(
-      chunk({ role: "assistant", content: text }, null) +
-        chunk({}, "stop") +
+      chunk(
+        {
+          role: "assistant",
+          ...(reply?.toolCalls?.length
+            ? {
+                tool_calls: reply.toolCalls.map((call, index) => ({
+                  index,
+                  ...call,
+                })),
+              }
+            : { content: text }),
+        },
+        null,
+      ) +
+        chunk({}, reply?.toolCalls?.length ? "tool_calls" : "stop") +
         "data: [DONE]\n\n",
     );
   });

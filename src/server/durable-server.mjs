@@ -31,6 +31,15 @@ import {
   loadPiSettingsManager,
 } from "../agent/pi-sdk.mjs";
 
+/**
+ * Durable worker HTTP：适配原生会话、资源与任务；不拥有额外执行循环。
+ *
+ * 接口：startDurableDesk(options) 返回 worker 服务；loadDurableExtension 加载具名扩展；
+ *   读取与命令见 interfaces/session-tree.md、task-graph.md、host-tasks.md。
+ * 不变量：请求目标与权限先于操作；后台恢复不趁前台 idle 覆盖配置；管理只沿原生
+ *   owned 范围，等待只拥有可取消观察；远程网关范围不因新命令扩大。
+ * 错误：HTTP 以 DeskError 表达 403／404／409／422／429；原生执行结果保留其终态。
+ */
 const commands = new Set([
   "create",
   "send",
@@ -41,6 +50,7 @@ const commands = new Set([
   "rewind",
   "wait",
   "cancel",
+  "subagent.spawn",
 ]);
 async function body(request) {
   let length = 0;
@@ -216,6 +226,8 @@ export async function startDurableDesk(options = {}) {
     if (
       options.singleAgent &&
       root.agents[0]?.idle &&
+      // 前台 idle 不涵盖 background／owned 工作；启动时不能趁其恢复改写共享配置。
+      !root.tasks.length &&
       (options.agentName !== undefined ||
         options.agentInstructions !== undefined)
     ) {
@@ -725,16 +737,55 @@ export async function startDurableDesk(options = {}) {
           });
           return true;
         }
+        if (url.pathname === "/api/task-detail" && request.method === "GET") {
+          if (request.headers["x-pi-remote-client"] === "1")
+            throw new DeskError(403, "远程连接不提供整个 worker 的任务详情");
+          if (workspace.capabilities?.taskInspection !== true)
+            json(response, { supported: false });
+          else {
+            const taskId = url.searchParams.get("taskId");
+            if (taskId === null || taskId.trim() === "")
+              throw new DeskError(422, "任务 id 无效");
+            json(
+              response,
+              await workspace.taskDetail(target().active.id, Number(taskId)),
+            );
+          }
+          return true;
+        }
+        if (url.pathname === "/api/task-monitor" && request.method === "GET") {
+          if (request.headers["x-pi-remote-client"] === "1")
+            throw new DeskError(403, "远程连接不提供整个 worker 的任务监控");
+          json(
+            response,
+            workspace.capabilities?.taskInspection === true
+              ? {
+                  ...(await workspace.monitor()),
+                  capabilities: {
+                    taskInspection: true,
+                    manageTasks:
+                      workspace.capabilities.manageTasks === true &&
+                      !options.readOnly,
+                    spawnSubagent:
+                      workspace.capabilities.spawnSubagent === true &&
+                      !options.readOnly,
+                  },
+                }
+              : { supported: false },
+          );
+          return true;
+        }
         if (url.pathname === "/api/command" && request.method === "POST") {
           const input = await body(request);
           if (!commands.has(input.command))
             throw new DeskError(404, "不支持的 Agent 操作");
-          // 只读宿主不提供任务管理（等待/取消）：它们是写操作；其他命令不受影响。
-          // 远程客户端仍按各自的路径裁剪规则处理（取消自己的任务属于允许的远程动作）。
-          if (options.readOnly && ["wait", "cancel"].includes(input.command))
+          // 只读只观察状态，不开放控制入口；等待虽不拥有工作，也按管理策略受限。
+          // 本地增加发起能力不改变生产远程网关的既有路径裁剪。
+          if (
+            options.readOnly &&
+            ["wait", "cancel", "subagent.spawn"].includes(input.command)
+          )
             throw new DeskError(403, "只读会话不提供任务管理操作");
-          // 只读宿主不提供任务管理（等待/取消）：它们是写操作；其他命令不受影响。
-          // 远程客户端仍按各自的路径裁剪规则处理（取消自己的任务属于允许的远程动作）。
           if (options.singleAgent && input.command === "create")
             throw new DeskError(409, "请在 Desktop 项目栏创建独立 Agent");
           if (

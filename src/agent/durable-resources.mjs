@@ -550,7 +550,14 @@ export function createDurableResources({
   }
   async function attach(target) {
     workspace = target;
-    for (const agent of (await workspace.read()).agents)
+    if (workspace.capabilities?.spawnSubagent === true)
+      workspace.setOwnedPreparer((active) => selectTools(active));
+    const state = await workspace.read();
+    // owned 子代理拥有独立资源 scope；恢复前注册它的原生扩展，不能借用父会话的工具闭包。
+    for (const agent of [
+      ...state.agents,
+      ...state.children.filter((row) => row.managed),
+    ])
       await ensureHost(await workspace.agent(agent.id));
   }
   async function selectTools(

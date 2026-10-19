@@ -17,6 +17,8 @@ npm run package:check
 
 Electron 的 `test:workspace:desktop`、`test:context:browser` 为额外的平台专项；环境要求见下文。
 
+全 Host 任务与子代理由 `test/host-task-management.test.mjs` 的真实 Host／worker HTTP 验证，覆盖持久幂等、原生 owned 关系、单 writer、等待断连、目标／权限、重启与子会话自身工具 scope，以及暂停单 worker 的局部超时。`test:workspace:browser` 纳入 `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task、UI 发起／等待／中止、关闭与快速重开、结果与只读能力、聚合更新的键盘焦点。它不是 CLI 子代理探测；任务调度和模型循环仍由 Durable 原生能力承担。当前接口见 [Host 任务契约](interfaces/host-tasks.md)。
+
 架构深化专项由 `test/host-interface.test.mjs`、`test/agent-snapshot.test.mjs`、`test/target-guard.test.mjs`、`test/agent-runtime.test.mjs`、`test/goal-panel.test.mjs`、`test/extension-workbench.test.mjs`、`test/git-review.test.mjs` 和 `test/bridge.test.mjs` 覆盖：Host 能力声明与动态 TUI slot、snapshot 统一 shape/typed activity、请求目标竞态、声明式面板动作、Durable runtime adapter，以及 Git limits／permitted actions。其中 `test/bridge.test.mjs` 明确验证“回调存在但未声明能力不会启用功能”，包括 `requestContext`、`sessionCommand`、会话新建／切换、`effectiveSettings` 和包管理清单（`updatesSupported`／`writable`）；`test/durable-server.test.mjs` 断言 Durable 的 `/api/sessions` 仍返回 `supported:true` 与 Agent 行，并验证 `/api/new-session`／`/api/switch-session` 仍返回 200，避免 capability 声明和既有会话管理行为分叉。`test/conversation-timeline-browser-check.mjs` 验证新增 activity 不改变旧的思考／生成文案。浏览器回归继续验证真实页面上的目标面板和 Git 审阅 affordance。
 
 目录和发布修改以真实包内容为验证对象：检查入口及模块引用、公共字体／schema、Markdown 引用和示例完整性；运行时分别检查项目工作区、聊天页面与预览的加载链。浏览器回归还覆盖展开状态、流式思考、当前状态卡片和会话切换。
@@ -72,7 +74,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 - **退回（rewind）**：上下文重建到退回点——退回点之前的消息仍在上下文里，其后的回合不再出现；原条目仍在存储里（`desk.rewind` 标记记录 `rewindTo`），且不会把被放弃的回答重放进新上下文。退回后继续对话只提交一份回答。
 - **Pi JSONL 一致性**：退回在同一个文件里完成（不新建会话文件），`pi-desktop-rewind` 自定义条目对模型不可见，活跃分支经过退回点、新回合是它的子条目，被放弃的回合仍在文件里但不在活跃分支上——TUI 因此看到与 Desktop 相同的会话树。
 
-扩展工作台的任务与子代理面板同样在 `test/durable-browser-check.mjs` 中断言：空闲 Agent 显示空态、真实 `bash` 在跑任务出现在任务树与在跑工具里、第一步点击只进入待确认状态而任务仍在、第二步取消后面板清空、`等待` 返回时回答已提交，以及切到另一个 Agent 并重新打开面板后看到的是那个 Agent 自己的任务（面板跟随当前会话）。扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：树行、活跃/已放弃标记、唯一 leaf 与徽标、折叠子树后行数减少、刷新后折叠状态保持、再从节点创建分支（切到新会话）与从节点退回后树仍区分被放弃路径。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、在该单进程注入夹具中，分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，分叉后切到名称带“· 分支”的新会话且保留分叉点之前的上下文；整个回归仍断言无页面错误。
+扩展工作台的任务与子代理面板同样在 `test/durable-browser-check.mjs` 中断言：空闲 Agent 显示空态、真实 `bash` 在跑任务出现在任务树与在跑工具里、第一步点击只进入待确认状态而任务仍在、第二步取消后面板清空、`等待` 返回时回答已提交，以及切到另一个 Agent 并重新打开面板后看到的是那个 Agent 自己的任务（面板跟随当前会话）。扩展工作台的分支树面板也在 `test/durable-browser-check.mjs` 中断言：SVG 按轮次聚合、活跃／已放弃路径、唯一当前位置、折叠与刷新保持；历史轮次只可退回，随后从当前位置创建分支（切到新会话），底层精确 entry 分叉能力不被移除。浏览器回归在 `test/durable-browser-check.mjs` 中完成：会话栏右键出现三个动作（创建分支后新会话出现并切换过去、在该单进程注入夹具中，分支因没有原生转录而禁用退回并给出原因、打开分支树切到扩展工作台）；右键消息出现两个菜单动作，退回后时间线保留目标消息之前的内容并移除其后的回合，历史消息的分支入口禁用，当前位置分叉后切到名称带“· 分支”的新会话并保留当前上下文；整个回归仍断言无页面错误。
 
 任务管理由 `POST /api/command` 的 `wait`／`cancel` 提供；真实后台任务由 `test/background-fixture.mjs`（`tx.createTask(..., { background: true })`）造出，API 测试断言它在会话空闲时仍存活、取消后台任务返回它的 id 并让它进入终态，浏览器回归在面板上完成同一条路径（后台标记 + 两步确认取消）；任务管理（取消支持单任务、后台任务与该会话当前工作；只读宿主返回 403，远程取消自己的任务属于允许动作）；`test/durable-task-graph.test.mjs` 另外断言按任务 id 取消后任务图清空、子会话不产生孤儿、`wait` 在回答提交后才返回、未知任务 404、后台取消不打断前台运行。任务图与子会话读模型由 `GET /api/tasks`（capability `tasks`）提供：`test/durable-task-graph.test.mjs` 用真实子代理夹具断言空闲会话任务图为空而子会话仍在、子会话的 `owner` 边、挂起工具进入 `tools`、`pi.tool` 的 `owner` 指向它的 `pi.generation` 与 `waitingOn` 关系。
 

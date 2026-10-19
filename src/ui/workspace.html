@@ -20,6 +20,7 @@
     </script>
     <link rel="stylesheet" href="design-tokens.css" />
     <link rel="stylesheet" href="workspace.css" />
+    <link rel="stylesheet" href="task-panel.css" />
   </head>
   <body>
     <button id="nav-backdrop" aria-label="关闭项目导航" hidden></button>
@@ -56,6 +57,14 @@
       </button>
       <button id="extensions-entry" class="settings-entry" aria-pressed="false">
         <span data-dsh-icon="extensions"></span>扩展工作台
+      </button>
+      <button
+        id="tasks-entry"
+        class="settings-entry"
+        aria-haspopup="dialog"
+        aria-controls="host-task-dialog"
+      >
+        <span data-dsh-icon="tasks"></span>任务监控
       </button>
       <button id="skill-center" class="settings-entry">
         <span data-dsh-icon="skill"></span>技能中心
@@ -233,6 +242,100 @@
           <button type="submit" class="danger">移除工作区</button>
         </div>
       </form>
+    </dialog>
+    <dialog id="host-task-dialog" aria-labelledby="host-task-title">
+      <header class="host-task-heading">
+        <div>
+          <small>HOST · NATIVE TASKS</small>
+          <h2 id="host-task-title">任务与子代理</h2>
+          <p>跨 Agent 监控 · 原生任务所有权 · 同一 worker 内运行</p>
+        </div>
+        <div class="host-task-heading-actions">
+          <button type="button" data-host-refresh>刷新</button
+          ><button type="button" data-host-close aria-label="关闭任务监控">
+            ✕
+          </button>
+        </div>
+      </header>
+      <p data-host-status role="status" aria-live="polite">读取中…</p>
+      <p data-host-action-status role="status" aria-live="polite" hidden></p>
+      <div class="host-task-layout">
+        <form id="host-subagent-form">
+          <h3>发起子代理</h3>
+          <p>在父会话的原生 owned 子会话中后台执行，不阻塞父会话。</p>
+          <label
+            >Desktop Agent<select
+              name="agent"
+              aria-label="子代理所属 Agent"
+            ></select
+          ></label>
+          <label
+            >父会话<select
+              name="conversation"
+              aria-label="子代理父会话"
+            ></select
+          ></label>
+          <label
+            >名称<input name="name" maxlength="120" placeholder="子代理"
+          /></label>
+          <label
+            >任务<textarea
+              name="prompt"
+              required
+              maxlength="512000"
+              rows="4"
+              placeholder="说明目标、边界与期望结果"
+            ></textarea>
+          </label>
+          <details>
+            <summary>原生运行配置（默认继承）</summary>
+            <label
+              >模型<select name="model">
+                <option value="">继承父会话模型</option>
+              </select></label
+            >
+            <label
+              >思考等级<select name="thinkingLevel">
+                <option value="">继承父会话</option>
+                <option value="off">关闭</option>
+                <option value="minimal">最低</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="xhigh">更高</option>
+              </select></label
+            >
+            <label
+              >工具<input name="tools" placeholder="留空继承；例如 read, bash"
+            /></label>
+            <label
+              >指令<textarea
+                name="instructions"
+                rows="2"
+                maxlength="64000"
+                placeholder="留空继承父会话指令"
+              ></textarea>
+            </label>
+          </details>
+          <button type="submit" class="primary" data-host-spawn>
+            发起子代理
+          </button>
+          <p data-host-launch-status role="status" aria-live="polite"></p>
+        </form>
+        <section data-host-workers aria-label="全 Host 原生任务"></section>
+      </div>
+      <section class="host-task-inspection">
+        <label
+          >任务结果与过程<select
+            data-host-inspect
+            aria-label="选择要查看的原生任务"
+          ></select
+        ></label>
+        <p>显示原生回执与最近消息预览；未完成、失败和中止不会记作成功。</p>
+        <pre data-host-detail tabindex="0" aria-label="原生任务详情">
+选择任务查看结果与子会话。</pre
+        >
+      </section>
     </dialog>
     <div id="agent-menu" role="menu" aria-label="会话管理" hidden></div>
     <div id="notice" role="status" hidden></div>

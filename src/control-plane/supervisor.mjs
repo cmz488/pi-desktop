@@ -10,6 +10,7 @@ import { openNativeTranscript } from "../session/pi-session-storage.mjs";
 import { openPiHistory } from "./pi-history.mjs";
 import { createSessionFamilies } from "./session-families.mjs";
 import { createFamilyArchives } from "./family-archives.mjs";
+import { createHostTasks } from "./host-tasks.mjs";
 import {
   openSessionArchives,
   assertNoNativeTui,
@@ -21,7 +22,8 @@ import { projectPiRecord } from "./pi-sessions.mjs";
  * Host 侧的项目与 Agent 生命周期、只读历史视图与归档。
  *
  * 接口：`createSupervisor(store, options)` 返回 `{ shared, noteActivity, revision, read,
- *   execute, target, openTarget, restore, close }`；命令表、顺序与错误模式见
+ *   execute, target, openTarget, restore, close, monitorTasks, manageTask, taskDetail }`；
+ *   任务聚合另见 docs/architecture/interfaces/host-tasks.md，其他命令与顺序见
  *   docs/architecture/interfaces/lifecycle.md。
  * 不变量：`revision()` 不做每 Agent 的会话文件 stat，`read()` 做；追加型命令（无
  *   `input.id`）不参与 revision 冲突，已有行修改必须带 revision；历史视图按 LRU 上限 8；
@@ -165,7 +167,12 @@ export function createSupervisor(store, options) {
         nativeSessionPath: agent.nativeSessionPath,
       },
     );
-    state = { status: "starting", service, pid: service.child.pid };
+    state = {
+      status: "starting",
+      service,
+      pid: service.child.pid,
+      generation: agent.generation ?? 0,
+    };
     processes.set(id, state);
     service.child.once("exit", (code, signal) => {
       if (processes.get(id) !== state) return;
@@ -211,14 +218,21 @@ export function createSupervisor(store, options) {
     state.url = undefined;
     await families.remember((await lookup(id)).agent);
   }
-  async function worker(id, path, input) {
+  async function worker(id, path, input, { signal, expectedGeneration } = {}) {
     const state = processes.get(id);
     if (state?.status !== "running") throw new DeskError(409, "请先启动会话");
+    // catalog 校验与这里之间可能发生 resume；固定实际进程代际，不能转发给新库的同号任务。
+    if (
+      expectedGeneration !== undefined &&
+      expectedGeneration !== state.generation
+    )
+      throw new DeskError(409, "Agent 存储代际已变化，请刷新后重试");
     const response = await fetch(
       new URL(path, state.url),
       input === undefined
-        ? {}
+        ? { signal }
         : {
+            signal,
             method: "POST",
             headers: {
               Origin: new URL(state.url).origin,
@@ -303,6 +317,16 @@ export function createSupervisor(store, options) {
   }
   const running = (id) =>
     ["starting", "running", "stopping"].includes(processes.get(id)?.status);
+  const hostTasks = createHostTasks({
+    list: async () =>
+      (await store.read()).agents.map((row) => ({
+        ...row,
+        status:
+          processes.get(row.id)?.status ??
+          (row.source === "pi" ? "history" : "stopped"),
+      })),
+    request: worker,
+  });
   return {
     shared(run) {
       return serial(async () => {
@@ -333,6 +357,9 @@ export function createSupervisor(store, options) {
         });
       });
     },
+    monitorTasks: hostTasks.read,
+    manageTask: hostTasks.command,
+    taskDetail: hostTasks.detail,
     noteActivity(id) {
       return serial(async () => {
         if (closing) return;

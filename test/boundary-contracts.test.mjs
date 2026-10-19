@@ -226,6 +226,10 @@ test("the workspace, resources facade and supervisor keep their declared keys", 
     "transcript",
     "persistNative",
     "importNative",
+    "capabilities",
+    "monitor",
+    "taskDetail",
+    "setOwnedPreparer",
   ])
     assert.match(
       workspaceBody,
@@ -239,6 +243,10 @@ test("the workspace, resources facade and supervisor keep their declared keys", 
     "compact",
     "configure",
     "fork",
+    "rewind",
+    "wait",
+    "cancel",
+    "subagent.spawn",
   ])
     assert.match(
       workspace,
@@ -326,6 +334,12 @@ test("the workspace, resources facade and supervisor keep their declared keys", 
       new RegExp(`^    (async )?${key}\\(`, "m"),
       `supervisor.${key}`,
     );
+  for (const key of ["monitorTasks", "manageTask", "taskDetail"])
+    assert.match(
+      supervisorBody,
+      new RegExp(`^    ${key}:`, "m"),
+      `supervisor.${key}`,
+    );
   for (const command of [
     "project.save",
     "project.rename",
@@ -355,6 +369,7 @@ test("the boundary and interface documents stay present and linked", () => {
     "docs/architecture/interfaces/host-interface.md",
     "docs/architecture/interfaces/agent-runtime.md",
     "docs/architecture/interfaces/durable-workspace.md",
+    "docs/architecture/interfaces/host-tasks.md",
     "docs/architecture/interfaces/resource-session.md",
     "docs/architecture/interfaces/pi-sdk-adapter.md",
     "docs/architecture/interfaces/lifecycle.md",

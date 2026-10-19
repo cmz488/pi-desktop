@@ -5,6 +5,7 @@ import {
 } from "./sidebar-view.mjs";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createIndexedFetch } from "./lazy-data.mjs";
+import { createHostTaskPanel } from "./host-task-panel.js";
 const indexedFetch = createIndexedFetch();
 const $ = (selector) => document.querySelector(selector);
 const statuses = {
@@ -1022,6 +1023,19 @@ async function createInProject(projectId, draft) {
 $("#new-chat").onclick = () => newChat();
 $("#skill-center").onclick = () => setView("skills");
 $("#extensions-entry").onclick = () => setView("extensions");
+const hostTaskPanel = createHostTaskPanel({
+  root: $("#host-task-dialog"),
+  request: api,
+});
+$("#tasks-entry").onclick = async () => {
+  try {
+    await window.piDesk?.browserCommand?.({ action: "hide" });
+  } catch {
+    notice("未能隐藏浏览器面板，请先手动关闭后再打开任务监控");
+    return;
+  }
+  hostTaskPanel.open();
+};
 $("#search-toggle").onclick = () => {
   $("#workspace-search").hidden = !$("#workspace-search").hidden;
   if (!$("#workspace-search").hidden) $("#workspace-search").focus();

@@ -15,6 +15,15 @@ import { createDesktopGlobal } from "../resources/desktop-global.mjs";
 import { sendJson } from "../server/http-transfer.mjs";
 import { workspaceIndex } from "../shared/lazy-data.mjs";
 
+/**
+ * Desktop Host HTTP：连接生命周期主管、公共资产、全局配置与原生任务聚合。
+ *
+ * 接口：startDesktopHost(options) 返回服务；调用者契约见
+ *   docs/architecture/interfaces/lifecycle.md 与 host-tasks.md。
+ * 不变量：Host 不运行模型或另存任务状态；远程路由继续按原有白名单裁剪；管理请求
+ *   断连只释放观察，不隐式中止 worker 工作；静态资源只来自统一清单。
+ * 错误：HTTP 保留 DeskError 的中文状态与语义，已断开的观察不再写响应。
+ */
 const assets = publicAssets("workspace");
 
 const remoteWorkspaceCommands = new Set([
@@ -46,6 +55,23 @@ async function body(request) {
     return input;
   } catch {
     throw new DeskError(400, "请求不是有效 JSON 对象");
+  }
+}
+// Host 管理只拥有连接观察；断连必须释放上游请求，不能把它解释为任务中止。
+async function observeRequest(request, response, run) {
+  const controller = new AbortController();
+  const disconnect = () => controller.abort();
+  request.once("aborted", disconnect);
+  response.once("close", disconnect);
+  try {
+    if (request.aborted || response.destroyed) disconnect();
+    const result = await run(controller.signal);
+    if (!response.destroyed) sendJson(response, 200, result);
+  } catch (error) {
+    if (!response.destroyed) throw error;
+  } finally {
+    request.off("aborted", disconnect);
+    response.off("close", disconnect);
   }
 }
 const hopHeaders = new Set([
@@ -301,6 +327,43 @@ export async function startDesktopHost(options = {}) {
         return;
       }
       if (await serve(request, response, url.pathname)) return;
+      if (
+        url.pathname === "/api/host/tasks/command" &&
+        request.method === "POST"
+      ) {
+        if (request.headers["x-pi-remote-client"] === "1")
+          throw new DeskError(403, "远程连接不提供整个 Host 的任务管理");
+        const input = await body(request);
+        await observeRequest(request, response, (signal) =>
+          supervisor.manageTask(input, { signal }),
+        );
+        return;
+      }
+      if (url.pathname === "/api/host/tasks" && request.method === "GET") {
+        if (request.headers["x-pi-remote-client"] === "1")
+          throw new DeskError(403, "远程连接不提供整个 Host 的任务监控");
+        await observeRequest(request, response, (signal) =>
+          supervisor.monitorTasks({ signal }),
+        );
+        return;
+      }
+      if (
+        url.pathname === "/api/host/tasks/detail" &&
+        request.method === "GET"
+      ) {
+        if (request.headers["x-pi-remote-client"] === "1")
+          throw new DeskError(403, "远程连接不提供整个 Host 的任务详情");
+        const input = { agentId: url.searchParams.get("agentId") };
+        for (const key of ["generation", "conversationId", "taskId"]) {
+          const value = url.searchParams.get(key);
+          input[key] =
+            value === null || value.trim() === "" ? undefined : Number(value);
+        }
+        await observeRequest(request, response, (signal) =>
+          supervisor.taskDetail(input, { signal }),
+        );
+        return;
+      }
       if (url.pathname === "/api/workspace" && request.method === "GET") {
         const catalog = await supervisor.read();
         sendJson(

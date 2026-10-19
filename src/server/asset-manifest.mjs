@@ -26,6 +26,8 @@ export const sharedAssets = new Map([
   ["/branch-tree-panel.js", ["src/ui/shared/branch-tree-panel.js", javascript]],
   ["/round-tree-view.js", ["src/ui/shared/round-tree-view.js", javascript]],
   ["/task-panel.js", ["src/ui/shared/task-panel.js", javascript]],
+  ["/task-panel.css", ["src/ui/shared/task-panel.css", "text/css"]],
+  ["/host-task-panel.js", ["src/ui/shared/host-task-panel.js", javascript]],
   [
     "/session-panel-loader.js",
     ["src/ui/shared/session-panel-loader.js", javascript],
