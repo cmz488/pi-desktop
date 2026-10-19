@@ -86,15 +86,16 @@ flowchart TD
 - **执行 seam 是假设 seam（1 个 adapter）**：只有 Durable runtime。接第二个 runtime 的成本不在 spawn，而在单 writer、事件映射、崩溃恢复与 capability 对齐四件事——这也是 R1／R3 要守住的原因。
 - **上游没有"取代"计划**：发布版 `pi-coding-agent` 的 `dist/` 中没有 `pi-durable` 引用；源码仓库里的 `packages/coding-agent/src/experimental/durable` 属于实验目录（仅在搜索结果中确认路径，未在已发布包中验证）。
 
-## Backlog：本轮不实现，但边界已就位
+## 已交付深化与后续范围
 
-本轮的深化已交付两项：Durable 的定点重启与恢复可见性（`recovery` 读模型进入 `/api/state`，SIGKILL 后用检查点续跑），以及 Pi 的会话树退回与分叉（同一 JSONL 文件里的 `branch()` + `desk.rewind` 头部标记）。下面两项是明确留到后续的深化，边界与入口位置已记录，便于下一轮直接开工。
+已接入 Durable 的定点重启／恢复可见性、Pi 的原生树退回／分叉，以及任务与子代理管理。下面区分当前能力和仍未接入的范围，不能把已交付的管理面继续列成 backlog。
 
-### 子代理与任务图管理（Durable 侧）
+### 子代理与任务图管理（Durable 原生 API，已接入）
 
-- **现状**：Durable 上游提供 task graph、child tasks、`Abort and Subagents`；本项目只在 `src/agent/agent-workspace.mjs` 透传，没有管理面，也没有 UI 呈现。
-- **设计草案**：在 worker 内读取任务图（父子任务、in-flight 工具），经 `HOST_CAPABILITY_KEYS` 增加 `tasks` capability 暴露 `/api/tasks`（只读快照）+ 一个可选的取消端点；UI 放在工作台面板，沿用现有卡片注册方式。
-- **待验证点**：取消一个子任务时父任务的状态语义；失败重试与用量归属；面板在长任务图下的渲染与折叠策略；远程（只读）形态的裁剪规则。
+- **执行与真相**：`taskGraph()`／`inspect()`／`getTask()` 提供任务视图；`waitForTask()`／会话 `waitForIdle()` 观察；`abortTask()`／会话 `abort()` 中止。调度、检查点、owned 级联取消、恢复与终态全部属于 Durable。
+- **子代理适配**：`src/agent/managed-subagents.mjs` 通过公开 `defineTask`、`tx.createConversation({ ownership: { kind: "task", taskId } })` 与 `submit()` 注册一次委托；不是 SDK 自带的同名 `subagent.spawn()` 管理器，也不另建执行器。答案只读取 submission 决定的 `answer` 对应 `AssistantEntry`，不扫描当前上下文猜测结果。
+- **管理面**：工作台消费 scoped `/api/tasks`；本地全 Host 窗口消费 `/api/host/tasks`，仅聚合已运行 worker。管理命令转发现有 `/api/command`，Host 不读取 Durable SQLite。等待、单任务中止与详情共享原生回执投影；`marked` 不等于 aborted，等待成功不等于执行成功。
+- **权限与限制**：管理范围沿任务 `owner`，不是历史 `parent`；每 Agent 一个 worker／SQLite／writer。保留只读、generation 与生产远程裁剪。没有公开原生方法支持的暂停、重排或重试管理不自行补一套实现。具体行为与证据见[任务图契约](interfaces/task-graph.md)及[Host 任务契约](interfaces/host-tasks.md)。
 
 ### Pi 工具／扩展面板深化（Pi 侧）
 
