@@ -143,6 +143,8 @@ test(
     const readOnly = await f.command("conversation.create", {
       name: "只读会话",
     });
+    const readOnlyRoot = (await state(readOnly.id)).sessionId;
+    await turn(readOnly.id, readOnlyRoot, "read-only source");
     await assert.rejects(
       f.command("conversation.fork", { id: readOnly.id, generation: 0 }),
       (error) => error.status === 403,

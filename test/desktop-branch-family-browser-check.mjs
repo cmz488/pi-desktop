@@ -331,6 +331,46 @@ try {
     (await snapshot(branchMenuFork)).messages.map((row) => row.text),
     ["Q1", "answer: Q1"],
   );
+  const other = await f.command("conversation.create", {
+    projectId: project.id,
+    name: "并行会话 B",
+  });
+  await until(
+    `!!document.querySelector('#projects button[data-agent-id="${other.id}"]')`,
+  );
+  await evaluate(
+    `window.sidebarForkProbe={};(()=>{const original=window.fetch;window.fetch=async(input,options)=>{const response=await original(input,options);if(String(input).includes('/api/workspace/command')&&options?.body&&JSON.parse(options.body).command==='conversation.fork'){sidebarForkProbe.accepted=true;await new Promise(resolve=>sidebarForkProbe.release=resolve);}return response;};})()`,
+  );
+  await evaluate(
+    `document.querySelector('#projects button[data-agent-id="${actor.id}"]:not([data-conversation-id])').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}));document.querySelector('#agent-menu [data-command="conversation.fork"]').click()`,
+  );
+  await until("sidebarForkProbe.accepted===true");
+  await evaluate(
+    `document.querySelector('#projects button[data-agent-id="${other.id}"]').click()`,
+  );
+  await chatUntil(
+    "d.querySelector('#connection-status')?.textContent === 'Pi 已连接'",
+  );
+  await evaluate("sidebarForkProbe.release()");
+  await until(
+    `document.querySelector('#projects button[data-agent-id="${actor.id}"]').getAttribute('aria-busy')==='false'`,
+  );
+  assert.equal(
+    await evaluate("document.querySelector('#runtime').dataset.owner"),
+    other.id,
+    "分支回执晚到不得把已切换的 B 导航回 A",
+  );
+  assert.equal(
+    (await f.call(`/agents/${actor.id}/api/sessions`)).rows.length,
+    7,
+    "固定源会话的分支仍成功提交，切换客户端不会取消工作",
+  );
+  assert.equal(
+    (await f.call(`/agents/${other.id}/api/sessions`)).rows.length,
+    1,
+    "不可变源目标不借用后来选中的 B",
+  );
+  assert.equal(f.requests.length, 4);
   assert.deepEqual(driver.errors, []);
   console.log(
     "Default Desktop branch browser passed: sidebar/tree forks, native identity, independent usage, unchanged source, switching and Q1/Q2/Q3 → rewind Q2 → Q4 → rewind Q4 → rewind Q1 → fork current.",

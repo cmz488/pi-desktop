@@ -211,6 +211,20 @@ try {
       .data.tasks.some((task) => task.id === bTask.id),
     "取消 A 不会命中 B 的任务 namespace",
   );
+  await evaluate(
+    `(()=>{const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${a.id}:0:${aTask.scopeId}:${aTask.id}`)};select.dispatchEvent(new Event('change'));})()`,
+  );
+  await until("!!document.querySelector('[data-host-outcome=aborted]')");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-host-detail]').textContent.includes('已中止')",
+    ),
+    true,
+    "中止结果不能美化成完成或只显示空闲",
+  );
+  await evaluate(
+    `(()=>{const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${b.id}:0:${bTask.scopeId}:${bTask.id}`)};select.dispatchEvent(new Event('change'));})()`,
+  );
   await until(
     `${row(b.id, bTask.id)}?.querySelector('[data-task-action="wait:${bTask.id}"]')`,
   );
