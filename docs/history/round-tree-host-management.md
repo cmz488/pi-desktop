@@ -44,3 +44,13 @@
 `39d2ca8` 上前七项完整命令通过，第八项 `test:durable:browser` 在旧 `.is-abandoned` 查询失败。实际 DOM 测量为三个 SVG `g` 轮次：draft A 是当前位置，失败请求与恢复提问均仍显示为 `data-active:false`。缺的是旧 DOM 属性，不是历史路径；旧 `data-leaf`、HTML `.click()` 与“退回后条目行数必变”也不再描述轮次界面。
 
 只更新 `test/durable-browser-check.mjs` 的展示与输入适配，没有改产品 JS／CSS 或屏蔽历史断言：断言具体的已放弃恢复轮次仍在、唯一当前位置与可见标记、SVG 折叠及滚动保持；历史轮次无分支按钮，选中后退回移动当前位置但不删除轮次。任务等待／两步中止／后台取消／跨 Agent 语义全部保留。修正后专项通过；隔离副本抹掉 inactive 标记、重新给历史轮次 fork 动作，分别命中行为断言，还原后完整专项恢复通过。该两项反向另存 `durable-svg-sensitivity.json`；不把原失败日志算作完整通过。
+
+随后统一回归还捕获了新 SVG 断言自身的就绪顺序问题：`[data-branch-tree]` 骨架先于异步数据挂载，断言必须位于原有“至少三轮已读取”条件之后。只移动该断言的就绪门禁，不添加固定延时、不改变产品行为；第 8–12 项重新逐项通过。
+
+## 收口回执
+
+产品实现为 `39d2ca87c579d3c65d151f5f364999ce7e2a329a`（tree `92dafd08d674bd2d2cc2b64f8e7959acc7a96228`），SVG 夹具语义适配为 `bc457868c75be9b62625139c98bf24839a56d806`。本轮新增 19 项有效反向（SVG 3、Host 14、完整 SVG 夹具 2）均有行为断言和还原复测。主会话已完成 Standards／Spec 两轴复核。
+
+逐项执行结果：unit 360／360、Durable 32／32、workspace 25／25，check 94 个源文件；format、定点恢复、普通／Durable／workspace／remote／extensions 浏览器以及实际 npm 解包（185 个文件）均通过。前七项回执在 `/tmp/pi-round-host-check/full-bc45786/results.json`，修正就绪门禁后的第 8–12 项在 `tail-readiness/results.json`，不是把原第八项失败改记成功。最终提交的统一 12 项回归另存 `/tmp/pi-round-host-check/final/results.json`，记录受测 HEAD／tree、每条完整日志与退出码；完成以该回执 12 条均为 0 为准。
+
+独立工具链纯校验同样通过，未启动开发子代理或旧 CLI 执行器。它仍只提供旧 E3 的条件模型，不证明旧历史根因或实际修复；原目标已按用户调整后的只读调查标准验收，与本轮原生子代理功能区分。用户原 release tarball 的 SHA-256 继续保持开工值，未纳入本轮提交；不发布、不推送。

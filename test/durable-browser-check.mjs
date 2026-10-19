@@ -407,6 +407,10 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     "document.querySelector('.session-menu [data-command=tree]').click()",
   );
   await until("!!document.querySelector('[data-branch-tree]')");
+  // 容器先于异步读模型挂载，不能把骨架帧当作最终 SVG 结果。
+  await until(`document.querySelectorAll('${treeRows}').length>=3`, {
+    timeoutMs: 15000,
+  });
   assert.equal(
     await evaluate(
       "!!document.querySelector('[data-branch-tree] svg [data-round-node]')",
@@ -414,9 +418,6 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     true,
     "分支树使用真实 SVG 轮次节点",
   );
-  await until(`document.querySelectorAll('${treeRows}').length>=3`, {
-    timeoutMs: 15000,
-  });
   assert(
     await evaluate(
       `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-active'))`,
