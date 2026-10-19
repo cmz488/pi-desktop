@@ -559,6 +559,8 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
       )) < width,
       "Keyboard resizing must use the same pane and limits",
     );
+    // 键盘调整在 rAF 释放拖拽态；下一段独立指针手势须等该清理完成。
+    await evaluate("new Promise(resolve => requestAnimationFrame(resolve))");
   }
   await evaluate(
     `window.gitRequests=0;window.analysisRequests=0;window.legacyGit=true;window.gitFetch=window.fetch;window.fetch=async(...args)=>{const path=new URL(String(args[0]),location.href).pathname;if(path==='/api/git')window.gitRequests++;if(path==='/api/git-analysis')window.analysisRequests++;const response=await window.gitFetch(...args);if(path==='/api/state'&&(window.legacyGit||window.blockGitWrites)){const snapshot=await response.json();if(window.legacyGit)delete snapshot.gitManagement;if(window.blockGitWrites)snapshot.gitWritable=false;return new Response(JSON.stringify(snapshot),{headers:{'content-type':'application/json'}})}return response}`,
