@@ -44,7 +44,7 @@ class DeskError extends Error { status }
 
 `conversation.fork` 输入 `{ id: desktopAgentId, generation, conversationId? }`，只在本地受管、非只读且运行中的 worker 上执行。省略 `conversationId` 指向该 Agent 的根会话；指定时必须是它的受管历史会话。它薄转发现有 `fork { mode: "tail" }`，创建继承目标当前位置的新会话，不新建 Desktop Agent／SQLite／worker，不重放模型；忙碌快照仍可分叉。返回原生命令的 `{ id, sessionId, ... }`。缺少或非法 generation／会话 id 为 422，代际过期或进程未运行为 409，无权限或远程入口为 403，不存在的会话为 404。实际进程转发再次检查 generation；整次原生 RPC 预算 12 秒，超时为 503，提示刷新确认是否已提交，不把超时解释为中止任务。
 
-`read()` 与 `GET /api/workspace?view=index` 的每个 Agent 追加 `rootConversationId?: number`、`branches: [{ id, name, forkOf: { conversationId, entryId } }]`，并在 index 保留 `generation`。它们是当前代际的导航投影，来自 worker 发布的清单，不暴露内部文件路径，不承载上下文或权限；旧清单升级前可为空。停止、重启、归档不把分支伪装成另一个 Agent。客户端选择按 Agent／generation 存在 sessionStorage；停止的历史分支必须先启动原 worker，再进入原数值会话，不能把根的单文件只读历史冒充为该分支。
+`read()` 与 `GET /api/workspace?view=index` 的每个 Agent 追加 `rootConversationId?: number`、`branches: [{ id, name, forkOf: { conversationId, entryId } }]`，并在 index 保留 `generation`。它们是当前代际的导航投影，来自 worker 发布的清单，不暴露内部文件路径，不承载上下文或权限；旧清单升级前可为空。停止、重启、归档不把分支伪装成另一个 Agent。客户端选择按 Agent／generation 存在 sessionStorage；iframe 加载与首次状态就绪后应用最新有效选择，首次默认会话通知不得覆盖加载期间的导航意图。旧窗口或失效代际的消息不能改变当前选择。停止的历史分支必须先启动原 worker，再进入原数值会话，不能把根的单文件只读历史冒充为该分支。
 
 ## 不变量
 
@@ -88,6 +88,7 @@ class DeskError extends Error { status }
 
 ## 可执行证据
 
+- `test/desktop-sidebar-navigation-browser-check.mjs`：真实 HTTP 首次回执延迟下的连续分支选择、代际门禁、内外导航同步与重载保留。
 - `test/desktop-sidebar-fork.test.mjs`：跨项目同号会话、当前位置继承、忙碌快照、只读／远程／停止／代际门禁、停止和 Host 重启后的导航保留，以及 SIGSTOP worker 的有界超时。
 - `test/desktop-control-plane.test.mjs`：目录发现、命令表与目标校验（`npm run test:workspace`）。
 - `test/desktop-process-recovery.test.mjs`：进程重启与恢复意图先于启动完成。

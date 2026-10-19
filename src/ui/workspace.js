@@ -455,6 +455,27 @@ function sendView() {
       location.origin,
     );
 }
+function sendConversation(frame) {
+  if (!frame) return;
+  const agent = state.agents.find((row) => row.id === frame.dataset.owner);
+  const conversation = selectedConversations.get(agent?.id);
+  if (
+    !agent ||
+    conversation?.generation !== (agent.generation ?? 0) ||
+    frames.get(
+      `${agent.id}:${agent.generation ?? 0}:${agent.pid ?? "history"}`,
+    ) !== frame
+  )
+    return;
+  frame.contentWindow?.postMessage(
+    {
+      type: "pi-desktop:select-conversation",
+      conversationId: conversation.id,
+      generation: conversation.generation,
+    },
+    location.origin,
+  );
+}
 function setView(next) {
   tab = next;
   if (next !== "workspace")
@@ -527,6 +548,11 @@ window.addEventListener("message", (event) => {
     );
     return;
   }
+  if (event.data?.type === "pi-desktop:ready") {
+    // 首次状态之前的消息可能尚无接收者；重放的是最新选择，不是 iframe 的旧 URL。
+    sendConfiguration(frame);
+    sendConversation(frame);
+  }
   if (event.data?.type === "pi-desktop:ready" && pendingDrafts.has(selected)) {
     frame.contentWindow.postMessage(
       { type: "pi-desktop:restore-draft", draft: pendingDrafts.get(selected) },
@@ -540,6 +566,12 @@ window.addEventListener("message", (event) => {
     if (!agent || !Number.isSafeInteger(conversationId) || conversationId < 0)
       return;
     const prior = selectedConversations.get(agent.id);
+    if (
+      event.data.initial === true &&
+      prior?.generation === (agent.generation ?? 0) &&
+      prior.id !== conversationId
+    )
+      return;
     if (
       prior?.id !== conversationId ||
       prior.generation !== (agent.generation ?? 0)
@@ -653,15 +685,7 @@ function selectAgent(agent, conversationId) {
   navigation(false);
   render();
   sendView();
-  if (conversationId !== undefined)
-    frames.get(frameKey)?.contentWindow?.postMessage(
-      {
-        type: "pi-desktop:select-conversation",
-        conversationId,
-        generation: agent.generation ?? 0,
-      },
-      location.origin,
-    );
+  if (conversationId !== undefined) sendConversation(frames.get(frameKey));
 }
 function agentButton(agent, branch) {
   const conversation = selectedConversations.get(agent.id);
@@ -986,6 +1010,7 @@ function render() {
       frame.src = `/agents/${agent.id}/?embed=1${conversation?.generation === (agent.generation ?? 0) ? `&agent=${conversation.id}` : ""}#${tab}`;
       frame.addEventListener("load", () => {
         sendConfiguration(frame);
+        sendConversation(frame);
         if (frame.dataset.owner === selected) sendView();
       });
       frames.set(key, frame);

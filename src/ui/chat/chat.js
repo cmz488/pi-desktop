@@ -1962,8 +1962,12 @@ function renderSessions() {
       sessions.map(({ id, name }) => [id, name]),
     ]);
     if (signature !== desktopSessionSignature) {
+      const initial = desktopSessionSignature === "";
       desktopSessionSignature = signature;
-      desktopMessage("session-changed", { conversationId: Number(current) });
+      desktopMessage("session-changed", {
+        conversationId: Number(current),
+        initial,
+      });
     }
   }
   $("#sessions").innerHTML = sessions.length

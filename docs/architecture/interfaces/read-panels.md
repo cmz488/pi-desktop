@@ -42,6 +42,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 - 同一身份补刷不清折叠、滚动与轮次按钮焦点；改变 owner／目标可重置其阅读状态。分支动作在每个节点标签内，当前位置只有 fork，历史只有 rewind；hover 与 focus 同等可用，触屏无需 hover。内置页入口是紧凑页签，不冒充“会话记录”；其他扩展页类型与生命周期不变。
 - 任务面板以紧凑执行行区分名称、原生状态、标识／拥有者与操作；中止仍需两次独立点击，“确认中止”只缩短文案，不授予第二次执行资格。工具／子会话已有内容时不重复空任务说明。
 - 工作台与 Host 共用原生回执提示：completed／failed／aborted／orphaned／faulted 分开显示，`marked` 只提示已请求中止、尚未确认终态。没有新回执字段的旧宿主保留泛化提示，不补造终态；任何提示仍受同一身份令牌校验。
+- 嵌入聊天的首次状态就绪后，应用父窗口为同一 Agent／generation 保留的最新导航意图；首次默认会话通知不覆盖该意图。只接受同源父窗口，旧 iframe 不能改变当前窗口导航。
 - 这是 UI 缓存与 affordance，不代替后端会话归属、权限、目标 409 或远程路径裁剪。
 
 ## 能力与权限
@@ -75,6 +76,7 @@ createTaskPanel({ fetchTasks, command, toast, currentSession? });
 
 - `test/session-panel-loader.test.mjs`：9 条有界时钟／迟到响应回归，覆盖能力、A/B/A、权限、节流／补刷、暂停／销毁和错误。
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁；另验证细指针真实 hover、Tab／Enter、按钮焦点、busy 互斥、390px、触屏、减少动态效果及 SVG 实际底色上的双主题 4.5:1 文本对比度。
+- `test/desktop-sidebar-navigation-browser-check.mjs`：首次状态延迟时保留最后选择，过期代际不调用会话 API，内外层选择与重载保持一致。
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
 - `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
 - `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task、跨发起表单目标管理、关闭／快速重开失效、聚合更新保留键盘焦点；原生完成提示、回答条目编号，以及发起回执晚到不得抢走用户随后选择的任务。
