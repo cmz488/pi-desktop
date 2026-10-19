@@ -11,11 +11,21 @@ import {
   projectConversationTimeline,
 } from "./lazy-data.mjs";
 import { extensionAdapterRegistry } from "./extension-adapters.mjs";
-const indexedFetch = createIndexedFetch();
-let hostFocused = true;
 import { createSessionDrafts } from "./session-drafts.mjs";
 import { renderMarkdown } from "./markdown.mjs";
 import DOMPurify from "./vendor/purify.mjs";
+
+/**
+ * 聊天入口：按固定会话读取原生状态，连接草稿、工作台与 Desktop 导航。
+ *
+ * 接口：同源父窗口可选择当前 generation 的原生会话；会话切换与面板生命周期
+ *   见 docs/architecture/interfaces/read-panels.md，轮次命令见 session-tree.md。
+ * 不变量：展示投影不替代 SDK 上下文或模型循环；身份失效先于新快照，旧请求
+ *   不清另一会话草稿；导航通知不授予管理权限，能力仍取显式 Host 声明。
+ * 错误：当前请求失败提示使用者；过期结果忽略，读取断连不等于中止原生任务。
+ */
+const indexedFetch = createIndexedFetch();
+let hostFocused = true;
 const piLogo =
   '<svg class="pi-logo" viewBox="165.29 165.29 469.43 469.43" aria-hidden="true"><path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/><path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/><path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z"/></svg>';
 /* Layout: ZCode WorkspaceShellLayout / DESIGN.md; drafts: DSH form-model;

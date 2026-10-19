@@ -6,6 +6,16 @@ import {
 import { dshIcon } from "./dsh-icons.mjs";
 import { createIndexedFetch } from "./lazy-data.mjs";
 import { createHostTaskPanel } from "./host-task-panel.js";
+
+/**
+ * 工作区入口：Desktop Agent 导航、原生历史分支选择与全 Host 任务窗口。
+ *
+ * 接口：生命周期命令与导航字段见 docs/architecture/interfaces/lifecycle.md；
+ *   同源 iframe 通过 select-conversation／session-changed 同步客户端选择。
+ * 不变量：分支请求固定 Agent／generation／会话；选择不停止后台工作，晚到回执
+ *   不导航另一会话；停止的历史分支先启动原 worker，远程能力不由 UI 扩大。
+ * 错误：当前 HTTP 失败显示 notice；超时不宣称工作已取消，旧窗口消息忽略。
+ */
 const indexedFetch = createIndexedFetch();
 const $ = (selector) => document.querySelector(selector);
 const statuses = {
