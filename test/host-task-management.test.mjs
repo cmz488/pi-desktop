@@ -177,7 +177,100 @@ test(
     );
     assert.equal(details.body.task.outcome.status, "completed");
     assert.match(details.body.task.outcome.result.answer, /answer: child held/);
+    const answer = details.body.children[0].messages.findLast(
+      (message) => message.role === "assistant",
+    );
+    assert.equal(
+      details.body.task.outcome.result.answerEntryId,
+      answer.entryId,
+      "结果指向原生 submission 决定的回答条目，而不是一份无来源文本",
+    );
     assert.equal(details.body.children[0].id, child.id);
+  },
+);
+
+test(
+  "Host 等待透传原生任务终态，不把等待成功等同于执行成功",
+  { timeout: 60000 },
+  async (t) => {
+    const { a, request } = await setup(t);
+    const worker = (await request("/api/host/tasks")).body.workers.find(
+      (row) => row.agentId === a.id,
+    );
+    const target = {
+      agentId: a.id,
+      generation: worker.generation,
+      conversationId: worker.data.conversations[0].id,
+    };
+    const launched = await request("/api/host/tasks/command", {
+      ...target,
+      command: "subagent.spawn",
+      requestId: "native-completion-receipt",
+      prompt: "NATIVE_RECEIPT",
+    });
+    assert.equal(launched.status, 200);
+    const waited = await request("/api/host/tasks/command", {
+      ...target,
+      command: "wait",
+      taskId: launched.body.taskId,
+    });
+    assert.equal(waited.status, 200);
+    assert.equal(waited.body.task?.status, "terminal", "回执保留原生任务终态");
+    assert.equal(waited.body.task.id, launched.body.taskId);
+    assert.equal(waited.body.task.outcome.status, "completed");
+    assert.equal(
+      waited.body.task.outcome.result.answer,
+      "answer: NATIVE_RECEIPT",
+    );
+    const detail = await request(
+      `/api/host/tasks/detail?${new URLSearchParams({ ...target, taskId: launched.body.taskId })}`,
+    );
+    assert.equal(detail.status, 200);
+    assert.deepEqual(
+      waited.body.task,
+      detail.body.task,
+      "等待与详情共享原生任务回执语义",
+    );
+  },
+);
+
+test(
+  "Host 中止已完成任务保留原生 terminal 回执，不把成功改写为已中止",
+  { timeout: 60000 },
+  async (t) => {
+    const { a, request } = await setup(t);
+    const worker = (await request("/api/host/tasks")).body.workers.find(
+      (row) => row.agentId === a.id,
+    );
+    const target = {
+      agentId: a.id,
+      generation: worker.generation,
+      conversationId: worker.data.conversations[0].id,
+    };
+    const launched = await request("/api/host/tasks/command", {
+      ...target,
+      command: "subagent.spawn",
+      requestId: "native-terminal-cancel",
+      prompt: "ALREADY_DONE",
+    });
+    const input = { ...target, taskId: launched.body.taskId };
+    const waited = await request("/api/host/tasks/command", {
+      ...input,
+      command: "wait",
+    });
+    assert.equal(waited.status, 200);
+    const cancelled = await request("/api/host/tasks/command", {
+      ...input,
+      command: "cancel",
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(
+      cancelled.body.abortStatus,
+      "terminal",
+      "原生已终态与中止标记分开",
+    );
+    assert.deepEqual(cancelled.body.task, waited.body.task);
+    assert.equal(cancelled.body.task.outcome.status, "completed");
   },
 );
 
@@ -392,16 +485,14 @@ test(
       ).status,
       404,
     );
-    assert.equal(
-      (
-        await request("/api/host/tasks/command", {
-          ...target,
-          command: "cancel",
-          taskId,
-        })
-      ).status,
-      200,
-    );
+    const cancelled = await request("/api/host/tasks/command", {
+      ...target,
+      command: "cancel",
+      taskId,
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.abortStatus, "marked");
+    assert.equal(cancelled.body.task.id, taskId);
     await until(
       async () => (await request("/api/host/tasks")).body,
       (value) =>
@@ -413,16 +504,17 @@ test(
     );
     assert.equal(detail.status, 200);
     assert.equal(detail.body.task.outcome.status, "aborted");
+    const waited = await request("/api/host/tasks/command", {
+      ...target,
+      command: "wait",
+      taskId,
+    });
+    assert.equal(waited.status, 200, "等待已中止任务也成功返回观察回执");
+    assert.deepEqual(waited.body.task, detail.body.task);
     assert.equal(
-      (
-        await request("/api/host/tasks/command", {
-          ...target,
-          command: "wait",
-          taskId,
-        })
-      ).status,
-      200,
-      "终态等待仍由原生 task 回执判断",
+      waited.body.task.outcome.status,
+      "aborted",
+      "等待成功不表示执行成功",
     );
     gate.resolve();
   },
@@ -648,6 +740,14 @@ test(
     );
     assert.match(detail.task.outcome.error.message, /子代理未完成/);
     assert.equal(detail.task.outcome.result.status, "unanswered");
+    const waited = await request("/api/host/tasks/command", {
+      ...target,
+      command: "wait",
+      taskId: launch.body.taskId,
+    });
+    assert.equal(waited.status, 200);
+    assert.deepEqual(waited.body.task, detail.task, "等待保留原生失败回执");
+    assert.equal(waited.body.task.outcome.status, "failed");
     assert.equal(f.requests.length, 1);
   },
 );

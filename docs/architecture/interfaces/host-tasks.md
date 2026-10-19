@@ -29,6 +29,7 @@ POST /api/host/tasks/command
   // wait/cancel: taskId 必需；cancel 也可改用 background:true，不与 taskId 并用
 }
 // -> 原生命令回执 + { agentId, generation, conversationId }
+// wait(taskId): 追加原生 task 终态快照；cancel(taskId): 追加 abortStatus 与 task 快照
 
 GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=...
 // -> { supported:true, task, children, hasMoreChildren, previewLimits }
@@ -79,11 +80,11 @@ GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=
 
 准入校验成功后，同一父会话、requestId 和规范化内容复用持久 task 回执，包括终态；同一 requestId 换内容为 409。新的明确发起应使用新 requestId。每父会话最多 16 个未终结的适配子代理 task；达到上限拒绝，不创建自有排队系统。
 
-回执只表示持久任务已创建，不表示执行成功。任务为 background，不阻塞父会话前台空闲；结果和过程在 owned 子会话与 task 原生回执中读取，不自动再调用父模型。
+`subagent.spawn` 是本应用通过公开 `defineTask`／`tx.createConversation`／`submit` 组合的最薄业务适配，不是上游现成的同名方法；不自建执行器或调度状态。发起回执只表示持久任务已创建，不表示执行成功。任务为 background，不阻塞父会话前台空闲；结果和过程在 owned 子会话与 task 原生回执中读取，不自动再调用父模型。
 
 ### 详情与 workspace
 
-`task` 包含 `{id,conversationId,kind,status,outcome}`；`outcome` 未决定时为 null，否则为原生 `status`、可选 `error.message`、`reason`，以及本适配的 `result`。本适配完成结果含子会话 ID、submission ID、准入终态和最多 12000 个 UTF-16 code unit 的 answer 预览；完整已提交记录保留在 Durable 子会话。
+`task` 包含 `{id,conversationId,kind,status,outcome}`；`outcome` 未决定时为 null，否则为原生 `status`、可选 `error.message`、`reason`，以及本适配的 `result`。本适配完成结果含子会话 ID、submission ID、准入终态、`answerEntryId` 和最多 12000 个 UTF-16 code unit 的 answer 预览。答案只从原生 submission 已决定的 `answer` 条目通过 `tx.entry(AssistantEntry, id)` 读取，不扫描当前上下文猜最后一条助手消息；完整已提交记录保留在 Durable 子会话。旧版已持久化结果可以没有 `answerEntryId`，读取不能为补字段重放工作。
 
 `children` 只含该 task 拥有的子会话：`{id,name,idle,model,usage,messages,partial,tools,messagesTruncated,toolsTruncated}`。这是展示预览：最多 20 个子会话、每会话最近 80 条消息与最近 40 个工具记录；每条消息文本保留前 12000 个 UTF-16 code unit，流式片段与工具输出保留尾 12000。`previewLimits` 明示这些上限，`hasMoreChildren`／truncated 字段报告裁剪。它不修改原生转录或模型上下文。
 
@@ -105,6 +106,7 @@ worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=
 
 ## 不变量
 
+- 单任务等待透传原生终态，中止区分原生 `marked` 与 `terminal`；HTTP 成功、中止请求被接受或任务离开实时图都不等于执行成功／已经中止。详情与命令使用同一安全投影，不发布原始输入、检查点或非本适配任务的任意 result。
 - Durable 是任务、submission、终态、所有权及恢复的唯一真相；Host 仅聚合视图和转发，不维护另一份任务状态或调度队列。
 - 每个 Desktop Agent 仍只有一个 worker／SQLite／writer；子代理与历史分支都是其内部会话，不创建额外 Desktop Agent 或数据库。
 - 管理范围只沿 `owner.conversationId` 扩展，历史分叉 `parent.conversationId` 不产生权限。

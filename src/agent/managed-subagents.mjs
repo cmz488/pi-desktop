@@ -1,4 +1,8 @@
-import { defineExtension, defineTask } from "@earendil-works/pi-durable";
+import {
+  AssistantEntry,
+  defineExtension,
+  defineTask,
+} from "@earendil-works/pi-durable";
 import { contentText } from "../shared/conversation.mjs";
 
 /**
@@ -57,29 +61,37 @@ export function createManagedSubagents({ createChild, prepareChild }) {
           submissionId: submission.id,
           status: settled.status,
         };
-        let outcome;
-        if (settled.status === "done") {
-          const view = await runtime.context(id, context);
-          const answer = view.messages.findLast(
+        await runtime.commit(async (tx) => {
+          if (settled.status !== "done")
+            return {
+              status: "terminal",
+              outcome: {
+                status: "failed",
+                result,
+                error: { message: `子代理未完成：${settled.reason}` },
+              },
+            };
+          // 上下文可能继续变化；结果只读取 submission 已决定的不可变回答。
+          const entry = await tx.entry(AssistantEntry, settled.answer);
+          const answer = entry?.model?.find(
             (message) => message.role === "assistant",
           );
-          outcome = {
-            status: "completed",
-            result: {
-              ...result,
-              answer: contentText(answer?.content ?? "").slice(
-                0,
-                ANSWER_PREVIEW_CHARS,
-              ),
+          if (!answer) throw new Error("子代理原生回答不存在");
+          return {
+            status: "terminal",
+            outcome: {
+              status: "completed",
+              result: {
+                ...result,
+                answerEntryId: settled.answer,
+                answer: contentText(answer.content).slice(
+                  0,
+                  ANSWER_PREVIEW_CHARS,
+                ),
+              },
             },
           };
-        } else
-          outcome = {
-            status: "failed",
-            result,
-            error: { message: `子代理未完成：${settled.reason}` },
-          };
-        await runtime.commit(() => ({ status: "terminal", outcome }), context);
+        }, context);
       },
     },
     abort: async (_task, runtime, context) => {

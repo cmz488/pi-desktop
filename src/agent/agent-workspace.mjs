@@ -71,6 +71,28 @@ const text = (value, limit, label) => {
     throw new DeskError(422, `${label}无效`);
   return value;
 };
+function taskReceipt(task) {
+  if (!task) throw new DeskError(404, "任务不存在");
+  const outcome = task.state.outcome;
+  return {
+    id: task.id,
+    conversationId: task.conversationId,
+    kind: task.kind,
+    status: task.state.status,
+    outcome: outcome
+      ? {
+          status: outcome.status,
+          ...(outcome.error
+            ? { error: { message: outcome.error.message } }
+            : {}),
+          ...(outcome.reason ? { reason: outcome.reason } : {}),
+          ...(task.kind === MANAGED_SUBAGENT_KIND && outcome.result
+            ? { result: outcome.result }
+            : {}),
+        }
+      : null,
+  };
+}
 async function projectDirectory(input) {
   text(input, 4096, "项目目录");
   try {
@@ -920,11 +942,12 @@ export async function openAgentWorkspace(options) {
       const waitContext = signal ? withAbortSignal(signal, context) : context;
       if (input.taskId !== undefined) {
         await scopedTask(selected.id, input.taskId);
-        await harness.waitForTask(input.taskId, waitContext);
+        const settled = await harness.waitForTask(input.taskId, waitContext);
         return {
           id: selected.id,
           taskId: input.taskId,
           idle: !foreground(selected.id),
+          task: taskReceipt(settled),
         };
       }
       await selected.waitForIdle(waitContext);
@@ -934,8 +957,14 @@ export async function openAgentWorkspace(options) {
       // 取消：taskId 指定单个任务；background 只取消后台任务；否则取消该会话当前的工作。
       if (input.taskId !== undefined) {
         await scopedTask(selected.id, input.taskId);
-        await harness.abortTask(input.taskId, context);
-        return { id: selected.id, taskId: input.taskId, cancelled: true };
+        const abortStatus = await harness.abortTask(input.taskId, context);
+        return {
+          id: selected.id,
+          taskId: input.taskId,
+          cancelled: true,
+          abortStatus,
+          task: taskReceipt(await harness.getTask(input.taskId, context)),
+        };
       }
       if (input.background === true) {
         // 只取消后台任务：按任务图里的 background 标记逐个中止，不等前台工作结束
@@ -1117,28 +1146,9 @@ export async function openAgentWorkspace(options) {
             })),
         });
       }
-      const nativeOutcome = task.state.outcome;
-      const outcome = nativeOutcome
-        ? {
-            status: nativeOutcome.status,
-            ...(nativeOutcome.error
-              ? { error: { message: nativeOutcome.error.message } }
-              : {}),
-            ...(nativeOutcome.reason ? { reason: nativeOutcome.reason } : {}),
-            ...(task.kind === MANAGED_SUBAGENT_KIND && nativeOutcome.result
-              ? { result: nativeOutcome.result }
-              : {}),
-          }
-        : null;
       return {
         supported: true,
-        task: {
-          id: task.id,
-          conversationId: task.conversationId,
-          kind: task.kind,
-          status: task.state.status,
-          outcome,
-        },
+        task: taskReceipt(task),
         children,
         hasMoreChildren: records.length > children.length,
         previewLimits: {
