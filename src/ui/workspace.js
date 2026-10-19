@@ -314,10 +314,12 @@ function openMenu(id, event, anchor, conversationId) {
   menuTarget = id;
   menuAnchor = anchor;
   const menu = $("#agent-menu");
-  const entries = agent.archived
-    ? [["恢复会话", "agent.restore"]]
-    : branch
-      ? [["创建分支", "conversation.fork"]]
+  const entries = branch
+    ? agent.archived
+      ? []
+      : [["创建分支", "conversation.fork"]]
+    : agent.archived
+      ? [["恢复会话", "agent.restore"]]
       : agent.source === "pi"
         ? [["在 Desktop 中继续", "agent.resume"]]
         : agent.status === "running"
@@ -404,6 +406,14 @@ function openMenu(id, event, anchor, conversationId) {
           }),
         ]),
   );
+  if (branch && agent.archived) {
+    const note = document.createElement("div");
+    note.className = "menu-label";
+    note.textContent = "请从 Agent 菜单恢复整个会话族";
+    note.setAttribute("aria-disabled", "true");
+    note.tabIndex = -1;
+    menu.append(note);
+  }
   const archiveButton = [...menu.children].find(
     (item) => item.textContent === "归档会话",
   );
@@ -418,7 +428,7 @@ function openMenu(id, event, anchor, conversationId) {
   const rect = anchor.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(event.clientX || rect.right, innerWidth - menu.offsetWidth - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(event.clientY || rect.bottom, innerHeight - menu.offsetHeight - 8))}px`;
-  menu.querySelector("button:not(:disabled)")?.focus();
+  menu.querySelector('button:not(:disabled), [aria-disabled="true"]')?.focus();
 }
 document.addEventListener("pointerdown", (event) => {
   if (!$("#agent-menu").contains(event.target)) closeMenu();

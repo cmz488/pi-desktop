@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
@@ -173,9 +174,84 @@ try {
     "重载保留同代际的最新选择",
   );
   assert.equal(f.requests.length, 1, "导航只调用会话 API，不重放模型");
+  await f.command("agent.stop", { id: actor.id });
+  await f.command("agent.archive", { id: actor.id });
+  await evaluate("document.querySelector('#filter-toggle').click()");
+  await ready("!document.querySelector('#agent-menu').hidden");
+  await evaluate(
+    "[...document.querySelectorAll('#agent-menu [role=menuitemradio]')].find(node=>node.textContent.startsWith('显示归档')).click()",
+  );
+  await call("Page.reload", { ignoreCache: true });
+  await ready(`!!document.querySelector(${JSON.stringify(left(branches[0]))})`);
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[0]))}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:120,clientY:160}))`,
+  );
+  await ready("!document.querySelector('#agent-menu').hidden");
+  assert.deepEqual(
+    await evaluate(
+      "[...document.querySelectorAll('#agent-menu [data-command]')].map(node=>node.dataset.command)",
+    ),
+    [],
+    "归档分支菜单不能提供会话族恢复或其他 Agent 命令",
+  );
+  assert.equal(
+    await evaluate("document.activeElement.getAttribute('aria-disabled')"),
+    "true",
+    "只读说明可被聚焦，但不伪装可执行恢复",
+  );
+  assert.match(
+    await evaluate("document.querySelector('#agent-menu').textContent"),
+    /Agent 菜单恢复整个会话族/,
+    "归档说明必须明确真正的恢复作用域",
+  );
+  assert.equal(
+    (await f.call("/api/workspace")).agents.find((row) => row.id === actor.id)
+      .archived,
+    true,
+    "查看归档分支菜单不恢复所属 Agent",
+  );
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+  });
+  await ready("document.querySelector('#agent-menu').hidden");
+  assert.equal(
+    await evaluate(
+      `document.activeElement.matches(${JSON.stringify(left(branches[0]))})`,
+    ),
+    true,
+    "Escape 关闭只读菜单并归还焦点",
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(rootButton)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:120,clientY:160}))`,
+  );
+  await ready("!document.querySelector('#agent-menu').hidden");
+  await evaluate(
+    "document.querySelector('#agent-menu [data-command=\"agent.restore\"]').click()",
+  );
+  const restored = await until(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.agents.find((row) => row.id === actor.id).archived === false,
+  );
+  const restoredAgent = restored.agents.find((row) => row.id === actor.id);
+  assert.equal(
+    restoredAgent.branches.length,
+    2,
+    "根 Agent 菜单仍恢复整个会话族，保留全部分支",
+  );
+  assert.equal(restoredAgent.status, "stopped", "恢复文件不自动启动 Agent");
   assert.deepEqual(driver.errors, []);
   console.log(
-    "Sidebar loading navigation passed: latest branch intent survives initial state and both selectors agree.",
+    "Sidebar navigation passed: latest loading intent, generation guard, reload, and archived branch/Agent menu isolation.",
   );
 } finally {
   driver?.close();
@@ -184,5 +260,12 @@ try {
     browser.kill("SIGTERM");
     await exited;
   }
+  // Chromium 关闭后，子进程可能仍在完成 profile 的原子替换。
+  await rm(join(f.root, "navigation-browser"), {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
   await f.close();
 }

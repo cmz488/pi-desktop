@@ -88,7 +88,7 @@ class DeskError extends Error { status }
 
 ## 可执行证据
 
-- `test/desktop-sidebar-navigation-browser-check.mjs`：真实 HTTP 首次回执延迟下的连续分支选择、代际门禁、内外导航同步与重载保留。
+- `test/desktop-sidebar-navigation-browser-check.mjs`：真实 HTTP 首次回执延迟下的连续分支选择、代际门禁、内外导航同步与重载保留；归档分支不暴露 Agent 命令，根菜单仍可恢复全族。
 - `test/desktop-sidebar-fork.test.mjs`：跨项目同号会话、当前位置继承、忙碌快照、只读／远程／停止／代际门禁、停止和 Host 重启后的导航保留，以及 SIGSTOP worker 的有界超时。
 - `test/desktop-control-plane.test.mjs`：目录发现、命令表与目标校验（`npm run test:workspace`）。
 - `test/desktop-process-recovery.test.mjs`：进程重启与恢复意图先于启动完成。
@@ -103,6 +103,7 @@ class DeskError extends Error { status }
 
 - `src/control-plane/session-families.mjs` 只消费 worker 的原生清单与文件标记；`mergeNativeSessions(before?, next?)` 合并已验证的归属列表并保持 id／path／nativeSessionId 唯一，HTTP 工作区不额外暴露分支文件路径。发现器不会把同族 JSONL 另列为 Pi 只读 Agent；旧单文件 worker 的清单可以缺省。
 - `GET /api/agent` 的追加字段 `familyIdle` 用于整族配置门禁；所有实时任务结束前，共享人格、Agent 运行配置与权限调整不能误用根会话的空闲状态。未被引用的新提示词追加仍保留原有语义。
+- 分支菜单不提供 Agent 级归档／恢复；已归档分支只说明整族恢复入口，根 Agent 菜单仍恢复整个会话族，不提供单分支恢复。
 - Host 的 Agent 停止／重启作用于整个 worker；聊天内的等待／取消仍只作用于选中会话及其 owned 后代，不跨历史分支。
 - `src/control-plane/family-archives.mjs` 在现有 `openSessionArchives` adapter 上组合迁移。根沿用原归档 key，分支使用独立 key；先保存 `archiveIntent: "archive" | "restore"` 和 `archivePending`，每个文件保留原有摘要、锁、不可覆盖发布和阶段恢复，整族完成后才清除门禁。启动前恢复未完成的整族意图，不能只恢复根就启动 worker。
 - 一份文件冲突时不覆盖文件，整个 Agent 保持 pending；归档未完成先重试归档，恢复未完成先重试恢复。迁移错误在工作区可见，不能通过反向操作清掉半完成状态。
