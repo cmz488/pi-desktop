@@ -399,7 +399,7 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     ),
     "the sidebar rewind keeps the earlier turns",
   );
-  // 分支树面板：树形层级、活跃/放弃标记、展开折叠、图上创建与退回。
+  // SVG 轮次面板仍须保留历史路径；展示属性改变不能让旧回归跳过历史与动作归属。
   const treeRows = "#view-extensions [data-node-id]";
   await sessionMenu(first);
   await until("!!document.querySelector('.session-menu')");
@@ -407,6 +407,13 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     "document.querySelector('.session-menu [data-command=tree]').click()",
   );
   await until("!!document.querySelector('[data-branch-tree]')");
+  assert.equal(
+    await evaluate(
+      "!!document.querySelector('[data-branch-tree] svg [data-round-node]')",
+    ),
+    true,
+    "分支树使用真实 SVG 轮次节点",
+  );
   await until(`document.querySelectorAll('${treeRows}').length>=3`, {
     timeoutMs: 15000,
   });
@@ -418,28 +425,30 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   );
   assert(
     await evaluate(
-      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-abandoned'))`,
+      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.dataset.active==='false' && row.getAttribute('aria-label').includes('retry after network recovery'))`,
     ),
-    "the tree keeps the abandoned path visible",
+    "SVG 仍显示已放弃的恢复提问轮次",
   );
   assert.equal(
     await evaluate(
-      `document.querySelectorAll('${treeRows}[data-leaf=true]').length`,
+      `document.querySelectorAll('${treeRows}[data-current=true]').length`,
     ),
     1,
-    "the tree marks exactly one leaf",
+    "树恰有一个当前位置",
   );
   assert(
     await evaluate(
-      `[...document.querySelectorAll('${treeRows} .tag')].some((node)=>node.textContent==='当前位置')`,
+      `document.querySelector('${treeRows}[data-current=true] .branch-round-number')?.textContent.includes('当前位置')`,
     ),
-    "the leaf carries a badge",
+    "当前位置轮次携带可见标记",
   );
   const toggle = "#view-extensions [data-toggle-node]:not(:disabled)";
   const rowsBefore = await evaluate(
     `document.querySelectorAll('${treeRows}').length`,
   );
-  await evaluate(`document.querySelector('${toggle}').click()`);
+  await evaluate(
+    `document.querySelector('${toggle}').dispatchEvent(new MouseEvent('click',{bubbles:true}))`,
+  );
   const rowsCollapsed = await evaluate(
     `document.querySelectorAll('${treeRows}').length`,
   );
@@ -455,7 +464,9 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
     rowsCollapsed,
     "a refresh keeps the collapsed state",
   );
-  await evaluate(`document.querySelector('${toggle}').click()`);
+  await evaluate(
+    `document.querySelector('${toggle}').dispatchEvent(new MouseEvent('click',{bubbles:true}))`,
+  );
   await until(
     `document.querySelectorAll('${treeRows}').length===${rowsBefore}`,
   );
@@ -508,15 +519,33 @@ window.__req[path]=(window.__req[path]??0)+1;return original(...args);};`,
   const rowsBeforeRewind = await evaluate(
     `document.querySelectorAll('${treeRows}').length`,
   );
+  const rewindRound = await evaluate(`(() => {
+    const node=document.querySelector('${treeRows}[data-current=false]');
+    const id=node.dataset.roundNode;
+    node.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    return id;
+  })()`);
+  assert.equal(
+    await evaluate(
+      "!!document.querySelector('#view-extensions [data-branch-action=fork]')",
+    ),
+    false,
+    "历史轮次不能直接创建分支",
+  );
   await evaluate(
     "[...document.querySelectorAll('#view-extensions [data-branch-action=rewind]')].find((button)=>!button.disabled).click()",
   );
   await until(
-    `document.querySelectorAll('${treeRows}').length!==${rowsBeforeRewind}`,
+    `document.querySelector('${treeRows}[data-current=true]')?.dataset.roundNode===${JSON.stringify(rewindRound)}`,
+  );
+  assert.equal(
+    await evaluate(`document.querySelectorAll('${treeRows}').length`),
+    rowsBeforeRewind,
+    "退回只移动当前位置，不删除历史轮次",
   );
   assert(
     await evaluate(
-      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.classList.contains('is-abandoned'))`,
+      `[...document.querySelectorAll('${treeRows}')].some((row)=>row.dataset.active==='false')`,
     ),
     "the tree still distinguishes the abandoned path after a rewind from a node",
   );

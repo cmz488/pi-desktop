@@ -38,3 +38,9 @@
 - 隔离副本只复制 Git 管理及本轮新增源码，不带运行数据、release 或依赖副本；依赖仅链接复用且未修改。14 项有效反向分别覆盖持久幂等、owned 读模型、原生 background、创建／恢复资源 scope、两层 generation、Host 断连归还原生 32 观察配额、启动恢复门禁、unanswered 不伪作成功、快速重开、图未变的过程更新、键盘焦点、远程拒绝与接口形状。均命中 `AssertionError`，不是语法／启动／纯超时；还原后全部 6 条真实 HTTP 与完整 Chromium 流程通过。
 - 阶段证据：`test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`；仓库外 `/tmp/pi-round-host-check/host-*.log` 与 `host-sensitivity.json` 保存红绿、恢复诊断和反向结果。阶段 unit 为 360／360、check 为 94 个源文件、format 与真实解包的 npm 产物（185 个文件）通过；最终全量仍须以当前代码重新执行，不能用旧 `f026d3f` 的通过替代。
 - 主会话直接分轴复核：Standards 检查中文顶部契约、具名预算、统一资产、原生资源归属、无新依赖及用户产物保护；Spec 对照默认 10 轮 SVG／当前位置策略与全 Host 发起／监控／管理，复核 owner／历史 parent 分离、固定代际、只读／远程门禁和真实中止／终态。未使用开发或审查子代理。
+
+## 完整回归中的 SVG 夹具适配
+
+`39d2ca8` 上前七项完整命令通过，第八项 `test:durable:browser` 在旧 `.is-abandoned` 查询失败。实际 DOM 测量为三个 SVG `g` 轮次：draft A 是当前位置，失败请求与恢复提问均仍显示为 `data-active:false`。缺的是旧 DOM 属性，不是历史路径；旧 `data-leaf`、HTML `.click()` 与“退回后条目行数必变”也不再描述轮次界面。
+
+只更新 `test/durable-browser-check.mjs` 的展示与输入适配，没有改产品 JS／CSS 或屏蔽历史断言：断言具体的已放弃恢复轮次仍在、唯一当前位置与可见标记、SVG 折叠及滚动保持；历史轮次无分支按钮，选中后退回移动当前位置但不删除轮次。任务等待／两步中止／后台取消／跨 Agent 语义全部保留。修正后专项通过；隔离副本抹掉 inactive 标记、重新给历史轮次 fork 动作，分别命中行为断言，还原后完整专项恢复通过。该两项反向另存 `durable-svg-sensitivity.json`；不把原失败日志算作完整通过。
