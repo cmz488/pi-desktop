@@ -57,4 +57,4 @@ node test/toolchain-contract-check.mjs
 
 该脚本只调用纯参数校验／历史解析函数、准备本次 10 个提交的只读产物并验证可读性与篡改拒绝；不调用子代理工具、执行器或主管通道。扩展的 peer dependencies 从显式宿主解析，不安装依赖或修改安装包。临时文件位置会打印，真实用户配置与会话不参与。
 
-E3 的条件模型仅说明：没有其他 async／nested 定位记录时，detached 前台记录可在内存中查询，但不进入可恢复历史；新状态因此可能查不到。它不能证明历史事件确有 reload，也不能证明任务停止。遇到实际 detached／status／reply 不一致，保留原始回执、父会话身份、时间线和生命周期日志，再按权限调查；本次实际调查与阻塞见[修复记录](../history/pi-audit-remediation.md)。
+E3 的条件模型仅说明：没有其他 async／nested 定位记录时，detached 前台记录可在内存中查询，但不进入可恢复历史；新状态因此可能查不到。它不能证明历史事件确有 reload，也不能证明任务停止。遇到实际 detached／status／reply 不一致，保留原始回执、父会话身份、时间线和生命周期日志，再按权限调查；该历史事件的只读调查及证据局限见[修复记录](../history/pi-audit-remediation.md)。
