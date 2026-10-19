@@ -84,7 +84,7 @@ GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=
 
 ### 详情与 workspace
 
-`task` 包含 `{id,conversationId,kind,status,outcome}`；`outcome` 未决定时为 null，否则为原生 `status`、可选 `error.message`、`reason`，以及本适配的 `result`。本适配完成结果含子会话 ID、submission ID、准入终态、`answerEntryId` 和最多 12000 个 UTF-16 code unit 的 answer 预览。答案只从原生 submission 已决定的 `answer` 条目通过 `tx.entry(AssistantEntry, id)` 读取，不扫描当前上下文猜最后一条助手消息；完整已提交记录保留在 Durable 子会话。旧版已持久化结果可以没有 `answerEntryId`，读取不能为补字段重放工作。
+`task` 包含 `{id,conversationId,kind,status,outcome}`；`outcome` 未决定时为 null，否则为原生 `status`、可选 `error.message`、`reason`，以及本适配的 `result`。本适配完成结果含子会话 ID、submission ID、准入终态、`answerEntryId` 和最多 12000 个 UTF-16 code unit 的 answer 预览。答案与原生 submission 已决定的不可变 `answer` 条目绑定，`answerEntryId` 标识该回答；不会以当前上下文的最后一条助手消息替代，完整已提交记录保留在 Durable 子会话。旧版已持久化结果可以没有 `answerEntryId`，读取不能为补字段重放工作。
 
 `children` 只含该 task 拥有的子会话：`{id,name,idle,model,usage,messages,partial,tools,messagesTruncated,toolsTruncated}`。这是展示预览：最多 20 个子会话、每会话最近 80 条消息与最近 40 个工具记录；每条消息文本保留前 12000 个 UTF-16 code unit，流式片段与工具输出保留尾 12000。`previewLimits` 明示这些上限，`hasMoreChildren`／truncated 字段报告裁剪。它不修改原生转录或模型上下文。
 
