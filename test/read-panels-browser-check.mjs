@@ -21,9 +21,9 @@ import {createExtensionWorkbench} from '/extension-workbench.js';
 import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
-let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={};
+let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={},taskStatus='waiting';
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
-const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,name:'后台资料整理',conversationId:Number(id),owner:null,background:true,status:'waiting'}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
+const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,name:'后台资料整理',conversationId:Number(id),owner:null,background:true,status:taskStatus}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
 const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
 const root=document.querySelector('#view-extensions');root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,options),command:async(name,input)=>{commands.push({command:name,...input});return{};},toast:text=>notices.push(text),switchSession:async()=>{}});
@@ -33,6 +33,7 @@ const controller=createExtensionWorkbench({root,registry:createExtensionAdapterR
 const update=()=>controller.update([],{sessionId:owner,capabilities,sessionCommands:true});
 window.panelFixture={requests,commands,notices,pages,
 reply(value){taskReply=value;},
+status(value){taskStatus=value;return task.refresh({force:true});},
 update(id,caps=capabilities){owner=String(id);capabilities=caps;update();for(const page of pages)void page.refresh();},
 select(kind){return controller.select(kind==='tasks'?task.key:branch.key);},
 hold(kind,id){held.add(kind+':'+id);},
@@ -93,6 +94,23 @@ try {
   await until("!!window.panelFixture");
   await evaluate("panelFixture.select('tasks')");
   await until("!!document.querySelector('[data-task-id=\"101\"]')");
+  for (const [status, label] of [
+    ["pending", "排队"],
+    ["running", "运行中"],
+    ["waiting", "等待"],
+    ["completing", "收尾"],
+    ["future-phase", "future-phase"],
+  ]) {
+    await evaluate(`panelFixture.status(${JSON.stringify(status)})`);
+    assert.equal(
+      await evaluate(
+        "document.querySelector('[data-task-id=\"101\"] .task-panel-state').textContent",
+      ),
+      label,
+      "活跃态使用共用文案，未知原生阶段不推断为终态",
+    );
+  }
+  await evaluate("panelFixture.status('waiting')");
   for (const [status, label] of [
     ["completed", "任务已完成"],
     ["failed", "任务失败"],
@@ -294,6 +312,48 @@ try {
     await evaluate("!!document.querySelector('svg[data-round-tree]')"),
     true,
     "分支树用 SVG 展示对话轮次，不再显示原生日志长链",
+  );
+  await evaluate(
+    "document.querySelector('.branch-tree-content').style.width='1200px';panelFixture.pages[0].refresh({force:true})",
+  );
+  await until(
+    "document.querySelector('[data-round-tree]').viewBox.baseVal.width===760",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-round-tree]').viewBox.baseVal.width",
+    ),
+    760,
+    "宽容器的图面限制为 760px",
+  );
+  await evaluate(
+    "document.querySelector('.branch-tree-content').style.width='120px'",
+  );
+  await until(
+    "document.querySelector('[data-round-tree]').viewBox.baseVal.width===280",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-round-tree]').viewBox.baseVal.width",
+    ),
+    280,
+    "无须新数据，容器 resize 就把图面裁剪到 280px 下限",
+  );
+  await evaluate(
+    "document.querySelector('.branch-tree-content').style.width='0px';panelFixture.pages[0].refresh({force:true})",
+  );
+  await until(
+    "document.querySelector('[data-round-tree]').viewBox.baseVal.width===460",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-round-tree]').viewBox.baseVal.width",
+    ),
+    460,
+    "容器尚不可测量时保留 460px 初始回退",
+  );
+  await evaluate(
+    "document.querySelector('.branch-tree-content').style.width='';panelFixture.pages[0].refresh({force:true})",
   );
   assert.equal(
     await evaluate("document.querySelectorAll('[data-round-node]').length"),
