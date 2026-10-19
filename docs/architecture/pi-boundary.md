@@ -116,3 +116,4 @@ flowchart TD
 - 源码职责：[source-map.md](source-map.md)
 - 验证与既有能力：[verification.md](verification.md)
 - 当前架构总览：[README.md](README.md)
+- 原生任务 API 收口与验证：[native-task-api-management.md](../history/native-task-api-management.md)
