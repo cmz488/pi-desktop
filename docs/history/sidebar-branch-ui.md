@@ -85,3 +85,28 @@ Agent / 会话   任务名             状态         等待  中止
 证据：`/tmp/pi-sidebar-ui-check/sensitivity/results.json` 与同目录每项 `.diff`／`.log`；诊断脚本仅留 `/tmp`。本轮计数不复用前一轮的 19 项。
 
 首次全量运行的前 7 项通过，Durable 浏览器在旧 `.tag` 后台徽标断言失败。界面已将该语义移入行元信息，夹具随后按 `.task-panel-meta` 检查“后台”；仍逐步验证两次确认和原生任务清空，未修改产品执行行为。专项复测通过，随后重新运行全部 12 项，最终回执另记。
+
+## 完整验收与交付边界
+
+修正夹具后的完整受测 HEAD 为 `997154cadda1dcc4bc1016dd722d290bdc3e5cad`，tree 为 `7d0e5fcb115dbfc28f3bd89e0dcdd9289b92bad7`；测试前后两者完全相同。`/tmp/pi-sidebar-ui-check/full-reviewed/results.json` 记录下列 12 项，全部退出 0：
+
+| 命令                              | 结果                            |
+| --------------------------------- | ------------------------------- |
+| `npm test`                        | 363 项通过                      |
+| `npm run check`                   | 94 个源文件通过                 |
+| `npm run format:check`            | 通过                            |
+| `npm run test:durable`            | 32 项通过                       |
+| `npm run test:workspace`          | 25 项通过                       |
+| `npm run test:durable:recovery`   | 通过                            |
+| `npm run test:browser`            | 通过                            |
+| `npm run test:durable:browser`    | 通过                            |
+| `npm run test:workspace:browser`  | 通过                            |
+| `npm run test:remote:desktop`     | 通过                            |
+| `npm run test:extensions:browser` | 通过                            |
+| `npm run package:check`           | 实际解包 186 文件／812 KiB 通过 |
+
+另在严格源码副本只读链接当前已安装依赖：Pi Durable `1.0.4`、Pi SDK／Pi AI `1.3.0`，通过 9 条真实 HTTP、默认分支 Chromium 与 Host 任务 Chromium。未写全局依赖、配置或真实会话；证据 `/tmp/pi-sidebar-ui-check/global-deps/results.json`。
+
+本记录提交后还会对最终 HEAD 原样重跑上述 12 项，最终准确 HEAD／tree 与退出码以 `/tmp/pi-sidebar-ui-check/final/results.json` 为准，不再修改已受测源码。既有两份 release SHA-256 保持不变：原包 `34a415295c9563888bde8f578974c516e2eddf64f9bd124cadbd0396f44cf5f1`，已交付包 `cbb5794b4e5401bac46fc37d2e57ad6412da0ba4da4f88531d8283abed02884d`。
+
+本轮完成源码修复与验证，未自动重新打包至 release、替换已安装版本或重启应用。
