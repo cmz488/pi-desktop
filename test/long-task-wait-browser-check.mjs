@@ -66,6 +66,7 @@ window.fetch=async(input,options={})=>{let command;try{command=JSON.parse(option
  if(probe.leaseOnce){probe.leaseOnce=false;request.status=408;return new Response(JSON.stringify({error:'等待租约已到期，任务继续运行'}),{status:408,headers:{'Content-Type':'application/json'}});}
  const hold=probe.holdSuccess;probe.holdSuccess=false;
  try{let response=await fetcher(input,options);request.status=response.status;
+  if(response.ok)request.task=(await response.clone().json()).task;
   if(hold&&response.ok){const value=await response.json();response=new Response(JSON.stringify(value),{status:response.status,headers:{'Content-Type':'application/json'}});await new Promise(release=>probe.held.push({release}));}
   request.finished=performance.now();return response;}
  catch(error){request.error=error.message;request.finished=performance.now();throw error;}
@@ -117,7 +118,15 @@ window.addEventListener('DOMContentLoaded',()=>{const node=document.querySelecto
     "12 秒后不能提前成功或报通用中止",
   );
   assert.equal(await chat("return !!w.waitProbe.requests[0].error"), false);
-  await ready("d.defaultView.waitProbe.notices.includes('任务已结束')");
+  await ready("d.defaultView.waitProbe.notices.includes('任务已完成')");
+  assert.equal(
+    await chat("return w.waitProbe.requests[0].task.status"),
+    "terminal",
+  );
+  assert.equal(
+    await chat("return w.waitProbe.requests[0].task.outcome.status"),
+    "completed",
+  );
   assert.ok(Date.now() - started >= WAIT_DURATION_MS);
   assert.equal((await state()).idle, true);
   assert.ok(
