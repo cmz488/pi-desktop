@@ -13,6 +13,7 @@ import {
   defineExtension,
   section,
   configure,
+  LiveDoc,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -186,6 +187,159 @@ export async function openAgentWorkspace(options) {
   );
   let ownedPreparer;
   const subagents = createManagedSubagents({
+    spawn: async (input, api, ctx) => {
+      const current = await api.agent(ctx);
+      const request = await subagentRequest(
+        {
+          ...input,
+          requestId: input.requestId ?? `tool-subagent:${api.taskId}`,
+        },
+        { id: api.conversationId, model: current.model },
+      );
+      const taskId = await api.commit(
+        (tx) => admitSubagent(tx, api.conversationId, request),
+        ctx,
+      );
+      return { parentConversationId: api.conversationId, taskId };
+    },
+    abort: async (input, api, ctx) => {
+      const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
+      if (task.kind !== MANAGED_SUBAGENT_KIND)
+        throw new DeskError(404, "子代理任务不存在");
+      // ToolExecutionApi 不提供 task 中止；这一步只调用同一 worker 的公开 Harness API。
+      ctx.abortSignal?.throwIfAborted();
+      const abortStatus = await harness.abortTask(task.id, ctx);
+      return {
+        abortStatus,
+        task: taskReceipt(await api.getTask(task.id, ctx)),
+      };
+    },
+    wait: async (input, api, ctx) => {
+      const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
+      if (task.kind !== MANAGED_SUBAGENT_KIND)
+        throw new DeskError(404, "子代理任务不存在");
+      return { task: taskReceipt(await api.waitForTask(task.id, ctx)) };
+    },
+    list: async (input, api, ctx) => {
+      const scope = ownedConversationIds(
+        api.conversationId,
+        await scanAll(api, ctx),
+      );
+      const tasks = [];
+      let cursor;
+      do {
+        const page = await api.commit(
+          (tx) =>
+            tx.scanTasks(
+              { kind: MANAGED_SUBAGENT_KIND },
+              TASK_SCAN_PAGE_SIZE,
+              cursor,
+            ),
+          ctx,
+        );
+        tasks.push(
+          ...page.items.filter(
+            (task) =>
+              scope.has(task.conversationId) &&
+              (input.includeTerminal === true ||
+                task.state.status !== "terminal"),
+          ),
+        );
+        cursor = page.next;
+      } while (cursor !== undefined);
+      const limit = input.limit ?? 20;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)
+        throw new DeskError(422, "子代理清单上限无效");
+      tasks.sort((a, b) => b.id - a.id);
+      return {
+        parentConversationId: api.conversationId,
+        tasks: tasks.slice(0, limit).map(taskReceipt),
+        truncated: tasks.length > limit,
+      };
+    },
+    message: async (input, api, ctx) => {
+      const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
+      if (task.kind !== MANAGED_SUBAGENT_KIND)
+        throw new DeskError(404, "子代理任务不存在");
+      if (task.state.status === "terminal")
+        throw new DeskError(409, "子代理任务已结束，请创建新的委托");
+      const child = (await scanAll(api, ctx)).find(
+        (row) => row.owner?.taskId === task.id,
+      );
+      if (!child) throw new DeskError(409, "子代理尚未就绪，请稍后重试");
+      const content = text(
+        input.message,
+        MAX_SUBAGENT_PROMPT_UNITS,
+        "子代理消息",
+      ).trim();
+      if (!content) throw new DeskError(422, "子代理消息不能为空");
+      const mode = input.mode ?? "steer";
+      if (!["steer", "followUp"].includes(mode))
+        throw new DeskError(422, "消息模式无效");
+      const selected = await api.conversation(child.id, ctx);
+      const submission = await selected.submit(
+        {
+          type: "input",
+          content,
+          whenBusy: mode,
+          requestId: input.requestId ?? `tool-message:${api.taskId}`,
+        },
+        ctx,
+      );
+      return {
+        taskId: task.id,
+        conversationId: child.id,
+        submissionId: submission.id,
+        mode,
+      };
+    },
+    read: async (input, api, ctx) => {
+      const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
+      if (task.kind !== MANAGED_SUBAGENT_KIND)
+        throw new DeskError(404, "子代理任务不存在");
+      const records = (await scanAll(api, ctx)).filter(
+        (row) => row.owner?.taskId === task.id,
+      );
+      const children = [];
+      let remaining = 32000;
+      for (const row of records.slice(0, MAX_DETAIL_CHILDREN)) {
+        const page = await api.commit(
+          (tx) => tx.scanEntries({ conversationId: row.id }, 40),
+          ctx,
+        );
+        const live = await api.snapshot(LiveDoc, row.id, ctx);
+        const messages = page.items
+          .reverse()
+          .flatMap((entry) =>
+            contributed(entry).map((message) => ({
+              ...projectMessage(message, String(entry.id)),
+              entryId: entry.id,
+            })),
+          )
+          .filter((message) => remaining > 0 && message.role !== "custom")
+          .map((message) => {
+            const text = message.text.slice(0, Math.min(2000, remaining));
+            remaining -= text.length;
+            return { role: message.role, text, entryId: message.entryId };
+          });
+        children.push({
+          id: row.id,
+          messages,
+          messagesTruncated: page.next !== undefined || remaining === 0,
+          partial: live?.generation?.message
+            ? projectMessage(live.generation.message, "partial").text.slice(
+                0,
+                2000,
+              )
+            : null,
+        });
+      }
+      return {
+        task: taskReceipt(task),
+        children,
+        hasMoreChildren: records.length > children.length,
+      };
+    },
     createChild: async (tx, task) => {
       const parent = await tx.doc(AgentProfile, task.conversationId);
       const profile = {
@@ -323,8 +477,8 @@ export async function openAgentWorkspace(options) {
   };
   /* 一次扫描拿到全部会话记录：顶层会话（含 ownerless 分支）与子会话共用同一份记录，
    * parent/owner 是 Durable 自己的关系字段，界面不再依赖会话文档里的副本。 */
-  async function scanAll() {
-    return harness.commit(async (tx) => {
+  async function scanAll(api = harness, ctx = context) {
+    return api.commit(async (tx) => {
       const rows = [];
       let cursor;
       do {
@@ -333,7 +487,7 @@ export async function openAgentWorkspace(options) {
         cursor = page.next;
       } while (cursor !== undefined);
       return rows;
-    }, context);
+    }, ctx);
   }
   async function conversations() {
     return (await scanAll()).filter((row) => !row.owner);
@@ -352,11 +506,11 @@ export async function openAgentWorkspace(options) {
       throw new DeskError(404, "Agent 不存在");
     return found;
   }
-  async function scopedTask(id, taskId) {
+  async function scopedTask(id, taskId, api = harness, ctx = context) {
     if (!Number.isSafeInteger(taskId) || taskId < 0)
       throw new DeskError(422, "任务 id 无效");
-    const task = await harness.getTask(taskId, context);
-    const scope = ownedConversationIds(id, await scanAll());
+    const task = await api.getTask(taskId, ctx);
+    const scope = ownedConversationIds(id, await scanAll(api, ctx));
     // 越界与未知任务使用同一个错误，不能借任务 id 查询其他会话的工作。
     if (!task || !scope.has(task.conversationId))
       throw new DeskError(404, "任务不存在");
@@ -692,6 +846,80 @@ export async function openAgentWorkspace(options) {
     }
     return { patch, profile };
   }
+  async function subagentRequest(input, prior) {
+    if (options.readOnly)
+      throw new DeskError(403, "只读会话不提供子代理发起操作");
+    const prompt = text(
+      input.prompt,
+      MAX_SUBAGENT_PROMPT_UNITS,
+      "子代理任务",
+    ).trim();
+    const name =
+      text(
+        input.name ?? "子代理",
+        MAX_SUBAGENT_NAME_UNITS,
+        "子代理名称",
+      ).trim() || "子代理";
+    const requestId = text(
+      input.requestId,
+      MAX_SUBAGENT_REQUEST_UNITS,
+      "请求 ID",
+    );
+    if (!prompt || !requestId)
+      throw new DeskError(422, "请提供子代理任务与请求 ID");
+    const supplied = input.config === undefined ? {} : input.config;
+    if (
+      !supplied ||
+      typeof supplied !== "object" ||
+      Array.isArray(supplied) ||
+      Object.keys(supplied).some(
+        (key) =>
+          !["model", "thinkingLevel", "instructions", "tools"].includes(key),
+      )
+    )
+      throw new DeskError(422, "子代理配置无效");
+    const { patch } = await changes(supplied, prior);
+    const config = {};
+    for (const key of ["model", "thinkingLevel", "instructions"])
+      if (patch[key] !== undefined) config[key] = patch[key];
+    if (patch.tools) config.tools = patch.tools.map((tool) => tool.name);
+    const modelRef = config.model ?? prior.model;
+    const model =
+      modelRef && models.getModel(modelRef.provider, modelRef.modelId);
+    if (!model || !(await models.getAuth(model)))
+      throw new DeskError(422, "请先为子代理选择已配置的模型");
+    const signature = createHash("sha256")
+      .update(JSON.stringify({ name, prompt, config }))
+      .digest("hex");
+    return { name, prompt, config, requestId, signature };
+  }
+  async function admitSubagent(tx, id, input) {
+    let cursor,
+      active = 0;
+    do {
+      const page = await tx.scanTasks(
+        { conversationId: id, kind: MANAGED_SUBAGENT_KIND },
+        TASK_SCAN_PAGE_SIZE,
+        cursor,
+      );
+      for (const task of page.items) {
+        if (task.input.requestId === input.requestId) {
+          if (task.input.signature !== input.signature)
+            throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+          return task.id;
+        }
+        if (task.state.status !== "terminal") active++;
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
+    if (active >= MAX_ACTIVE_SUBAGENTS)
+      throw new DeskError(429, "该会话的子代理任务过多，请先等待或取消");
+    return tx.createTask(subagents.task, input, {
+      conversationId: id,
+      ownership: { kind: "conversation" },
+      background: true,
+    });
+  }
   async function execute(command, input = {}, { signal } = {}) {
     guard();
     if (command === "create") {
@@ -714,78 +942,11 @@ export async function openAgentWorkspace(options) {
     }
     const selected = await conversation(input.id);
     if (command === "subagent.spawn") {
-      if (options.readOnly)
-        throw new DeskError(403, "只读会话不提供子代理发起操作");
-      const prompt = text(
-        input.prompt,
-        MAX_SUBAGENT_PROMPT_UNITS,
-        "子代理任务",
-      ).trim();
-      const name =
-        text(
-          input.name ?? "子代理",
-          MAX_SUBAGENT_NAME_UNITS,
-          "子代理名称",
-        ).trim() || "子代理";
-      const requestId = text(
-        input.requestId,
-        MAX_SUBAGENT_REQUEST_UNITS,
-        "请求 ID",
+      const request = await subagentRequest(input, await summary(selected));
+      const taskId = await selected.commit(
+        (tx) => admitSubagent(tx, selected.id, request),
+        context,
       );
-      if (!prompt || !requestId)
-        throw new DeskError(422, "请提供子代理任务与请求 ID");
-      const supplied = input.config === undefined ? {} : input.config;
-      if (
-        !supplied ||
-        typeof supplied !== "object" ||
-        Array.isArray(supplied) ||
-        Object.keys(supplied).some(
-          (key) =>
-            !["model", "thinkingLevel", "instructions", "tools"].includes(key),
-        )
-      )
-        throw new DeskError(422, "子代理配置无效");
-      const prior = await summary(selected);
-      const { patch } = await changes(supplied, prior);
-      const config = {};
-      for (const key of ["model", "thinkingLevel", "instructions"])
-        if (patch[key] !== undefined) config[key] = patch[key];
-      if (patch.tools) config.tools = patch.tools.map((tool) => tool.name);
-      const modelRef = config.model ?? (await selected.agent(context)).model;
-      const model =
-        modelRef && models.getModel(modelRef.provider, modelRef.modelId);
-      if (!model || !(await models.getAuth(model)))
-        throw new DeskError(422, "请先为子代理选择已配置的模型");
-      const signature = createHash("sha256")
-        .update(JSON.stringify({ name, prompt, config }))
-        .digest("hex");
-      const taskId = await selected.commit(async (tx) => {
-        let cursor,
-          active = 0;
-        do {
-          const page = await tx.scanTasks(
-            { conversationId: selected.id, kind: MANAGED_SUBAGENT_KIND },
-            TASK_SCAN_PAGE_SIZE,
-            cursor,
-          );
-          for (const task of page.items) {
-            if (task.input.requestId === requestId) {
-              if (task.input.signature !== signature)
-                throw new DeskError(409, "子代理请求 ID 已用于其他内容");
-              return task.id;
-            }
-            if (task.state.status !== "terminal") active++;
-          }
-          cursor = page.next;
-        } while (cursor !== undefined);
-        if (active >= MAX_ACTIVE_SUBAGENTS)
-          throw new DeskError(429, "该会话的子代理任务过多，请先等待或取消");
-        return tx.createTask(
-          subagents.task,
-          { name, prompt, config, requestId, signature },
-          { ownership: { kind: "conversation" }, background: true },
-        );
-      }, context);
       harness.resume();
       return { id: selected.id, taskId };
     }

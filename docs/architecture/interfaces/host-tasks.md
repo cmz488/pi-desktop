@@ -8,7 +8,7 @@
 - `src/server/durable-server.mjs`：worker 的读取、权限与既有命令适配。
 - `src/ui/shared/host-task-panel.js`、`workspace.html/js/css`：全 Host 窗口与发起表单；任务确认和等待复用 `task-panel.js`，不另建执行器。
 
-范围是此 Desktop Host 管理的 worker 中的 Durable task，不是全系统进程或旧 CLI 子代理记录。
+范围是此 Desktop Host 管理的 worker 中的 Durable task，不是全系统进程或旧 CLI 子代理记录。提供给模型的内置扩展工具及其 owned 范围见 [子代理工具契约](subagent-tools.md)。
 
 ## 签名
 

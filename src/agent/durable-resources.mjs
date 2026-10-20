@@ -327,7 +327,10 @@ export function createDurableResources({
                   throw new DeskError(409, "工具运行环境不属于当前 Agent");
                 await ready(context);
                 const agent = await api.agent(context);
-                const chosen = agent.tools.map((tool) => tool.name);
+                // Durable 内置工具不属于资源 Session，不能借同步选择将它们交给另一执行循环。
+                const chosen = agent.tools
+                  .map((tool) => tool.name)
+                  .filter((name) => host.registered.has(name));
                 const current = session.getActiveToolNames();
                 if (
                   chosen.length !== current.length ||
