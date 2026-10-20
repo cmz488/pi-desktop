@@ -186,6 +186,7 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     "/usr/bin/chromium",
     [
       "--headless",
+      "--password-store=basic",
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",

@@ -69,6 +69,7 @@ try {
     "/usr/bin/chromium",
     [
       "--headless",
+      "--password-store=basic",
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
@@ -778,5 +779,11 @@ try {
   }
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  await rm(root, { recursive: true, force: true });
+  // Chromium 的子进程可能在主进程关闭后完成 profile 的原子替换。
+  await rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }

@@ -23,6 +23,7 @@ try {
     "/usr/bin/chromium",
     [
       "--headless",
+      "--password-store=basic",
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
