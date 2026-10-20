@@ -220,8 +220,32 @@ window.fetch=async(input,options={})=>{
   await chat("w.panelProbe.caps={readOnly:true}");
   await pulse();
   await ready(
-    "!!d.querySelector('[data-task-action]')&&[...d.querySelectorAll('[data-task-action]')].every(node=>node.disabled)",
+    "!!d.querySelector('[data-task-action]:not([data-task-inspect])')&&[...d.querySelectorAll('[data-task-action]:not([data-task-inspect])')].every(node=>node.disabled)",
   );
+  assert.equal(
+    await chat(
+      "return d.querySelector('[data-task-compose-toggle]')?.disabled;",
+    ),
+    true,
+    "只读状态不能发起子代理",
+  );
+  assert.equal(
+    await chat("return d.querySelector('[data-task-inspect]')?.disabled;"),
+    false,
+    "已声明的只读详情不是写管理操作",
+  );
+  await chat("d.querySelector('[data-view=extensions]').click();");
+  await ready("d.querySelector('.task-panel')?.getClientRects().length>0");
+  await chat("d.querySelector('[data-task-inspect]').click();");
+  try {
+    await ready(
+      "d.querySelector('.task-panel-detail')?.textContent.includes('原生任务 #')",
+    );
+  } catch (error) {
+    throw new Error(
+      `${error.message}; 只读详情：${await chat("return d.querySelector('.task-panel-detail')?.textContent;")}`,
+    );
+  }
   assert.equal(
     await chat("return !!d.querySelector('[data-armed=true]')"),
     false,
@@ -239,6 +263,13 @@ window.fetch=async(input,options={})=>{
     ),
     false,
     "网关仍允许的会话中止入口不被面板门控禁用",
+  );
+  assert.equal(
+    await chat(
+      "return !!d.querySelector('[data-task-inspect]')||!!d.querySelector('[data-task-compose-toggle]');",
+    ),
+    false,
+    "远程不提供本地详情或发起 affordance",
   );
   await chat(
     "w.panelProbe.caps={readOnly:false,remote:false,tasks:false,sessionTree:false}",
