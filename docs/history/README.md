@@ -24,4 +24,5 @@
 - [session-concurrency-review.md](session-concurrency-review.md)
 - [sessions-git-clipboard-review.md](sessions-git-clipboard-review.md)
 - [source-organization-review.md](source-organization-review.md)
+- [subagent-workbench-integration.md](subagent-workbench-integration.md)
 - [todo-graph-review.md](todo-graph-review.md)
