@@ -164,5 +164,199 @@
   .task-panel .task-panel-row-actions .outline-button,
   .task-panel .task-panel-actions .outline-button {
     min-height: 44px;
+    min-width: 44px;
   }
+}
+
+/* 工作台只使用同一实时清单；详情并列阅读，不再弹出另一个管理窗口。 */
+.task-panel-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 16px;
+}
+.task-panel-workbench > .task-panel-header {
+  grid-column: 1 / -1;
+}
+.task-panel-workbench > .task-panel-tree,
+.task-panel-workbench > .task-panel-list,
+.task-panel-workbench > .task-panel-note,
+.task-panel-workbench > .task-panel-empty {
+  grid-column: 1;
+}
+.task-panel-management {
+  min-width: 0;
+  grid-column: 2;
+  grid-row: 2 / span 8;
+  border-inline-start: 1px solid var(--border);
+  padding-inline-start: 16px;
+}
+.task-panel-management h3 {
+  margin: 0 0 12px;
+  font-size: var(--text-ui-sm);
+  font-weight: 600;
+}
+.task-panel-detail {
+  min-height: 180px;
+  max-height: 620px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: var(--text-ui-sm);
+  line-height: 1.7;
+}
+.host-task-result {
+  display: grid;
+  gap: 14px;
+}
+.host-task-result-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.host-task-result-heading small,
+.host-task-conversation h4 small,
+.host-task-message > small,
+.host-task-detail-label,
+.host-task-note {
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+}
+.host-task-conversation {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.host-task-conversation h4 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--text-ui-sm);
+}
+.host-task-message {
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 10px;
+}
+.host-task-message[data-host-message-role="assistant"] {
+  border-inline-start-color: var(--accent);
+}
+.host-task-message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.host-task-error {
+  color: var(--danger);
+}
+.host-task-detail-label:empty {
+  display: none;
+}
+@media (max-width: 1000px) {
+  .task-panel-workbench {
+    display: flex;
+    align-items: stretch;
+  }
+  .task-panel-management {
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+    padding-inline-start: 0;
+    padding-top: 16px;
+  }
+}
+
+.task-panel-composer {
+  margin: 0 0 20px;
+  min-width: 0;
+}
+.task-panel-composer[hidden] {
+  display: none;
+}
+.task-panel-composer fieldset {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.task-panel-composer legend {
+  font-size: var(--text-ui-sm);
+  padding-inline: 4px;
+}
+.task-panel-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: var(--text-ui-xs);
+}
+.task-panel-field input,
+.task-panel-field select,
+.task-panel-field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.task-panel-field textarea {
+  resize: vertical;
+}
+.task-panel-advanced {
+  margin-block: 8px 12px;
+}
+.task-panel-advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--text-ui-xs);
+  margin-bottom: 8px;
+}
+.task-panel-composer .task-panel-note {
+  margin-top: 8px;
+}
+
+.subagent-history {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.subagent-history > summary {
+  cursor: pointer;
+  font-size: var(--text-ui-sm);
+  color: var(--text);
+  padding-block: 8px;
+}
+.subagent-history-list {
+  display: grid;
+  gap: 8px;
+  padding-block: 10px;
+}
+.subagent-history-record {
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--text-ui-sm);
+}
+.subagent-history-record[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+.subagent-history-record:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.subagent-history-detail {
+  max-height: 620px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: var(--text-ui-sm);
+}
+.subagent-history-detail[hidden] {
+  display: none;
 }

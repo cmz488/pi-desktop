@@ -147,10 +147,21 @@ export function createExtensionWorkbench({
     }
   }
 
+  let active = true;
+  function syncBuiltinVisibility() {
+    for (const page of builtinPages)
+      page.builtin.setVisible?.(
+        active && !root.hidden && page.key === selected,
+      );
+  }
   function renderDetail() {
+    syncBuiltinVisibility();
     const page = pages.find((row) => row.key === selected);
     const previousScroll = detail.scrollTop;
     const active = document.activeElement;
+    const focusedBuiltin = detail.contains(active)
+      ? active.dataset.workbenchFocus
+      : undefined;
     const focusedDetail =
       detail.contains(active) && active.tagName === "SUMMARY"
         ? active.parentElement.dataset.disclosure
@@ -196,6 +207,14 @@ export function createExtensionWorkbench({
         rerender: repaintBuiltin,
       });
       detail.scrollTop = changed ? 0 : previousScroll;
+      if (
+        !changed &&
+        focusedBuiltin &&
+        document.activeElement === document.body
+      )
+        [...content.querySelectorAll("[data-workbench-focus]")]
+          .find((node) => node.dataset.workbenchFocus === focusedBuiltin)
+          ?.focus({ preventScroll: true });
       return;
     }
     if (page.panel) {
@@ -298,6 +317,10 @@ export function createExtensionWorkbench({
     if (!controller.update(latestRows, latestContext)) renderDetail();
   }
   const controller = {
+    setActive(value) {
+      active = value;
+      syncBuiltinVisibility();
+    },
     /* 会话栏「打开分支树」需要直接选中内置页；找不到 key 时保持当前选择。 */
     select(key) {
       if (!pages.some((row) => row.key === key)) return false;

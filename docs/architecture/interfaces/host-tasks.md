@@ -6,7 +6,7 @@
 - `src/agent/managed-subagents.mjs`、`agent-workspace.mjs`：组合 Pi Durable 的 task（持久状态机）、owned conversation（被任务拥有的会话）和 submission（会话工作准入）。
 - `src/agent/durable-resources.mjs`：为受管 owned 会话绑定自己的 Pi 原生资源与工具 scope。
 - `src/server/durable-server.mjs`：worker 的读取、权限与既有命令适配。
-- `src/ui/shared/host-task-panel.js`、`workspace.html/js/css`：全 Host 窗口与发起表单；任务确认和等待复用 `task-panel.js`，不另建执行器。
+- `src/ui/shared/task-panel.js`、`task-panel-management.js`：直接整合在现有「任务与子代理」页的当前会话管理；`subagent-history.js` 在「对话分支」单列只读终态记录。旧 `host-task-panel.js` module 与 Host HTTP 保留兼容，不再挂载独立弹窗。
 
 范围是此 Desktop Host 管理的 worker 中的 Durable task，不是全系统进程或旧 CLI 子代理记录。提供给模型的内置扩展工具及其 owned 范围见 [子代理工具契约](subagent-tools.md)。
 
@@ -92,15 +92,20 @@ GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=
 workspace.capabilities;              // 冻结的显式能力对象
 workspace.monitor();                 // WorkerMonitor
 workspace.taskDetail(id, taskId);     // 同一 owned 范围内的详情，含终态
+workspace.subagentHistory(id, {before?,limit?} = {}); // 按 id 降序的 owned 终态记录
 workspace.setOwnedPreparer(prepare);  // 内部资源适配；prepare(active) -> Promise
 workspace.execute("subagent.spawn", {id,requestId,prompt,name?,config?});
 
-createManagedSubagents({createChild,prepareChild}); // -> {extension,task}
+createManagedSubagents({createChild,prepareChild,spawn,read,message,list,wait,abort}); // -> {extension,task}
 // createChild(tx,task) -> 子会话ID；须在原生事务中创建 owned 关系与应用元数据
 // prepareChild(id,config,context) -> Promise；资源绑定必须可重入
 ```
 
+新增本地 `GET /api/subagent-history?sessionId=...&before=...`：`{supported:true,sessionId,records,nextBefore}`，records 为本适配原生 terminal task 的安全回执，按 task id 降序；默认每页 20，`before` 为上一页界限，结束时 `nextBefore:null`。仅沿 owner 范围，不沿历史 parent；不重放任务，不返回任意 task input／checkpoint。workspace 的 limit 可设为 1–50，HTTP 固定默认页长。需显式 `taskInspection`，未声明返回 unsupported；remote 返回 403，非法 before／limit 返回 422「子代理历史范围无效」。
+
 worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=...&taskId=...`。它们同样拒绝远程全 worker 读取；未声明检查能力时返回 `{supported:false}`。发起、等待与中止继续复用既有 `/api/command`，未知 task 与越界目标均为 404。
+
+Desktop 整合面板的 `/agents/<agentId>/api/tasks`、`task-detail`、`subagent-history` 和任务命令请求均带 iframe 固定的 `generation` 查询值；Host 转发前同时校验目录和实际 worker 代际，过期为 409，无效值为 422，不会读取或中止新库同号 task。未提供该参数的原公开 worker URL 保持兼容；原 Host 管理 API 的必填 generation 门禁不变。
 
 界面默认先显示任务清单，发起表单按需展开并保留草稿；展开／收起不开始或中止任务。桌面清单与详情并列，窄屏纵向阅读。结果按原生 outcome、子会话、消息角色与实时片段分区，以纯文本写入 DOM；终态、工具名及预览裁剪标记仍可见。图不变也读取新片段；相同详情不重建 DOM，更新保留阅读位置，失败后同内容的成功读取可恢复显示。有 `answerEntryId` 的回执在详情显示原生回答编号；旧结果没有该字段时仍正常展示，不重放补齐。发起成功默认选择对应原生任务，但若用户在等待发起回执时已显式改选查看目标，晚到回执不得抢回选择或取消新详情读取。
 
@@ -120,7 +125,7 @@ worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=
 1. 资源适配在 `initialize(workspace)` 中注册，先于 Harness resume；已有受管 owned 会话同样在恢复前绑定资源。
 2. 发起先校验并持久准入，再显示 task；对不确定的 HTTP 回执重试相同 requestId，不换 ID 重发工作。
 3. 等待直接转发，不占 Host 配置串行队列；观察租约、配额与取消语义沿用[任务契约](task-graph.md)。
-4. 窗口只在可见时轮询；每个任务面板固定 Agent／generation／scope。关闭与快速重开都使上一窗口身份失效；页面恢复后重新读取，不复用旧观察令牌。
+4. 整合工作台的详情只在可见时补刷；任务范围固定当前会话与 owned 后代，不再提供全 Host 目标切换 UI。切页、切 Agent、隐藏或销毁都撤旧观察；返回重新读取，不复用旧身份。公开 Host 请求的 Agent／generation／scope 固定校验仍保留。
 5. worker 有后台／owned 工作时，启动不能仅因前台 `idle:true` 就覆盖共享配置。
 
 ## 错误模式
@@ -143,14 +148,16 @@ worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=
 ## 性能特征
 
 - 聚合最多并行读取四个 worker，每个读取／详情连接 5 秒；普通管理 12 秒、等待 45 秒。客户端断连向上游传播 AbortSignal，批次间检查取消。
-- 读取只访问已运行进程，不做启动、模型调用或真实 CLI 子代理探测。成本随 worker、原生会话和在跑 task 数增长。
-- 窗口每 2 秒刷新；共用加载器合并在途读取和一次补刷。关闭、隐藏或销毁后释放读取、等待、确认和定时器；每个任务面板最多一个等待，总预算 5 分钟不因 408 重置。
+- 聚合读取只访问已运行进程，不做启动、模型调用或真实 CLI 子代理探测。成本随 worker、原生会话和 task 数增长。历史页使用原生扫描，成本随本适配历史任务数增长；分页限制响应与 DOM 数量，不宣称存储层只扫描一页。
+- 可见的详情每 2 秒刷新；共用加载器合并在途读取和一次补刷。关闭、隐藏或销毁后释放读取、等待、确认和定时器；每个任务面板最多一个等待，总预算 5 分钟不因 408 重置。
 - 详情最多一个在途读取；任务图 ETag 不变仍刷新所选原生过程片段，不把图未变当作输出未变。详情投影有上述展示上限，完整存储与模型上下文不受该窗口预算影响。
 
 ## 可执行证据
 
 - `test/host-task-management.test.mjs`：真实 Host／worker HTTP 聚合、幂等、owned 关系／单 writer、失败与终态回执、等待断连、非串行观察、权限／非法与越界目标、重启与原生工具 scope、单 worker 暂停的局部超时。
-- `test/host-tasks-browser-check.mjs`：真实 Chromium 发起 A/B、发起回执晚到不改选、原生完成提示与回答编号、两个 SQLite 的同号 task 隔离、等待取消、快速关闭／重开与 Escape、图不变时的真实流式片段、结果、只读能力、聚合更新的键盘焦点、默认收起／按需发起与草稿保留、结构化实时输出、浅／深色 4.5:1 文本对比度与 390px 窄屏边界。
+- `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task 隔离、当前会话与 generation 固定发起、草稿／冻结请求重试、原生去重与迟到回执不改选、等待／中止、切 Agent 不误中止及 390px。
+- `test/subagent-history.test.mjs`：21 个真实终态委托的 20＋1 分页、fork 不继承 owned 权限、remote／非法界限拒绝、旧 generation 读取／管理拒绝、无效 generation 为 422，且不重放模型。
+- `test/subagent-workbench-browser-check.mjs`：现有唯一任务页的详情／发起、终态转独立历史区与切页撤观察。
 - `test/durable-task-graph.test.mjs`、`test/task-waits.test.mjs` 与 `test/long-task-wait-browser-check.mjs`：复用的所有权、租约与等待生命周期。
 - `test/boundary-contracts.test.mjs`：追加的 workspace／supervisor 接口和命令形状。
 - `npm run test:workspace:browser`、`npm test`、`npm run check`、`npm run package:check`。

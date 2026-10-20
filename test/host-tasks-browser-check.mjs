@@ -2,34 +2,17 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { desktopFixture, until as untilValue } from "./desktop-fixture.mjs";
-import { writeFile } from "node:fs/promises";
 import { browserDriver } from "./durable-browser-driver.mjs";
-import { measureSurfaceContrast } from "./surface-contrast.mjs";
 
-// 使用默认 Host→worker→原生 SDK 与本地 provider；不能用独立面板假数据替代跨 writer 验证。
-const gates = {
-  HOST_A: Promise.withResolvers(),
-  HOST_B: Promise.withResolvers(),
-};
-const streamNext = Promise.withResolvers(),
-  streamDone = Promise.withResolvers();
+// 同号 task 必须经过真实两套 worker；工作台不再有跨 Agent 的发起表单。
+const gates = { A: Promise.withResolvers(), B: Promise.withResolvers() };
 const f = await desktopFixture({
   noExtensions: true,
-  modelReply: (input) =>
-    String(input.messages.at(-1)?.content).includes("HOST_B")
-      ? {
-          stream: (async function* () {
-            yield "HOST_B_STREAM_FIRST";
-            await streamNext.promise;
-            yield " HOST_B_STREAM_SECOND";
-            await streamDone.promise;
-          })(),
-        }
-      : undefined,
   beforeModelResponse: async (input) => {
-    for (const [key, gate] of Object.entries(gates))
-      if (String(input.messages.at(-1)?.content).includes(key))
+    for (const [name, gate] of Object.entries(gates))
+      if (input.messages.at(-1)?.content === `SCOPED_CHILD_${name}`)
         await gate.promise;
   },
 });
@@ -38,19 +21,36 @@ try {
   const project = (await f.call("/api/workspace")).projects.find(
     (row) => row.cwd === f.cwd,
   );
-  const a = await f.command("conversation.create", {
-    projectId: project.id,
-    name: "Host A",
-  });
-  const b = await f.command("conversation.create", {
-    projectId: project.id,
-    name: "Host B",
-  });
-  const profile = join(f.root, "host-task-browser");
+  const workers = [];
+  for (const name of ["A", "B"]) {
+    const actor = await f.command("conversation.create", {
+      projectId: project.id,
+      name: `工作台 ${name}`,
+    });
+    const prefix = `/agents/${actor.id}`;
+    const parent = (await f.call(`${prefix}/api/state`)).sessionId;
+    const launched = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+      command: "subagent.spawn",
+      id: Number(parent),
+      sessionId: parent,
+      name: `子代理 ${name}`,
+      prompt: `SCOPED_CHILD_${name}`,
+      requestId: `scope-${name}`,
+    });
+    workers.push({ ...actor, name, prefix, parent, taskId: launched.taskId });
+  }
+  const [a, b] = workers;
+  assert.equal(
+    a.taskId,
+    b.taskId,
+    "两个独立 SQLite 的同号 task 是本回归的前提",
+  );
+  const profile = join(f.root, "scoped-task-browser");
   browser = spawn(
     "/usr/bin/chromium",
     [
       "--headless",
+      "--password-store=basic",
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
@@ -61,413 +61,211 @@ try {
     { stdio: "ignore" },
   );
   driver = await browserDriver(profile);
-  await driver.call("Emulation.setDeviceMetricsOverride", {
+  const { call, evaluate, until } = driver;
+  await call("Emulation.setDeviceMetricsOverride", {
     width: 1440,
     height: 1000,
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await driver.call("Page.navigate", { url: f.app.url });
-  await driver.until("!!document.querySelector('#projects [data-agent-id]')");
-  assert.equal(
-    await driver.evaluate("!!document.querySelector('#tasks-entry')"),
-    true,
-    "Desktop 提供全 Host 任务监控入口",
-  );
-  const { evaluate, until, call } = driver;
-  const selectAgent = async (id) =>
-    evaluate(
-      `(() => { const f=document.querySelector('#host-subagent-form');f.elements.agent.value=${JSON.stringify(`${id}:0`)};f.elements.agent.dispatchEvent(new Event('change')); })()`,
+  const url = new URL(f.app.url);
+  url.searchParams.set("agent", a.id);
+  await call("Page.navigate", { url: url.href });
+  const frame = "document.querySelector('#runtime')?.contentDocument";
+  const chat = (source) => evaluate(`(()=>{const d=${frame};${source}})()`);
+  async function showTasks() {
+    await until(
+      `(()=>{const d=${frame};return d?.querySelector('#connection-status')?.textContent === 'Pi 已连接';})()`,
     );
-  const group = (id) => `document.querySelector('[data-host-agent="${id}"]')`;
-  const row = (id, taskId) =>
-    `${group(id)}?.querySelector('[data-task-id="${taskId}"]')`;
-  await evaluate("document.querySelector('#tasks-entry').click()");
-  await until(
-    "document.querySelector('#host-task-dialog').open && document.querySelector('#host-subagent-form').elements.agent.options.length===3",
-  );
-  assert.equal(
-    await evaluate(
-      "document.querySelector('#host-subagent-form').hidden && !document.querySelector('#host-subagent-form').getClientRects().length",
-    ),
-    true,
-    "任务监控默认先展示清单，发起表单按需打开",
-  );
-  await evaluate(
-    "document.querySelector('[data-host-toggle-compose]').click()",
-  );
-  await until(
-    "!document.querySelector('#host-subagent-form').hidden && document.activeElement.name==='prompt'",
-  );
-  await evaluate(
-    "document.querySelector('#host-subagent-form').elements.prompt.value='保留的草稿';document.querySelector('[data-host-toggle-compose]').click()",
-  );
-  assert.equal(
-    await evaluate(
-      "document.querySelector('#host-subagent-form').hidden && document.querySelector('#host-subagent-form').elements.prompt.value==='保留的草稿'",
-    ),
-    true,
-    "收起表单仅改变展示，不丢发起草稿",
-  );
-  await evaluate(
-    "document.querySelector('[data-host-toggle-compose]').click()",
-  );
-  await selectAgent(a.id);
-  await evaluate(
-    "(() => {const f=document.querySelector('#host-subagent-form');f.elements.name.value='代理 A';f.elements.prompt.value='HOST_A';f.requestSubmit();})()",
-  );
-  await until(
-    `${group(a.id)}?.querySelector('[data-kind="desk.subagent-run"]')?.textContent.includes('代理 A')`,
-  );
-  await selectAgent(b.id);
-  await evaluate(
-    "(() => {const f=document.querySelector('#host-subagent-form');f.elements.name.value='代理 B';f.elements.prompt.value='HOST_B';f.requestSubmit();})()",
-  );
-  await until(
-    `${group(b.id)}?.querySelector('[data-kind="desk.subagent-run"]')?.textContent.includes('代理 B')`,
-  );
-  const live = await untilValue(
-    () => f.call("/api/host/tasks"),
-    (value) =>
-      value.workers.every((worker) =>
-        worker.data?.tasks.some((task) => task.kind === "pi.generation"),
-      ) && f.requests.length === 2,
-  );
-  const aTask = live.workers
-    .find((worker) => worker.agentId === a.id)
-    .data.tasks.find((task) => task.kind === "desk.subagent-run");
-  const bTask = live.workers
-    .find((worker) => worker.agentId === b.id)
-    .data.tasks.find((task) => task.kind === "desk.subagent-run");
-  assert.equal(
-    aTask.id,
-    bTask.id,
-    "受控两个 SQLite 产生同号任务，必须靠 Agent 命名空间隔离",
-  );
-  await evaluate(`(() => {
-    window.__nativeTaskFetch=window.fetch;
-    window.fetch=async (...args)=>{
-      const response=await window.__nativeTaskFetch(...args);
-      if(typeof args[1]?.body==='string' && JSON.parse(args[1].body).name==='晚到回执') {
-        window.__lateLaunchHeld=true;
-        await new Promise(resolve=>window.__releaseLateLaunch=resolve);
-      }
-      return response;
-    };
-  })()`);
-  await selectAgent(a.id);
-  await evaluate(
-    "(() => {const form=document.querySelector('#host-subagent-form');form.elements.name.value='晚到回执';form.elements.prompt.value='LATE_REPLY';form.requestSubmit();})()",
-  );
-  await until("window.__lateLaunchHeld===true");
-  await selectAgent(b.id);
-  const bInspection = `${b.id}:0:${bTask.scopeId}:${bTask.id}`;
-  await evaluate(
-    `(() => {const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${a.id}:0:${aTask.scopeId}:${aTask.id}`)};select.dispatchEvent(new Event('change'));select.value=${JSON.stringify(bInspection)};select.dispatchEvent(new Event('change'));window.__releaseLateLaunch();window.fetch=window.__nativeTaskFetch;})()`,
-  );
-  await until(
-    "!document.querySelector('[data-host-spawn]').disabled && document.querySelector('[data-host-launch-status]').textContent.includes('Host A · 已创建')",
-  );
-  assert.equal(
-    await evaluate("document.querySelector('[data-host-inspect]').value"),
-    bInspection,
-    "发起 A 的回执晚到不能抢走用户随后选择的 B 原生任务",
-  );
-  await evaluate(
-    "document.querySelector('[data-host-toggle-compose]').click()",
-  );
-  assert.equal(
-    await evaluate(
-      "document.querySelector('.host-task-inspection').getBoundingClientRect().left > document.querySelector('[data-host-workers]').getBoundingClientRect().right",
-    ),
-    true,
-    "桌面任务清单与详情并列，不把详情推到发起表单下方",
-  );
-  if (process.env.PI_HOST_TASK_SCREENSHOTS) {
-    const shot = await call("Page.captureScreenshot", { format: "png" });
-    await writeFile(
-      join(process.env.PI_HOST_TASK_SCREENSHOTS, "host-tasks-active.png"),
-      Buffer.from(shot.data, "base64"),
+    await evaluate("document.querySelector('#extensions-entry').click()");
+    await until(
+      `(()=>{const d=${frame};return [...d.querySelectorAll('.extension-page-choice')].some(row=>row.textContent.includes('任务与子代理'));})()`,
+    );
+    await chat(
+      "[...d.querySelectorAll('.extension-page-choice')].find(row=>row.textContent.includes('任务与子代理')).click();",
     );
   }
-  await evaluate(
-    `${row(a.id, aTask.id)}.querySelector('[data-task-action="wait:${aTask.id}"]').click()`,
+  async function inspect(taskId) {
+    await until(
+      `(()=>{const d=${frame};return !!d.querySelector('[data-task-inspect="${taskId}"]');})()`,
+    );
+    await chat(`d.querySelector('[data-task-inspect="${taskId}"]').click();`);
+  }
+  await showTasks();
+  await inspect(a.taskId);
+  await until(
+    `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('SCOPED_CHILD_A');})()`,
   );
-  await until(`${row(a.id, aTask.id)}?.querySelector('[data-waiting="true"]')`);
+  assert.equal(
+    await chat(
+      "return d.querySelector('.task-panel-detail').textContent.includes('SCOPED_CHILD_B');",
+    ),
+    false,
+  );
+  await chat(
+    "d.querySelector('[data-task-compose-toggle]').click();d.querySelector('[data-task-compose]').elements.prompt.value='同会话草稿';d.querySelector('[data-task-compose] button[type=button]').click();d.querySelector('[data-task-compose-toggle]').click();",
+  );
+  assert.equal(
+    await chat(
+      "return d.querySelector('[data-task-compose]').elements.prompt.value;",
+    ),
+    "同会话草稿",
+    "收起表单不丢草稿",
+  );
   await evaluate(
-    `${row(a.id, aTask.id)}.querySelector('[data-waiting="true"]').click()`,
+    `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);let release;const gate=new Promise(resolve=>release=resolve);w.spawnProbe={inputs:[],urls:[],release};w.fetch=async(...args)=>{if(String(args[0]).includes('/api/command')&&args[1]?.body){const input=JSON.parse(args[1].body);if(input.command==='subagent.spawn'){w.spawnProbe.inputs.push(input);w.spawnProbe.urls.push(String(args[0]));const response=await original(...args);if(w.spawnProbe.inputs.length===1)throw new TypeError('模拟回执丢失');await gate;return response;}}return original(...args);};})()`,
+  );
+  await chat(
+    "const form=d.querySelector('[data-task-compose]');form.elements.name.value='幂等重试委托';form.elements.prompt.value='SCOPED_CHILD_A';form.requestSubmit();",
   );
   await until(
-    "document.querySelector('[data-host-action-status]').textContent.includes('任务继续运行')",
+    `(()=>{const d=${frame};return d.querySelector('[data-task-compose]')?.textContent.includes('模拟回执丢失');})()`,
   );
+  await chat("d.querySelector('[data-task-compose]').requestSubmit();");
+  await until(
+    `(()=>{const d=${frame};return d.defaultView.spawnProbe.inputs.length===2;})()`,
+  );
+  const attempts = await chat("return d.defaultView.spawnProbe.inputs;");
+  const attemptUrls = await chat("return d.defaultView.spawnProbe.urls;");
   assert.ok(
-    (await f.call("/api/host/tasks")).workers
-      .find((worker) => worker.agentId === a.id)
-      .data.tasks.some((task) => task.id === aTask.id),
-    "UI 取消等待不取消工作",
-  );
-  await evaluate(
-    `${row(a.id, aTask.id)}.querySelector('[data-task-action="cancel:${aTask.id}"]').click()`,
-  );
-  await until(`${row(a.id, aTask.id)}?.querySelector('[data-armed="true"]')`);
-  assert.equal(
-    await evaluate(
-      `${row(a.id, aTask.id)}.querySelector('[data-armed="true"]').textContent`,
+    attemptUrls.every(
+      (path) => new URL(path, f.app.url).searchParams.get("generation") === "0",
     ),
-    "确认中止",
-    "确认保持独立第二次操作，但不靠长句撑破任务行",
-  );
-  assert.equal(
-    await evaluate(
-      "document.querySelector('#host-subagent-form').elements.agent.value",
-    ),
-    `${b.id}:0`,
-    "管理按钮不能偷用当前发起表单的 Agent",
-  );
-  await evaluate(
-    `${row(a.id, aTask.id)}.querySelector('[data-armed="true"]').click()`,
-  );
-  await untilValue(
-    () => f.call("/api/host/tasks"),
-    (value) =>
-      !value.workers
-        .find((worker) => worker.agentId === a.id)
-        .data.tasks.some((task) => task.id === aTask.id),
-  );
-  assert.ok(
-    (await f.call("/api/host/tasks")).workers
-      .find((worker) => worker.agentId === b.id)
-      .data.tasks.some((task) => task.id === bTask.id),
-    "取消 A 不会命中 B 的任务 namespace",
-  );
-  await evaluate(
-    `(()=>{const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${a.id}:0:${aTask.scopeId}:${aTask.id}`)};select.dispatchEvent(new Event('change'));})()`,
-  );
-  await until("!!document.querySelector('[data-host-outcome=aborted]')");
-  assert.equal(
-    await evaluate(
-      "document.querySelector('[data-host-detail]').textContent.includes('已中止')",
-    ),
-    true,
-    "中止结果不能美化成完成或只显示空闲",
-  );
-  await evaluate(
-    `(()=>{const select=document.querySelector('[data-host-inspect]');select.value=${JSON.stringify(`${b.id}:0:${bTask.scopeId}:${bTask.id}`)};select.dispatchEvent(new Event('change'));})()`,
-  );
-  await until(
-    `${row(b.id, bTask.id)}?.querySelector('[data-task-action="wait:${bTask.id}"]')`,
-  );
-  await evaluate(
-    `${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').click()`,
-  );
-  await until(`${row(b.id, bTask.id)}?.querySelector('[data-waiting="true"]')`);
-  await evaluate(
-    `window.__previousHostWorker=${group(b.id)};${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').focus()`,
-  );
-  const ro = await f.command("conversation.create", { name: "Host 只读" });
-  await evaluate("document.querySelector('[data-host-refresh]').click()");
-  await until(
-    `${group(b.id)} && ${group(b.id)} !== window.__previousHostWorker`,
-  );
-  assert.equal(
-    await evaluate("document.activeElement?.dataset.taskAction"),
-    `wait:${bTask.id}`,
-    "聚合更新保留任务操作的键盘焦点",
-  );
-  assert.equal(
-    await evaluate(
-      "document.activeElement.closest('[data-host-agent]')?.dataset.hostAgent",
-    ),
-    b.id,
-  );
-  // close 事件由浏览器异步派发；同一手势轮次内重开也必须失效旧观察。
-  await evaluate(
-    "(() => {document.querySelector('#host-task-dialog').close();document.querySelector('#tasks-entry').click();})()",
-  );
-  await until(
-    `document.querySelector('#host-task-dialog').open && ${row(b.id, bTask.id)}?.querySelector('[data-task-action="wait:${bTask.id}"]')`,
-    { timeoutMs: 3000 },
-  );
-  assert.equal(
-    await evaluate(
-      `${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').dataset.waiting`,
-    ),
-    "false",
-    "快速重开不能借用上一窗口的等待观察",
-  );
-  await evaluate(
-    `${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').click()`,
-  );
-  await until(`${row(b.id, bTask.id)}?.querySelector('[data-waiting="true"]')`);
-  await call("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "Escape",
-    code: "Escape",
-    windowsVirtualKeyCode: 27,
-    nativeVirtualKeyCode: 27,
-  });
-  await call("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "Escape",
-    code: "Escape",
-    windowsVirtualKeyCode: 27,
-    nativeVirtualKeyCode: 27,
-  });
-  await until("!document.querySelector('#host-task-dialog').open");
-  assert.ok(
-    (await f.call("/api/host/tasks")).workers
-      .find((worker) => worker.agentId === b.id)
-      .data.tasks.some((task) => task.id === bTask.id),
-    "关闭只销毁观察者",
-  );
-  await evaluate("document.querySelector('#tasks-entry').click()");
-  await until(
-    `${row(b.id, bTask.id)}?.querySelector('[data-waiting="false"]')`,
-  );
-  assert.equal(
-    await evaluate(
-      `${group(b.id)}.querySelectorAll('[data-waiting="true"]').length`,
-    ),
-    0,
-  );
-  const detailPath =
-    "/api/host/tasks/detail?" +
-    new URLSearchParams({
-      agentId: b.id,
-      generation: 0,
-      conversationId: bTask.scopeId,
-      taskId: bTask.id,
-    });
-  gates.HOST_B.resolve();
-  await untilValue(
-    () => f.call(detailPath),
-    (value) => value.children[0]?.partial?.text.includes("HOST_B_STREAM_FIRST"),
-  );
-  await evaluate(
-    "document.querySelector('[data-host-inspect]').dispatchEvent(new Event('change'))",
-  );
-  await until(
-    "document.querySelector('[data-host-detail]').textContent.includes('HOST_B_STREAM_FIRST') && document.querySelector('[data-host-detail]').getAttribute('aria-busy')==='false'",
-  );
-  assert.equal(
-    await evaluate(
-      "document.querySelector('[data-host-detail] [data-host-partial]')?.textContent.includes('HOST_B_STREAM_FIRST')",
-    ),
-    true,
-    "子代理实时输出使用独立可读段，不挤成等宽日志串",
-  );
-  const beforeStream = await f.call("/api/host/tasks");
-  streamNext.resolve();
-  await untilValue(
-    () => f.call(detailPath),
-    (value) =>
-      value.children[0]?.partial?.text.includes("HOST_B_STREAM_SECOND"),
+    "整合发起固定 iframe 的存储代际，不丢失原 Host 管理门禁",
   );
   assert.deepEqual(
-    await f.call("/api/host/tasks"),
-    beforeStream,
-    "流式片段更新不必改变任务图或 owner 读模型",
+    attempts[1],
+    attempts[0],
+    "不确定回执的同内容重试保持冻结目标、内容和 requestId",
+  );
+  await inspect(a.taskId);
+  await evaluate(`(${frame}).defaultView.spawnProbe.release()`);
+  await until(
+    `(()=>{const d=${frame};return !d.querySelector('[data-task-compose]');})()`,
   );
   await until(
-    "document.querySelector('[data-host-detail]').getAttribute('aria-busy')==='false'",
+    `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('原生任务 #${a.taskId}');})()`,
   );
-  await evaluate("document.querySelector('[data-host-refresh]').click()");
-  await until(
-    "document.querySelector('[data-host-status]').getAttribute('aria-busy')==='false' && document.querySelector('[data-host-detail]').getAttribute('aria-busy')==='false'",
+  const retried = await untilValue(
+    () => f.call(`${a.prefix}/api/task-monitor?sessionId=${a.parent}`),
+    (value) => value.conversations.some((row) => row.name === "幂等重试委托"),
   );
   assert.equal(
-    await evaluate(
-      "document.querySelector('[data-host-detail]').textContent.includes('HOST_B_STREAM_SECOND')",
+    retried.conversations.filter((row) => row.name === "幂等重试委托").length,
+    1,
+    "真实后端仅创建一次委托",
+  );
+  assert.equal(
+    await chat(
+      `return d.querySelector('.task-panel-detail').textContent.includes('原生任务 #${a.taskId}');`,
     ),
     true,
-    "任务图 ETag 不变也必须读取新的原生过程片段",
+    "迟到发起回执不能抢走后来改选的任务",
+  );
+  await chat(
+    `d.querySelector('[data-task-action="wait:${a.taskId}"]').click();`,
+  );
+  await until(
+    `(()=>{const d=${frame};return d.querySelector('[data-task-action="wait:${a.taskId}"]')?.dataset.waiting === 'true';})()`,
   );
   await evaluate(
-    `${row(b.id, bTask.id)}.querySelector('[data-task-action="wait:${bTask.id}"]').click()`,
+    `document.querySelector('#projects button[data-agent-id="${b.id}"]:not([data-conversation-id])').click()`,
   );
-  await until(`${row(b.id, bTask.id)}?.querySelector('[data-waiting="true"]')`);
-  streamDone.resolve();
+  await showTasks();
+  await inspect(b.taskId);
   await until(
-    "document.querySelector('[data-host-action-status]').textContent==='任务已完成'",
-  );
-  await until(
-    "document.querySelector('[data-host-detail]').textContent.includes('已完成') && document.querySelector('[data-host-detail]').textContent.includes('HOST_B')",
-    { timeoutMs: 15000 },
-  );
-  const nativeAnswer = (await f.call(detailPath)).task.outcome.result
-    .answerEntryId;
-  assert.ok(Number.isSafeInteger(nativeAnswer));
-  assert.equal(
-    await evaluate(
-      `document.querySelector('[data-host-detail]').textContent.includes(${JSON.stringify("原生回答 #")}+${nativeAnswer})`,
-    ),
-    true,
-    "详情标明 submission 指向的原生回答，不把当前上下文冒充任务结果",
-  );
-  await until(
-    `!!document.querySelector('#host-subagent-form option[value="${ro.id}:0"]')`,
+    `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('SCOPED_CHILD_B');})()`,
   );
   assert.equal(
-    await evaluate(
-      `document.querySelector('#host-subagent-form option[value="${ro.id}:0"]').disabled`,
+    await chat(
+      "return d.querySelector('.task-panel-detail').textContent.includes('SCOPED_CHILD_A');",
     ),
-    true,
+    false,
+    "同号 task 的详情不能跨 worker 混用",
   );
-  for (const mode of ["light", "dark"]) {
-    // 主题属于共享设置；仅改属性会被子页面的 storage 通知还原。
-    await evaluate(
-      `(async()=>{localStorage.setItem('pi-web-theme',${JSON.stringify(mode)});window.dispatchEvent(new Event('storage'));for(const frame of document.querySelectorAll('iframe'))frame.contentDocument?.body?.classList.toggle('dark',${mode === "dark"});getComputedStyle(document.body).color;await Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})));})()`,
+  for (const target of workers)
+    assert.notEqual(
+      (
+        await f.call(
+          `${target.prefix}/api/task-detail?sessionId=${target.parent}&taskId=${target.taskId}`,
+        )
+      ).task.status,
+      "terminal",
+      "切换 Agent 只撤观察，不中止任何工作",
     );
-    const contrast = await evaluate(
-      `(${measureSurfaceContrast.toString()})(['.host-task-heading h2','[data-host-status]','.host-task-worker h3','.task-panel-label','.task-panel-meta','.task-panel-state','.host-task-result-heading strong','[data-host-answer-reference]','.host-task-message > small','.host-task-message-body','[data-host-toggle-compose]'])`,
-    );
-    assert.equal(contrast.length, 11);
-    assert.ok(
-      contrast.every((item) => item.ratio >= 4.5),
-      `${mode} Host 任务文字对比度：${JSON.stringify(contrast)}`,
-    );
-    if (process.env.PI_HOST_TASK_SCREENSHOTS) {
-      const shot = await call("Page.captureScreenshot", { format: "png" });
-      await writeFile(
-        join(process.env.PI_HOST_TASK_SCREENSHOTS, `host-tasks-${mode}.png`),
-        Buffer.from(shot.data, "base64"),
-      );
-    }
-  }
+  await chat(
+    `d.querySelector('[data-task-action="cancel:${b.taskId}"]').click();`,
+  );
+  await until(
+    `(()=>{const d=${frame};return d.querySelector('[data-task-action="cancel:${b.taskId}"]')?.dataset.armed === 'true';})()`,
+  );
+  assert.notEqual(
+    (
+      await f.call(
+        `${b.prefix}/api/task-detail?sessionId=${b.parent}&taskId=${b.taskId}`,
+      )
+    ).task.status,
+    "terminal",
+    "第一步中止只确认",
+  );
+  await chat(
+    `d.querySelector('[data-task-action="cancel:${b.taskId}"]').click();`,
+  );
+  await untilValue(
+    () =>
+      f.call(
+        `${b.prefix}/api/task-detail?sessionId=${b.parent}&taskId=${b.taskId}`,
+      ),
+    (value) => value.task.status === "terminal",
+  );
+  assert.notEqual(
+    (
+      await f.call(
+        `${a.prefix}/api/task-detail?sessionId=${a.parent}&taskId=${a.taskId}`,
+      )
+    ).task.status,
+    "terminal",
+    "中止 B 的同号 task 不影响 A",
+  );
+  gates.A.resolve();
+  gates.B.resolve();
+  await untilValue(
+    () =>
+      f.call(
+        `${a.prefix}/api/task-detail?sessionId=${a.parent}&taskId=${a.taskId}`,
+      ),
+    (value) => value.task.status === "terminal",
+  );
   await call("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
     deviceScaleFactor: 1,
-    mobile: true,
+    mobile: false,
   });
-  await until("matchMedia('(max-width:900px)').matches");
   assert.equal(
-    await evaluate(
-      "(() => {const dialog=document.querySelector('#host-task-dialog');const rect=dialog.getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth&&dialog.scrollWidth<=dialog.clientWidth&&document.documentElement.scrollWidth<=innerWidth;})()",
+    await chat(
+      "return d.documentElement.scrollWidth <= d.defaultView.innerWidth;",
     ),
     true,
-    "窄屏窗口有界，不把任务横向滚动扩散到页面",
+    "窄屏工作台不横向溢出",
   );
-  if (process.env.PI_HOST_TASK_SCREENSHOTS) {
-    const shot = await call("Page.captureScreenshot", { format: "png" });
-    await writeFile(
-      join(process.env.PI_HOST_TASK_SCREENSHOTS, "host-tasks-narrow.png"),
-      Buffer.from(shot.data, "base64"),
-    );
-  }
-  assert.deepEqual(driver.errors, [], "真实 Host 任务窗口不产生浏览器错误");
+  assert.deepEqual(driver.errors, []);
   console.log(
-    "Host tasks browser: launch A/B, scoped wait/cancel, observer disposal, native result and read-only capability passed",
+    "Scoped workbench browser passed: two writers/same task id, drafts, native wait/cancel and current-session-only details.",
   );
 } finally {
   for (const gate of Object.values(gates)) gate.resolve();
-  streamNext.resolve();
-  streamDone.resolve();
   driver?.close();
   if (browser && browser.exitCode === null) {
-    const exited = once(browser, "close");
+    const stopped = once(browser, "close");
     browser.kill("SIGTERM");
-    await exited;
+    await stopped;
   }
+  await rm(join(f.root, "scoped-task-browser"), {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
   await f.close();
 }

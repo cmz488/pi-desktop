@@ -1,4 +1,5 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
+import { createSubagentHistory } from "./subagent-history.js";
 import {
   projectRoundTree,
   DEFAULT_ROUND_LIMIT,
@@ -39,6 +40,8 @@ const vector = (tag, attributes = {}, text) => {
 };
 export function createBranchTreePanel({
   fetchTree,
+  fetchHistory,
+  fetchDetail,
   command,
   toast,
   switchSession,
@@ -50,6 +53,8 @@ export function createBranchTreePanel({
   let graphWidth = GRAPH_WIDTH;
   let previewOpen = false;
   let context = {};
+  let active = true,
+    visible = true;
   let limit = DEFAULT_ROUND_LIMIT;
   // 隐私模式可能禁用偏好存储；它不能阻止只读面板打开。
   try {
@@ -58,6 +63,7 @@ export function createBranchTreePanel({
       limit = saved;
   } catch {}
   const collapsed = new Set();
+  const history = createSubagentHistory({ fetchHistory, fetchDetail });
   const loader = createSessionPanelLoader({
     read: fetchTree,
     onChange: render,
@@ -70,7 +76,7 @@ export function createBranchTreePanel({
     }
     context = next;
     owner = String(next.sessionId ?? "");
-    return loader.setContext({
+    const changed = loader.setContext({
       owner,
       sessionId: target || owner,
       enabled: next.capabilities?.sessionTree === true,
@@ -79,6 +85,8 @@ export function createBranchTreePanel({
         next.capabilities?.readOnly !== true &&
         next.capabilities?.remote !== true,
     });
+    history.update(next, target || owner);
+    return changed;
   }
   function choose(id) {
     selected = id;
@@ -483,6 +491,7 @@ export function createBranchTreePanel({
       }
       root.append(branches);
     }
+    history.render(root);
     container.replaceChildren(root);
     if (focused) {
       const row = [...root.querySelectorAll("[data-round-node]")].find(
@@ -530,12 +539,21 @@ export function createBranchTreePanel({
       render();
     },
     refresh: loader.refresh,
-    setActive: loader.setActive,
+    setActive(value) {
+      loader.setActive(value);
+      active = value;
+      history.setActive(active && visible);
+    },
     dispose() {
+      history.dispose();
       resizeObserver?.disconnect();
       loader.dispose();
     },
     builtin: {
+      setVisible(value) {
+        visible = value;
+        history.setActive(active && visible);
+      },
       update: updateContext,
       render(node, next) {
         if (container !== node) {

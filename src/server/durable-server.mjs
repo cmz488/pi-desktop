@@ -452,6 +452,7 @@ export async function startDurableDesk(options = {}) {
         revision: true,
         sessionTree: true,
         tasks: true,
+        taskDetails: workspace.capabilities?.taskInspection === true,
         route: true,
         requestContext: true,
       },
@@ -737,6 +738,25 @@ export async function startDurableDesk(options = {}) {
           });
           return true;
         }
+        if (
+          url.pathname === "/api/subagent-history" &&
+          request.method === "GET"
+        ) {
+          if (request.headers["x-pi-remote-client"] === "1")
+            throw new DeskError(403, "远程连接不提供子代理历史详情");
+          if (workspace.capabilities?.taskInspection !== true)
+            json(response, { supported: false });
+          else {
+            const before = url.searchParams.get("before");
+            json(response, {
+              supported: true,
+              ...(await workspace.subagentHistory(target().active.id, {
+                ...(before === null ? {} : { before: Number(before) }),
+              })),
+            });
+          }
+          return true;
+        }
         if (url.pathname === "/api/task-detail" && request.method === "GET") {
           if (request.headers["x-pi-remote-client"] === "1")
             throw new DeskError(403, "远程连接不提供整个 worker 的任务详情");
@@ -920,6 +940,7 @@ export async function startDurableDesk(options = {}) {
         return {
           sessionId: String(requested),
           tasks,
+          models: root.models,
           conversations: (root.children ?? []).filter((row) =>
             scope.has(row.id),
           ),

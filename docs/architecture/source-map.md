@@ -35,7 +35,7 @@
 
 ## 原生任务管理 seam
 
-`src/control-plane/host-tasks.mjs` 只聚合与定向转发；`src/agent/managed-subagents.mjs` 用原生 task／owned conversation／submission 组合一次委托；`src/ui/shared/host-task-panel.js` 复用会话面板的确认与观察生命周期。状态、模型循环、调度与恢复继续属于 Durable，子会话资源仍经既有能力 seam 绑定。接口和可执行证据见 [全 Host 任务与子代理](interfaces/host-tasks.md)。
+`src/control-plane/host-tasks.mjs` 保留公开聚合与定向转发；`src/agent/managed-subagents.mjs` 用原生 task／owned conversation／submission 组合委托，并注册模型可调用的 `desk_subagent`。`src/ui/shared/task-panel-management.js` 在既有任务页内承接当前会话的发起／详情，`task-detail-view.js` 共用纯文本展示，`subagent-history.js` 在既有分支页单列终态记录；不新增任务页面或弹窗。状态、模型循环、调度与恢复继续属于 Durable，子会话资源仍经既有能力 seam 绑定。接口和可执行证据见 [任务与子代理](interfaces/host-tasks.md) 和 [模型工具](interfaces/subagent-tools.md)。
 
 ## 迁移范围
 

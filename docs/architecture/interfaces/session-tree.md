@@ -97,6 +97,10 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 - 折叠、选择与目标保存在面板模块而非 DOM，同一身份补刷保留滚动和阅读状态；读取按 1.5 秒节流并合并补刷。
 - 从会话栏进入可查看另一个会话，面板明确目标并提供「跟随当前会话」。未建立 Durable 映射时仅展示，不把原生字符串 id 当命令目标。
 
+### 已结束的子代理记录
+
+「对话分支」另有独立折叠区，通过 `GET /api/subagent-history` 读取当前显示会话的 owned 范围终态委托；默认每页 20 条、按需加载更多。记录可只读查看原生消息／结果，不加入 `native.nodes` 或 `branches`，没有 fork／rewind 动作，也不把 `owner` 当作 `parent`。折叠、离开或切目标会撤观察；需要显式 `taskDetails`，远程不提供详情。返回和错误契约见 [Host 任务契约](host-tasks.md)。
+
 ## 默认 worker 的会话族
 
 一个 Desktop Agent 继续独占一个 worker 和 SQLite。`singleAgent: true` 表示禁止在 worker 内任意新建 Desktop Agent，不再禁止其已有会话的历史分叉。每个分支仍使用 Durable 原生 `fork`、`parent` 与独立 usage；分支不会创建第二个 writer。
@@ -126,8 +130,9 @@ Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契�
 ## 可执行证据
 
 - `test/durable-session-tree.test.mjs`：原生 parent 链与 leaf、分支点、被放弃路径不在活跃路径上、`rewinds` 记录退回目标、`branches` 列出全部分支且 `forkOf` 指向同一来源、无原生转录的会话返回 `native: null`；另断言数值 entry／rewind 目标、80 代码单元预览、无映射 null 与无效 id 的 422。
+- `test/subagent-history.test.mjs`、`test/subagent-workbench-browser-check.mjs`：原生终态分页、owned/fork 隔离、remote 拒绝与独立只读记录，不重放模型。
 - `test/bridge.test.mjs`：未声明能力的宿主返回 `supported: false`；声明后按 `id` 传参且只调用一次。
-- `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（40 个键）。
+- `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（41 个键）。
 
 默认模式的补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。
 

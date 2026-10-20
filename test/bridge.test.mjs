@@ -583,12 +583,18 @@ test("the session tree endpoint is read-only and explicit about unsupported host
 test("聊天快照显式声明读面板能力，不能被宿主自填字段或方法存在性冒充", async (t) => {
   for (const declared of [false, true]) {
     const f = await fixture(t, {
-      capabilities: declared ? { sessionTree: true, tasks: true } : {},
+      capabilities: declared
+        ? { sessionTree: true, tasks: true, taskDetails: true }
+        : {},
       snapshot: () => ({
         models: [],
         messages: [],
         idle: true,
-        capabilities: { sessionTree: !declared, tasks: !declared },
+        capabilities: {
+          sessionTree: !declared,
+          tasks: !declared,
+          taskDetails: !declared,
+        },
       }),
       sessionTree: () => ({ sessionId: "1", native: null, branches: [] }),
       tasks: () => ({
@@ -602,6 +608,7 @@ test("聊天快照显式声明读面板能力，不能被宿主自填字段或�
       const value = await (await f.request(path)).json();
       assert.equal(value.capabilities.sessionTree, declared);
       assert.equal(value.capabilities.tasks, declared);
+      assert.equal(value.capabilities.taskDetails, declared);
     }
   }
 });

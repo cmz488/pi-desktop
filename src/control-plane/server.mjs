@@ -423,7 +423,17 @@ export async function startDesktopHost(options = {}) {
       const route = /^\/agents\/([a-f0-9-]{36})(\/.*)$/.exec(url.pathname);
       if (route) {
         if (route[2].startsWith("//")) throw new DeskError(404, "接口不存在");
-        const target = await supervisor.openTarget(route[1]);
+        const rawGeneration = url.searchParams.get("generation");
+        const generation =
+          rawGeneration === null ? undefined : Number(rawGeneration);
+        if (
+          rawGeneration !== null &&
+          (rawGeneration.trim() === "" ||
+            !Number.isSafeInteger(generation) ||
+            generation < 0)
+        )
+          throw new DeskError(422, "Agent 存储代际无效");
+        const target = await supervisor.openTarget(route[1], generation);
         const settingsMutation =
           request.method === "POST" && route[2] === "/api/settings";
         const forward = () =>

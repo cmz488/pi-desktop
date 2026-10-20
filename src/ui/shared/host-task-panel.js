@@ -1,5 +1,6 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { createTaskPanel, taskStatusLabel } from "./task-panel.js";
+import { renderTaskDetail } from "./task-detail-view.js";
 
 /**
  * 全 Host 任务窗口：适配聚合 API，复用会话任务面板的确认、等待租约与权限生命周期。
@@ -13,19 +14,6 @@ import { createTaskPanel, taskStatusLabel } from "./task-panel.js";
 const REFRESH_MS = 2000;
 const REQUEST_MS = 12000;
 const WAIT_REQUEST_MS = 45000;
-const OUTCOMES = {
-  completed: "已完成",
-  failed: "失败",
-  aborted: "已中止",
-  orphaned: "无法恢复",
-  faulted: "执行故障",
-};
-const MESSAGE_ROLES = {
-  user: "用户",
-  assistant: "助手",
-  toolResult: "工具",
-  custom: "扩展",
-};
 const STATES = {
   running: "运行中",
   stopped: "已停止",
@@ -441,89 +429,10 @@ export function createHostTaskPanel({ root, request }) {
     updateInspection(data.workers);
   }
   function renderDetail(data, label) {
-    const signature = JSON.stringify({
+    renderTaskDetail($("[data-host-detail]"), data, {
       label,
-      task: data.task,
-      children: data.children,
+      statusLabel: taskStatusLabel,
     });
-    if (signature === detailSignature) return;
-    const detail = $("[data-host-detail]");
-    const scroll = detail.scrollTop;
-    const content = element("div", "host-task-result");
-    const outcome = data.task.outcome?.status;
-    content.dataset.hostOutcome = outcome ?? data.task.status;
-    const heading = element("header", "host-task-result-heading");
-    heading.append(
-      element(
-        "strong",
-        "",
-        OUTCOMES[outcome] ?? taskStatusLabel(data.task.status),
-      ),
-      element("small", "", `原生任务 #${data.task.id}`),
-    );
-    const answerEntryId = data.task.outcome?.result?.answerEntryId;
-    if (Number.isSafeInteger(answerEntryId) && answerEntryId >= 0) {
-      const reference = element("small", "", `原生回答 #${answerEntryId}`);
-      reference.dataset.hostAnswerReference = String(answerEntryId);
-      heading.append(reference);
-    }
-    content.append(heading, element("p", "host-task-detail-label", label));
-    if (data.task.outcome?.error)
-      content.append(
-        element("p", "host-task-error", data.task.outcome.error.message),
-      );
-    const message = (role, text, partial = false) => {
-      const node = element("section", "host-task-message");
-      node.dataset.hostMessageRole = role;
-      if (partial) node.dataset.hostPartial = "true";
-      node.append(
-        element(
-          "small",
-          "",
-          partial ? "正在输出" : (MESSAGE_ROLES[role] ?? role),
-        ),
-        element("div", "host-task-message-body", text),
-      );
-      return node;
-    };
-    for (const child of data.children) {
-      const conversation = element("section", "host-task-conversation");
-      const title = element("h4", "", child.name);
-      title.append(element("small", "", `子会话 #${child.id}`));
-      conversation.append(title);
-      for (const entry of child.messages) {
-        const block = message(entry.role, entry.text);
-        if (entry.toolName)
-          block.querySelector("small").textContent = `工具 ${entry.toolName}`;
-        conversation.append(block);
-      }
-      if (child.partial)
-        conversation.append(message("assistant", child.partial.text, true));
-      if (child.messagesTruncated || child.toolsTruncated)
-        conversation.append(
-          element(
-            "p",
-            "host-task-note",
-            "仅显示最近的消息与工具记录，完整内容仍保存在子会话。",
-          ),
-        );
-      for (const tool of child.tools) {
-        const node = message("toolResult", tool.output);
-        node.querySelector("small").textContent =
-          `${tool.name} · ${OUTCOMES[tool.status] ?? taskStatusLabel(tool.status)}`;
-        conversation.append(node);
-      }
-      content.append(conversation);
-    }
-    if (!data.children.length && data.task.outcome?.result?.answer)
-      content.append(message("assistant", data.task.outcome.result.answer));
-    if (data.hasMoreChildren)
-      content.append(
-        element("p", "host-task-note", "部分子会话未显示，完整记录仍保留。"),
-      );
-    detail.replaceChildren(content);
-    detail.scrollTop = scroll;
-    detailSignature = signature;
   }
   async function inspect() {
     if (!visible() || !inspection || detailRequest) return;

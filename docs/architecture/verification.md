@@ -17,7 +17,7 @@ npm run package:check
 
 Electron 的 `test:workspace:desktop`、`test:context:browser` 为额外的平台专项；环境要求见下文。
 
-全 Host 任务与子代理由 `test/host-task-management.test.mjs` 的真实 Host／worker HTTP 验证，覆盖持久幂等、原生 owned 关系、单 writer、等待断连、目标／权限、重启与子会话自身工具 scope，以及暂停单 worker 的局部超时。`test:workspace:browser` 纳入 `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task、UI 发起／等待／中止、关闭与快速重开、结果与只读能力、聚合更新的键盘焦点。它不是 CLI 子代理探测；任务调度和模型循环仍由 Durable 原生能力承担。当前接口见 [Host 任务契约](interfaces/host-tasks.md)。
+全 Host 任务与子代理由 `test/host-task-management.test.mjs` 的真实 Host／worker HTTP 验证，覆盖持久幂等、原生 owned 关系、单 writer、等待断连、目标／权限、重启与子会话自身工具 scope，以及暂停单 worker 的局部超时。`test:workspace:browser` 纳入 `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task、当前会话面板的 UI 发起／等待／中止、草稿与切换隔离、结果和窄屏边界。`test/subagent-workbench-browser-check.mjs` 验证直接整合既有任务页、移除独立入口／弹窗、实时／历史分流与页签观察回收；`test/subagent-tools.test.mjs` 由 faux provider 编排真实模型工具调用，`test/subagent-history.test.mjs` 验证真实终态分页及范围。它不是 CLI 子代理探测；任务调度和模型循环仍由 Durable 原生能力承担。当前接口见 [Host 任务契约](interfaces/host-tasks.md)。
 
 架构深化专项由 `test/host-interface.test.mjs`、`test/agent-snapshot.test.mjs`、`test/target-guard.test.mjs`、`test/agent-runtime.test.mjs`、`test/goal-panel.test.mjs`、`test/extension-workbench.test.mjs`、`test/git-review.test.mjs` 和 `test/bridge.test.mjs` 覆盖：Host 能力声明与动态 TUI slot、snapshot 统一 shape/typed activity、请求目标竞态、声明式面板动作、Durable runtime adapter，以及 Git limits／permitted actions。其中 `test/bridge.test.mjs` 明确验证“回调存在但未声明能力不会启用功能”，包括 `requestContext`、`sessionCommand`、会话新建／切换、`effectiveSettings` 和包管理清单（`updatesSupported`／`writable`）；`test/durable-server.test.mjs` 断言 Durable 的 `/api/sessions` 仍返回 `supported:true` 与 Agent 行，并验证 `/api/new-session`／`/api/switch-session` 仍返回 200，避免 capability 声明和既有会话管理行为分叉。`test/conversation-timeline-browser-check.mjs` 验证新增 activity 不改变旧的思考／生成文案。浏览器回归继续验证真实页面上的目标面板和 Git 审阅 affordance。
 
@@ -32,6 +32,8 @@ Electron 的 `test:workspace:desktop`、`test:context:browser` 为额外的平�
 果冻式界面回归还检查默认浅色、父子 iframe 的透明背景／根节点主题同步，以及桌面横向扩展页面架。还覆盖：非活跃 Agent 使用 `#agent-boot` 载入面且不闪项目主视觉、首帧主题引导脚本、`--ease-jelly` 驱动的 shell／视图／会话动画、整颗胶囊可点的主题下拉、消息链接在右侧浏览器打开且聊天 iframe 不导航。附件回归分别断言本机只发送绝对路径、远程上传写入受控缓存并在提示词中只给缓存路径。`test/surface-contrast.mjs` 对静态底光取保守色域边界，逐层合成透明表面后测量文本对比度；降低透明度偏好会启用实色表面并关闭局部背景模糊。页面切换动画、放宽后的对话流宽、单行读数标签与窄屏堆叠在 `test/browser-check.mjs` 中断言；输入框上方的项目／提示词／权限胶囊和文件查看器树在桌面回归中覆盖，树只在容器宽度足够时显示，点击文件切换到已有标签。
 
 Electron 专项若继承 `ELECTRON_RUN_AS_NODE=1`，应使用 `env -u ELECTRON_RUN_AS_NODE npm run test:workspace:desktop` 和 `env -u ELECTRON_RUN_AS_NODE npm run test:context:browser`；仅取消当前测试命令的变量，不改用户全局环境。
+
+Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，避免依赖桌面凭据库解锁而卡住本地 HTTP 导航；不读取或修改用户 Chromium 配置，也不改变生产认证／TLS／沙箱策略。
 
 测试使用临时目录和本地模型／Git／HTTPS 夹具，不触碰真实用户配置、会话或远端仓库。Chromium／Electron／PTY 的专项需要对应本机工具，详见 package.json 中各命令。真实 Tailscale 公网、第三方 OAuth 和任意 Pi 自定义 TUI 控件不能由本地夹具保证。
 
@@ -86,7 +88,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 接口契约（[docs/architecture/interfaces/](../architecture/interfaces/README.md)）每条都必须在“可执行证据”里指向测试或命令；新增或改变契约时必须同时补上断言，未登记的对外行为不算契约。运行归属与两条 seam 见 [边界文档](../architecture/pi-boundary.md)。
 
-形状与能力集由一个专门文件守住：`test/boundary-contracts.test.mjs` 断言 Host 的 40 个 capability、资源目标 token 的 409 语义、AgentRuntime 的固定选项与停止预算（8 s SIGTERM／10 s SIGKILL）、pi-sdk 的七条深路径在已安装包里真实存在且导出形状正确、workspace／facade／native／supervisor 的键与命令表，以及上述文档与链接仍然存在。接口变更须在隔离副本反向修改对应能力或键名，确认断言失败，再还原复测；各阶段结果保存在历史修复记录。
+形状与能力集由一个专门文件守住：`test/boundary-contracts.test.mjs` 断言 Host 的 41 个 capability、资源目标 token 的 409 语义、AgentRuntime 的固定选项与停止预算（8 s SIGTERM／10 s SIGKILL）、pi-sdk 的七条深路径在已安装包里真实存在且导出形状正确、workspace／facade／native／supervisor 的键与命令表，以及上述文档与链接仍然存在。接口变更须在隔离副本反向修改对应能力或键名，确认断言失败，再还原复测；各阶段结果保存在历史修复记录。
 
 代码与文档规范（[代码与文档规范](../guides/code-style.md)）不新增自动风格检查器，按清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
 

@@ -151,6 +151,19 @@ function targetedPath(path, owner) {
   if (!durableAgentId && state?.host !== "durable" && path !== "/api/state")
     return runtimePath(path);
   const url = new URL(path, location.href);
+  if (
+    desktopConfiguration?.agent &&
+    [
+      "/api/tasks",
+      "/api/task-detail",
+      "/api/subagent-history",
+      "/api/command",
+    ].includes(url.pathname)
+  )
+    url.searchParams.set(
+      "generation",
+      String(desktopConfiguration.agent.generation ?? 0),
+    );
   if (url.pathname === "/api/state") {
     url.searchParams.set("view", "chat");
     url.searchParams.set("historyLimit", nativeHistoryLimit);
@@ -906,6 +919,7 @@ async function showView(next) {
   $('[data-action="workspace-tools"]').hidden = next !== "workspace";
   $("#view-workspace").hidden = next !== "workspace";
   $("#view-extensions").hidden = next !== "extensions";
+  extensionWorkbench?.setActive(next === "extensions");
   $("#settings-shell").hidden = workbench;
   $(".workspace-view-switch").hidden = !workbench;
   for (const element of document.querySelectorAll("[data-workspace-view]"))
@@ -6478,6 +6492,18 @@ function canManageBranches() {
 }
 /* 内置「分支树」页：数据来自 /api/tree，动作复用消息菜单与会话栏的同一条命令路径。 */
 const branchTree = createBranchTreePanel({
+  fetchHistory: (id, before, options) =>
+    api(
+      `/api/subagent-history?sessionId=${encodeURIComponent(id)}${before === undefined ? "" : `&before=${before}`}`,
+      undefined,
+      options,
+    ),
+  fetchDetail: (id, taskId, options) =>
+    api(
+      `/api/task-detail?sessionId=${encodeURIComponent(id)}&taskId=${taskId}`,
+      undefined,
+      options,
+    ),
   fetchTree: (id, options) =>
     api(`/api/tree?id=${encodeURIComponent(id)}`, undefined, options),
   command: (name, input) =>
@@ -6492,6 +6518,12 @@ const branchTree = createBranchTreePanel({
 });
 /* 内置「任务与子代理」页：读取 /api/tasks，操作复用同一命令路径（取消需要两步确认）。 */
 const taskPanel = createTaskPanel({
+  fetchDetail: (id, taskId, options) =>
+    api(
+      `/api/task-detail?sessionId=${encodeURIComponent(id)}&taskId=${taskId}`,
+      undefined,
+      options,
+    ),
   fetchTasks: (id, options) =>
     api(`/api/tasks?id=${encodeURIComponent(id)}`, undefined, options),
   command: (input, options) => api("/api/command", input, options),

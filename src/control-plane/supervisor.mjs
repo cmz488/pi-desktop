@@ -27,7 +27,8 @@ import { projectPiRecord } from "./pi-sessions.mjs";
  *   docs/architecture/interfaces/lifecycle.md。
  * 不变量：`revision()` 不做每 Agent 的会话文件 stat，`read()` 做；追加型命令（无
  *   `input.id`）不参与 revision 冲突，已有行修改必须带 revision；历史视图按 LRU 上限 8；
- *   `restore()` 必须在任何 worker 启动前完成归档／恢复意图；本模块不接触 Durable 内部。
+ *   `restore()` 必须在任何 worker 启动前完成归档／恢复意图；有期望代际的路由同时校验
+ *   目录与运行进程，不转发给新库同号任务；本模块不接触 Durable 内部。
  * 错误：DeskError 表达“未启动”“记录已丢失”“视图已关闭”“归档进行中”等状态。
  */
 
@@ -733,20 +734,30 @@ export function createSupervisor(store, options) {
         return { id: input.id };
       });
     },
-    target(id) {
+    target(id, expectedGeneration) {
       const state = processes.get(id);
       if (state?.status !== "running")
         throw new DeskError(409, "请先启动 Agent");
+      if (
+        expectedGeneration !== undefined &&
+        expectedGeneration !== state.generation
+      )
+        throw new DeskError(409, "Agent 存储代际已变化，请刷新后重试");
       return state.url;
     },
-    async openTarget(id) {
+    async openTarget(id, expectedGeneration) {
       const { agent } = await lookup(id);
+      if (
+        expectedGeneration !== undefined &&
+        expectedGeneration !== (agent.generation ?? 0)
+      )
+        throw new DeskError(409, "Agent 存储代际已变化，请刷新后重试");
       if (
         agent.source !== "pi" &&
         !agent.archived &&
         (running(id) || !agent.nativeSessionPath)
       )
-        return this.target(id);
+        return this.target(id, expectedGeneration);
       if (
         agent.source !== "pi" &&
         !agent.archived &&

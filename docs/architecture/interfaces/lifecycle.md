@@ -19,8 +19,8 @@ supervisor.noteActivity(id, {metadataOnly = false} = {}) // 同步原生会话�
 supervisor.revision()               // async -> { catalog, workspace }：轻量变更探测
 supervisor.read()                   // async -> 目录 + 每 Agent 状态（含会话文件 stat）
 supervisor.execute(command, input?) // async -> 命令结果（下表）
-supervisor.target(id)               // 单个 Agent 的写目标（含当前状态与路径）
-supervisor.openTarget(id)           // async -> 只读历史的 URL（按需打开，带 LRU）
+supervisor.target(id, expectedGeneration?)     // 运行 worker 的 URL；可选固定存储代际
+supervisor.openTarget(id, expectedGeneration?) // async -> worker 或按需只读历史 URL（带 LRU）
 supervisor.restore()                // async -> 在任何 worker 启动前完成归档／恢复意图
 supervisor.close()                  // async -> 关闭所有历史视图、会话与归档
 supervisor.monitorTasks({signal} = {})       // async -> 全 Host 原生任务聚合，不启动进程
@@ -54,6 +54,7 @@ class DeskError extends Error { status }
 - **归档先于启动**：`restore()` 必须在任何 worker 启动前完成 durable 归档／恢复意图，避免两个 writer 竞争同一 Pi 会话。
 - **未启动的 Agent 不允许读取**：`agent.source !== "pi"`、未归档且缺少原生会话文件时抛 `DeskError(409, "请先启动 Agent")`；记录已丢失抛 `DeskError(404, "Pi 会话记录已不存在")`。
 - **写目标唯一**：所有跨 `await` 的写入必须经 `host.target()`／`supervisor.target(id)` 校验，路由不复制 409 规则。
+- **可选代际路由**：Desktop iframe 的任务请求携带 generation；`openTarget` 校验目录、`target` 再校验实际进程，旧代际返回 409。未带参数的旧 URL 保持兼容，不放宽原 Host 任务管理的必填代际校验。
 - **任务管理不占配置串行队列**：全 Host 等待只观察原生工作，断连不 abort task；实际进程 generation 再次校验，不把旧库同号 task 转发给新库。接口与错误见 [Host 任务契约](host-tasks.md)。
 - **catalog 是只读快照 + revision**：`store.read()` 返回 `{ revision, projects, agents }`；写入走 `mutateDocument` 的锁 + revision 栅栏。
 - **一个 Desktop Agent 一个 writer**：默认 worker 承载该 Agent 的会话族，历史分支是同一 Harness 内独立的 Durable 会话。根保留 `agents/<id>` 下的元数据，分支在该目录的 `branches/<conversationId>` 下各自保存转录元数据；重启后原生身份与路径不变。单进程／注入 workspace 模式仍只绑定最初的会话。
@@ -62,7 +63,7 @@ class DeskError extends Error { status }
 
 1. `restore()` → 目录发现（`discover()`，扫描 Pi 会话并 `reconcilePiSessions`）→ 启动 worker → 提供路由。
 2. 写操作顺序：`readDocument` 取 `revision` → 用户提交时带上该 revision → `mutateDocument` 校验 → 成功后才更新本地视图。
-3. `openTarget(id)` 的开销包含统计与打开；同一 id 的并发请求复用同一个 promise，失败时清理句柄再抛出。
+3. `openTarget(id, expectedGeneration?)` 的开销包含统计与打开；同一 id 的并发请求复用同一个 promise，失败时清理句柄再抛出。
 4. `close()` 必须在宿主退出时调用：先关闭历史视图，再关会话与归档。
 
 ## 错误模式

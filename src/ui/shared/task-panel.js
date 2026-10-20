@@ -1,5 +1,6 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { dshIcon } from "./dsh-icons.mjs";
+import { createTaskPanelManagement } from "./task-panel-management.js";
 
 /**
  * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
@@ -50,6 +51,7 @@ export function taskStatusLabel(status) {
 
 export function createTaskPanel({
   fetchTasks,
+  fetchDetail,
   command,
   toast,
   currentSession,
@@ -60,6 +62,19 @@ export function createTaskPanel({
   let waiting;
   let container;
   let repaint;
+  let panelContext = {};
+  let active = true,
+    visible = true;
+  const management = createTaskPanelManagement({
+    fetchDetail,
+    refresh: (options) => loader.refresh(options),
+    statusLabel: taskStatusLabel,
+    command,
+    toast,
+    capture: () => loader.capture(),
+    isCurrent: (identity) => loader.isCurrent(identity),
+    canManage: () => loader.canManage,
+  });
 
   const element = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -74,11 +89,13 @@ export function createTaskPanel({
     onReset: () => {
       disarm();
       cancelWaiting();
+      management.reset();
     },
   });
   function updateContext(context) {
     const owner = String(context.sessionId ?? currentSession?.() ?? "");
-    return loader.setContext({
+    panelContext = context;
+    const changed = loader.setContext({
       owner,
       sessionId: owner,
       enabled: context.capabilities?.tasks === true,
@@ -86,6 +103,8 @@ export function createTaskPanel({
         (context.taskCommands ?? context.sessionCommands) === true &&
         context.capabilities?.readOnly !== true,
     });
+    management.update(context, loader.data);
+    return changed;
   }
   const kindLabel = (kind) => KIND_LABELS[kind] ?? kind;
 
@@ -227,9 +246,10 @@ export function createTaskPanel({
       if (container) repaint?.();
       return;
     }
-    const focused = container.contains(document.activeElement)
-      ? document.activeElement.dataset.taskAction
+    const focusedElement = container.contains(document.activeElement)
+      ? document.activeElement
       : undefined;
+    const focused = focusedElement?.dataset.taskAction;
     const { data, error, loading } = loader;
     const sessionId = loader.context.sessionId;
     const identity = loader.capture();
@@ -237,7 +257,17 @@ export function createTaskPanel({
     root.dataset.taskPanel = sessionId;
     const tasks = data?.tasks ?? [];
     const tools = data?.tools ?? [];
-    const children = data?.conversations ?? [];
+    const activeTaskIds = new Set(tasks.map((task) => task.id));
+    const activeConversations = new Set(
+      tasks.map((task) => task.conversationId),
+    );
+    const children = (data?.conversations ?? []).filter(
+      (child) =>
+        activeTaskIds.has(child.owner?.taskId) ||
+        activeConversations.has(child.id),
+    );
+    const detailed = management.update(panelContext, data);
+    root.classList.toggle("task-panel-workbench", detailed);
     const header = element("header", "task-panel-header");
     const heading = element("div", "task-panel-heading");
     heading.append(
@@ -259,6 +289,19 @@ export function createTaskPanel({
     refresh.dataset.taskRefresh = "true";
     refresh.onclick = () => void loader.refresh({ force: true });
     actions.append(refresh);
+    if (detailed) {
+      const compose = element("button", "outline-button", "新建子代理");
+      compose.type = "button";
+      compose.dataset.taskComposeToggle = "true";
+      compose.disabled = !identity || !loader.canManage;
+      if (compose.disabled)
+        compose.title = "当前会话只提供查看，不提供子代理管理";
+      compose.onclick = () => {
+        if (compose.isConnected && loader.isCurrent(identity))
+          management.toggleCompose();
+      };
+      actions.append(compose);
+    }
     if (tasks.some((task) => task.background))
       actions.append(
         confirmButton(
@@ -312,7 +355,9 @@ export function createTaskPanel({
           element(
             "span",
             "task-panel-label",
-            task.name ?? kindLabel(task.kind),
+            task.name ??
+              children.find((child) => child.owner?.taskId === taskId)?.name ??
+              kindLabel(task.kind),
           ),
           element("span", "task-panel-state", taskStatusLabel(task.status)),
         );
@@ -339,6 +384,18 @@ export function createTaskPanel({
         );
         node.append(marker, copy);
         const rowActions = element("span", "task-panel-row-actions");
+        if (detailed) {
+          const inspect = element("button", "outline-button", "查看");
+          inspect.type = "button";
+          inspect.dataset.taskInspect = String(task.id);
+          inspect.dataset.taskAction = `inspect:${task.id}`;
+          inspect.setAttribute("aria-label", `查看任务 #${task.id} 的实时详情`);
+          inspect.onclick = () => {
+            if (inspect.isConnected && loader.isCurrent(identity))
+              management.select(task.id);
+          };
+          rowActions.append(inspect);
+        }
         const pending = waiting;
         const isWaiting =
           !!pending &&
@@ -471,11 +528,14 @@ export function createTaskPanel({
       }
       root.append(list);
     }
+    management.render(root);
     container.replaceChildren(root);
     if (focused)
       [...root.querySelectorAll("[data-task-action]")]
         .find((node) => node.dataset.taskAction === focused && !node.disabled)
         ?.focus({ preventScroll: true });
+    else if (focusedElement?.isConnected)
+      focusedElement.focus({ preventScroll: true });
   }
 
   return {
@@ -485,9 +545,24 @@ export function createTaskPanel({
       return loader.available;
     },
     refresh: loader.refresh,
-    setActive: loader.setActive,
-    dispose: loader.dispose,
+    setActive(value) {
+      loader.setActive(value);
+      active = value;
+      management.setActive(active && visible);
+    },
+    dispose() {
+      management.dispose();
+      loader.dispose();
+    },
     builtin: {
+      setVisible(value) {
+        visible = value;
+        if (!value) {
+          cancelWaiting();
+          disarm();
+        }
+        management.setActive(active && visible);
+      },
       update: updateContext,
       render(node, context) {
         container = node;

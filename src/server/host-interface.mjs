@@ -4,7 +4,7 @@ import { createRequestTarget } from "./target-guard.mjs";
 /**
  * Host 与传输之间的 seam：把每个宿主的能力与领域操作收敛成同一形状。
  *
- * 接口：`HOST_CAPABILITY_KEYS`（40 个键）、`normalizeHostCapabilities(value)`、
+ * 接口：`HOST_CAPABILITY_KEYS`（41 个键）、`normalizeHostCapabilities(value)`、
  *   `createHostInterface(input)`；host 的 `supports`／`require`／`target` 语义与完整
  *   操作名列表见 docs/architecture/interfaces/host-interface.md。
  * 不变量：能力是显式声明而不是推断（回调存在不自动开启能力）；`normalizeHostCapabilities`
@@ -39,6 +39,7 @@ export const HOST_CAPABILITY_KEYS = Object.freeze([
   "sessionCommand",
   "sessionTree",
   "tasks",
+  "taskDetails",
   "canManageSessions",
   "packageManagement",
   "packageUpdates",

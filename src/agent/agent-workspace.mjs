@@ -40,7 +40,7 @@ import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
  *
  * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
  *   persistNative, importNative, install, subscribe, close, capabilities, monitor,
- *   taskDetail, setOwnedPreparer }`；options、命令表、
+ *   taskDetail, subagentHistory, setOwnedPreparer }`；options、命令表、
  *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
  * `read()` 额外返回 `recovery`（本次打开时接管的待恢复任务及实时状态，无则 null）。
  * 不变量：单 writer（proper-lockfile 独占 + SQLite）；先 commit 再显示；每次调用先过
@@ -1272,6 +1272,48 @@ export async function openAgentWorkspace(options) {
           status: row.status,
           type: row.type,
         })),
+      };
+    },
+    async subagentHistory(id, { before, limit = 20 } = {}) {
+      guard();
+      await conversation(id);
+      if (
+        !Number.isSafeInteger(limit) ||
+        limit < 1 ||
+        limit > 50 ||
+        (before !== undefined && (!Number.isSafeInteger(before) || before < 0))
+      )
+        throw new DeskError(422, "子代理历史范围无效");
+      const scope = ownedConversationIds(id, await scanAll());
+      const records = await harness.commit(async (tx) => {
+        const found = [];
+        let cursor;
+        do {
+          const page = await tx.scanTasks(
+            { kind: MANAGED_SUBAGENT_KIND },
+            TASK_SCAN_PAGE_SIZE,
+            cursor,
+          );
+          found.push(
+            ...page.items.filter(
+              (row) =>
+                scope.has(row.conversationId) &&
+                row.state.status === "terminal" &&
+                (before === undefined || row.id < before),
+            ),
+          );
+          cursor = page.next;
+        } while (cursor !== undefined);
+        return found.sort((a, b) => b.id - a.id);
+      }, context);
+      const page = records.slice(0, limit);
+      return {
+        sessionId: String(id),
+        records: page.map((row) => ({
+          ...taskReceipt(row),
+          name: row.input.name,
+        })),
+        nextBefore: records.length > limit ? page.at(-1).id : null,
       };
     },
     async taskDetail(id, taskId) {
