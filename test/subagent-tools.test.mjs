@@ -162,6 +162,26 @@ test(
       false,
       "不泄漏原生检查点或任意任务输入",
     );
+    const refused = await invoke(
+      {
+        action: "message",
+        taskId: spawned.taskId,
+        message: "TERMINAL_MESSAGE_REVIVAL",
+      },
+      { error: true },
+    );
+    assert.match(
+      refused,
+      /子代理任务已结束，请创建新的委托/,
+      "终态委托不能借原生消息入口复活",
+    );
+    assert.equal(
+      f.requests.some(
+        (row) => row.messages.at(-1)?.content === "TERMINAL_MESSAGE_REVIVAL",
+      ),
+      false,
+      "拒绝消息不能暗中重新调用子模型",
+    );
   },
 );
 
@@ -375,7 +395,7 @@ test(
   "子代理工具公开原生配置选择，同一 requestId 重试不重复创建",
   { timeout: 60000 },
   async (t) => {
-    const { f, prefix, parent, invoke } = await subagentToolFixture(t);
+    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t);
     const args = {
       action: "spawn",
       prompt: "CONFIG_CHILD",
@@ -391,6 +411,14 @@ test(
       f.requests[0].tools.find((row) => row.function?.name === "desk_subagent")
         .function.parameters.properties.config,
       "模型工具声明必须公开已支持的原生配置，而不是接受未声明参数",
+    );
+    await f.reopen();
+    await until(
+      () => f.call("/api/workspace"),
+      (value) =>
+        value.agents.some(
+          (row) => row.id === actor.id && row.status === "running",
+        ),
     );
     const second = await invoke(args);
     assert.equal(first.taskId, second.taskId);
