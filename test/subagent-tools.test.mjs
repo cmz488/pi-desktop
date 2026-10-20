@@ -128,7 +128,7 @@ test(
   "模型读取子代理的原生终态、回答绑定与受限消息",
   { timeout: 60000 },
   async (t) => {
-    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t);
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t);
     const spawned = await invoke({
       action: "spawn",
       prompt: "child read result",
@@ -419,5 +419,301 @@ test(
       { error: true },
     );
     assert.match(denied, /请求 ID 已用于其他内容/);
+  },
+);
+
+test(
+  "模型读取长子代理回答时准确报告裁剪，不把截断内容冒充完整消息",
+  { timeout: 60000 },
+  async (t) => {
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t, {
+      modelReply: async (input) => ({
+        text:
+          input.messages.at(-1)?.content === "LARGE_CHILD"
+            ? "长".repeat(3000)
+            : "PARENT_DONE",
+      }),
+    });
+    const spawned = await invoke({ action: "spawn", prompt: "LARGE_CHILD" });
+    await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    const result = await invoke({ action: "read", taskId: spawned.taskId });
+    const child = result.children[0];
+    assert.equal(
+      child.messages.find((row) => row.role === "assistant").text.length,
+      2000,
+    );
+    assert.equal(
+      child.messagesTruncated,
+      true,
+      "单条文本上限造成的裁剪也必须明示",
+    );
+  },
+);
+
+test(
+  "模型 followUp 在当前原生轮次结束后处理，原委托答案仍绑定第一次回答",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "CHILD_FOLLOWUP_FIRST")
+          await gate.promise;
+      },
+      modelReply: async (input) =>
+        input.messages.at(-1)?.content === "CHILD_FOLLOWUP_FIRST"
+          ? {
+              toolCalls: [
+                {
+                  id: "followup-native-read",
+                  type: "function",
+                  function: {
+                    name: "read",
+                    arguments: JSON.stringify({
+                      path: "skills/fixture-skill/SKILL.md",
+                    }),
+                  },
+                },
+              ],
+            }
+          : {
+              text:
+                input.messages.at(-1)?.content === "CHILD_FOLLOWUP_NEXT"
+                  ? "FOLLOWUP_SECOND_ANSWER"
+                  : input.messages.some(
+                        (row) => row.content === "CHILD_FOLLOWUP_FIRST",
+                      )
+                    ? "FOLLOWUP_FIRST_ANSWER"
+                    : "PARENT_DONE",
+            },
+    });
+    const spawned = await invoke({
+      action: "spawn",
+      prompt: "CHILD_FOLLOWUP_FIRST",
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some(
+          (row) => row.messages.at(-1)?.content === "CHILD_FOLLOWUP_FIRST",
+        ),
+    );
+    const sent = await invoke({
+      action: "message",
+      taskId: spawned.taskId,
+      message: "CHILD_FOLLOWUP_NEXT",
+      mode: "followUp",
+    });
+    assert.equal(sent.mode, "followUp");
+    assert.equal(
+      f.requests.some(
+        (row) => row.messages.at(-1)?.content === "CHILD_FOLLOWUP_NEXT",
+      ),
+      false,
+      "followUp 不能在当前模型回合返回前提前生成",
+    );
+    gate.resolve();
+    const detail = await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+        ),
+      (value) =>
+        value.task.status === "terminal" &&
+        value.children[0].messages.some(
+          (row) => row.text === "FOLLOWUP_SECOND_ANSWER",
+        ),
+    );
+    assert.equal(detail.task.outcome.status, "completed");
+    assert.equal(
+      detail.task.outcome.result.answer,
+      "FOLLOWUP_FIRST_ANSWER",
+      "后续消息不能改写已绑定的 submission 答案",
+    );
+  },
+);
+
+test(
+  "模型读取多条长消息时遵守总预算，省略项不变成空文本消息",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        const text = input.messages.at(-1)?.content;
+        if (typeof text === "string" && text.startsWith("BUDGET_FIRST"))
+          await gate.promise;
+      },
+      modelReply: async (input) => ({
+        text: input.messages.some(
+          (row) =>
+            row.role === "user" &&
+            typeof row.content === "string" &&
+            row.content.startsWith("BUDGET_"),
+        )
+          ? "答".repeat(2000)
+          : "PARENT_DONE",
+      }),
+    });
+    const spawned = await invoke({
+      action: "spawn",
+      prompt: "BUDGET_FIRST" + "问".repeat(2000),
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some(
+          (row) =>
+            typeof row.messages.at(-1)?.content === "string" &&
+            row.messages.at(-1).content.startsWith("BUDGET_FIRST"),
+        ),
+    );
+    for (let index = 0; index < 20; index++)
+      await invoke({
+        action: "message",
+        taskId: spawned.taskId,
+        message: `BUDGET_NEXT_${index}` + "问".repeat(2000),
+        mode: "followUp",
+      });
+    gate.resolve();
+    await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+        ),
+      (value) =>
+        value.children[0].idle &&
+        value.children[0].messages.some(
+          (row) => row.role === "user" && row.text.startsWith("BUDGET_NEXT_19"),
+        ) &&
+        value.children[0].messages.at(-1)?.role === "assistant",
+    );
+    const result = await invoke({ action: "read", taskId: spawned.taskId });
+    const messages = result.children.flatMap((row) => row.messages);
+    assert.equal(
+      messages.reduce((sum, row) => sum + row.text.length, 0),
+      32000,
+      "展示文本总预算不多取、不提前浪费",
+    );
+    assert.ok(
+      messages.every((row) => row.text.length > 0 && row.text.length <= 2000),
+      "耗尽预算后省略消息，不输出伪造的空文本记录",
+    );
+    assert.equal(result.children[0].messagesTruncated, true);
+  },
+);
+
+test(
+  "模型大列表超出结构化回执上限时明确报错，缩小列表后仍可读取",
+  { timeout: 60000 },
+  async (t) => {
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t, {
+      modelReply: async (input) => ({
+        text:
+          input.messages.at(-1)?.content === "LARGE_LIST_CHILD"
+            ? "答".repeat(12000)
+            : "PARENT_DONE",
+      }),
+    });
+    for (let index = 0; index < 30; index++) {
+      const spawned = await f.call(`${prefix}/api/command`, {
+        command: "subagent.spawn",
+        id: Number(parent),
+        sessionId: parent,
+        requestId: `large-list-${index}`,
+        prompt: "LARGE_LIST_CHILD",
+      });
+      await until(
+        () =>
+          f.call(
+            `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+          ),
+        (value) => value.task.status === "terminal",
+      );
+    }
+    const error = await invoke(
+      { action: "list", includeTerminal: true, limit: 50 },
+      { error: true },
+    );
+    assert.match(
+      error,
+      /子代理结果过大，请缩小列表或在工作台查看记录/,
+      "超限必须是明确工具错误，不输出半截 JSON",
+    );
+    const reduced = await invoke({
+      action: "list",
+      includeTerminal: true,
+      limit: 1,
+    });
+    assert.equal(reduced.tasks.length, 1);
+    assert.equal(reduced.truncated, true);
+    assert.equal(reduced.tasks[0].outcome.result.answer.length, 12000);
+  },
+);
+
+test(
+  "中止正在执行模型 wait 的父回合只撤观察，不中止先前创建的后台子代理",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "MODEL_WAIT_CHILD_HELD")
+          await gate.promise;
+      },
+    });
+    const spawned = await invoke({
+      action: "spawn",
+      prompt: "MODEL_WAIT_CHILD_HELD",
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some(
+          (row) => row.messages.at(-1)?.content === "MODEL_WAIT_CHILD_HELD",
+        ),
+    );
+    const waiting = invoke(
+      { action: "wait", taskId: spawned.taskId },
+      { error: true },
+    );
+    await until(
+      () => f.call(`${prefix}/api/task-monitor?sessionId=${parent}`),
+      (value) =>
+        value.tools.some(
+          (row) =>
+            row.conversationId === Number(parent) &&
+            row.name === "desk_subagent" &&
+            row.status === "running",
+        ),
+    );
+    await f.call(`${prefix}/api/abort`, { sessionId: parent });
+    await waiting;
+    const detail = await f.call(
+      `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+    );
+    assert.notEqual(
+      detail.task.status,
+      "terminal",
+      "取消模型等待的前台回合不能拥有后台委托的工作生命周期",
+    );
+    gate.resolve();
+    const completed = await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    assert.equal(completed.task.outcome.status, "completed");
   },
 );

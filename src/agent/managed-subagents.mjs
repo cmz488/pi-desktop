@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { Type } from "@earendil-works/pi-ai";
 import { contentText } from "../shared/conversation.mjs";
+import { DeskError } from "../config/config-store.mjs";
 
 /**
  * Host 子代理薄适配：使用 Durable task、owned conversation 与 submission 运行一次委托。
@@ -19,6 +20,7 @@ import { contentText } from "../shared/conversation.mjs";
  */
 export const MANAGED_SUBAGENT_KIND = "desk.subagent-run";
 const ANSWER_PREVIEW_CHARS = 12000;
+const MAX_TOOL_JSON_BYTES = 1024 * 1024;
 
 export function createManagedSubagents({
   createChild,
@@ -127,6 +129,8 @@ export function createManagedSubagents({
           description:
             "管理当前会话拥有的子代理：spawn 后台创建并立即返回 taskId；message 用 steer 或 followUp 投递指令；read 读取有界消息和原生结果；list 默认只列非终态，includeTerminal 可查历史；wait 等原生终态；abort 请求原生中止。仅在用户要求委派时创建，共享目录的并行写入须隔离。taskId 不是历史分支 id；终态消息不能复活任务。取消等待不拥有工作，marked 不等于已中止。",
           replay: "safe",
+          // 通用文本裁剪会破坏 JSON；结构化回执只允许完整返回或明确超限。
+          outputLimits: { maxBytes: MAX_TOOL_JSON_BYTES },
           parameters: Type.Object({
             action: Type.Union([
               Type.Literal("spawn"),
@@ -187,8 +191,14 @@ export function createManagedSubagents({
             const result = await { spawn, read, message, list, wait, abort }[
               args.action
             ](args, api, context);
+            const text = JSON.stringify(result);
+            if (Buffer.byteLength(text, "utf8") > MAX_TOOL_JSON_BYTES)
+              throw new DeskError(
+                413,
+                "子代理结果过大，请缩小列表或在工作台查看记录",
+              );
             return {
-              content: [{ type: "text", text: JSON.stringify(result) }],
+              content: [{ type: "text", text }],
             };
           },
         }),

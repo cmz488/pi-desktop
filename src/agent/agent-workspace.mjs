@@ -58,6 +58,9 @@ const MAX_DETAIL_CHILDREN = 20;
 const MAX_DETAIL_MESSAGES = 80;
 const MAX_DETAIL_TOOLS = 40;
 const MAX_DETAIL_TEXT_UNITS = 12000;
+const MAX_MODEL_READ_ENTRIES = 40;
+const MAX_MODEL_MESSAGE_UNITS = 2000;
+const MAX_MODEL_READ_UNITS = 32000;
 const AgentProfile = defineDoc({
   kind: "desk.agent",
   version: 1,
@@ -301,35 +304,44 @@ export async function openAgentWorkspace(options) {
         (row) => row.owner?.taskId === task.id,
       );
       const children = [];
-      let remaining = 32000;
+      let remaining = MAX_MODEL_READ_UNITS;
       for (const row of records.slice(0, MAX_DETAIL_CHILDREN)) {
         const page = await api.commit(
-          (tx) => tx.scanEntries({ conversationId: row.id }, 40),
+          (tx) =>
+            tx.scanEntries({ conversationId: row.id }, MAX_MODEL_READ_ENTRIES),
           ctx,
         );
         const live = await api.snapshot(LiveDoc, row.id, ctx);
-        const messages = page.items
-          .reverse()
-          .flatMap((entry) =>
-            contributed(entry).map((message) => ({
-              ...projectMessage(message, String(entry.id)),
-              entryId: entry.id,
-            })),
-          )
-          .filter((message) => remaining > 0 && message.role !== "custom")
-          .map((message) => {
-            const text = message.text.slice(0, Math.min(2000, remaining));
-            remaining -= text.length;
-            return { role: message.role, text, entryId: message.entryId };
-          });
+        const projected = page.items.reverse().flatMap((entry) =>
+          contributed(entry).map((message) => ({
+            ...projectMessage(message, String(entry.id)),
+            entryId: entry.id,
+          })),
+        );
+        const messages = [];
+        let messagesTruncated = page.next !== undefined;
+        for (const message of projected) {
+          if (message.role === "custom") continue;
+          if (remaining === 0) {
+            messagesTruncated = true;
+            break;
+          }
+          const text = message.text.slice(
+            0,
+            Math.min(MAX_MODEL_MESSAGE_UNITS, remaining),
+          );
+          remaining -= text.length;
+          messagesTruncated ||= text.length < message.text.length;
+          messages.push({ role: message.role, text, entryId: message.entryId });
+        }
         children.push({
           id: row.id,
           messages,
-          messagesTruncated: page.next !== undefined || remaining === 0,
+          messagesTruncated,
           partial: live?.generation?.message
             ? projectMessage(live.generation.message, "partial").text.slice(
                 0,
-                2000,
+                MAX_MODEL_MESSAGE_UNITS,
               )
             : null,
         });

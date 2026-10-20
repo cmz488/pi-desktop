@@ -52,11 +52,12 @@
 - 未知、越界与非子代理目标均返回不存在，不泄漏其他会话任务内容。
 - 模型未配置、子会话尚未就绪或委托已终结时明确失败；不会偷偷重启或复活。
 - 原生工具错误保留为工具错误结果，不伪装成功 JSON。
+- JSON 回执超过 1 MiB 时明确报错「子代理结果过大，请缩小列表或在工作台查看记录」，不交给通用文本裁剪输出半截 JSON。可降低 list.limit 后重试。
 
 ## 性能特征
 
-list 默认只列非终态，最多 20 项，可设为 1–50 项；显式 includeTerminal 才包含历史。read 最多查看 20 个直接 owned 子会话、每会话最近 40 个 entry；消息文本每条最多 2000 个 UTF-16 code unit，消息总文本预算 32000，流式片段每会话最多 2000。裁剪字段报告省略内容，不改变原生转录与模型上下文。
+list 默认只列非终态，最多 20 项，可设为 1–50 项；显式 includeTerminal 才包含历史。read 最多查看 20 个直接 owned 子会话、每会话最近 40 个 entry；消息文本每条最多 2000 个 UTF-16 code unit，消息总文本预算 32000，流式片段每会话最多 2000。裁剪字段同时报告单条裁剪和总预算省略，耗尽预算后不返回伪造的空文本消息；不改变原生转录与模型上下文。结构化回执通过公开 `ToolRegistration.outputLimits` 设置 1 MiB 原生传输上限，返回前检查完整 JSON 的 UTF-8 大小；这不是修改消息预算或关闭原生输出保护。
 
 ## 可执行证据
 
-`test/subagent-tools.test.mjs` 通过真实默认 Host／worker 与本地 provider 让模型实际调用扩展工具，验证注册、后台创建、原生回答读取、steer 与子会话自身原生工具 scope、owned/fork 权限隔离、实时／历史列举、原生等待与中止、配置选择及请求幂等。`test/subagent-tool-fixture.mjs` 只在模型 provider 边界编排工具回合，不调用内部 handler。
+`test/subagent-tools.test.mjs` 通过真实默认 Host／worker 与本地 provider 让模型实际调用扩展工具，验证注册、后台创建、原生回答读取、steer／followUp 的原生轮次边界与不可变回答、子会话自身原生工具 scope、owned/fork 权限隔离、实时／历史列举、原生等待与中止、父回合取消等待不误中止后台委托、配置选择及请求幂等；另覆盖单条／总预算裁剪、中文长 JSON 不被通用裁剪破坏，以及大列表超限后缩小范围可读。`test/subagent-tool-fixture.mjs` 只在模型 provider 边界编排工具回合，不调用内部 handler。
