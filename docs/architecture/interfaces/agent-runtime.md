@@ -31,6 +31,7 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 - **`id` 非空、`start` 是函数**：否则 `defineAgentRuntime` 直接抛 `TypeError`；返回对象被 `Object.freeze`。
 - **durable runtime 固定三个键**：worker 只监听回环地址、端口由系统分配（`port: 0`）、单 Desktop Agent 会话族模式。
 - **协议消息固定**：父→子 `{ type: "start", options }` 与 `{ type: "stop" }`；子→父 `{ type: "ready", url, nativeSession }` 与 `{ type: "failed", error }`。
+- **项目目录只在 worker 内访问**：fork 不传 `cwd`；worker 收到 start 后，先按 `options.cwd` 切换目录，再调用 `runtime.start(options)`。未指定目录则继承原目录。失联网络挂载的 `chdir` 不得阻塞 Host 的页面服务、其他 worker 或启动超时。
 - **子进程 stderr 被 drain 且不外泄**：`child.stderr.on("data", () => {})`，插件输出与凭据不进入 API 响应。
 - **`stop()` 幂等且升级式**：先发 IPC `stop`，8 s 后 `SIGTERM`，10 s 后 `SIGKILL`；重复调用复用同一个 promise。
 - **`serviceMain` 忽略重复 start**：`starting`／`closing` 期间收到 `start` 不重复启动；`disconnect`／`SIGTERM`／`SIGINT` 都走同一条 `stop()`。
@@ -45,15 +46,15 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 
 ## 错误模式
 
-| 条件                                    | 结果                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------- | ----------- |
-| `defineAgentRuntime` 收到空 `id`        | `TypeError("Agent runtime 必须提供非空 id")`                                          |
-| `defineAgentRuntime` 收到非函数 `start` | `TypeError("Agent runtime 必须提供 start")`                                           |
-| `options.cwd` 无效导致 fork 失败        | `child.once("error")` → `ready` reject，并 `stop()`                                   |
-| start 后进程提前退出                    | `ready` reject `Error("Agent 进程退出 (<code                                          | signal>)")` |
-| 45 s（可覆盖）内没有 `ready`            | `ready` reject `Error("Agent 启动超时")`                                              |
-| 子进程 start 抛错                       | 发 `{ type: "failed", error }` 后 `process.exit(1)`；父进程 reject 同一 error message |
-| `app.stop()` 抛错                       | `serviceMain` 捕获后 `process.exit(1)`                                                |
+| 条件                                       | 结果                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------- | ----------- |
+| `defineAgentRuntime` 收到空 `id`           | `TypeError("Agent runtime 必须提供非空 id")`                                          |
+| `defineAgentRuntime` 收到非函数 `start`    | `TypeError("Agent runtime 必须提供 start")`                                           |
+| `options.cwd` 无效导致 worker 切换目录失败 | 发 `{ type: "failed", error }` 后退出；`ready` reject，并 `stop()`                    |
+| start 后进程提前退出                       | `ready` reject `Error("Agent 进程退出 (<code                                          | signal>)")` |
+| 45 s（可覆盖）内没有 `ready`               | `ready` reject `Error("Agent 启动超时")`                                              |
+| 子进程 start 抛错                          | 发 `{ type: "failed", error }` 后 `process.exit(1)`；父进程 reject 同一 error message |
+| `app.stop()` 抛错                          | `serviceMain` 捕获后 `process.exit(1)`                                                |
 
 ## 性能特征
 
@@ -66,6 +67,7 @@ export function serviceMain(start); // start(options) -> { url, nativeSession, s
 ## 可执行证据
 
 - `test/agent-runtime.test.mjs`：`defineAgentRuntime` 输入校验与 durable adapter 的固定键。
+- `test/service-process.test.mjs`：fork 不访问项目目录、worker 保持工作目录语义与错误上报、目录切换阻塞时 HTTP／其他 worker 仍可用且启动按时超时。
 - `test/desktop-process-recovery.test.mjs`、`test/durable-recovery-check.mjs`：进程重启与恢复路径（`npm run test:durable:recovery`）。
 - `test/desktop-control-plane.test.mjs`：Supervisor 的 spawn／就绪／停止（`npm run test:workspace`）。
 - 全量：`npm test`。

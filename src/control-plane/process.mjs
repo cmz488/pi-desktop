@@ -7,7 +7,8 @@ import { fork } from "node:child_process";
  *   `{ child, ready, stop }`；`serviceMain(start)` 在子进程侧接收 start，成功后回
  *   `ready`、失败回 `failed`。字段与错误表见 docs/architecture/interfaces/agent-runtime.md。
  * 不变量：协议消息只有 start／stop／ready／failed；`stop()` 幂等且升级式
- *   （IPC → 8 s SIGTERM → 10 s SIGKILL）；子进程 stderr 被丢弃，不进入 API 响应。
+ *   （IPC → 8 s SIGTERM → 10 s SIGKILL）；项目目录只在 worker 内切换，避免网络挂载
+ *   的 chdir 阻塞 Host 的 fork；子进程 stderr 被丢弃，不进入 API 响应。
  * 错误：启动超时（默认 45 s）或进程提前退出都让 `ready` 拒绝并触发 stop；子进程
  *   启动抛错时先发 `failed`，再以退出码 1 结束。
  */
@@ -16,7 +17,6 @@ import { fork } from "node:child_process";
 export function launchService(entry, options, { timeout = 45000 } = {}) {
   const child = fork(entry, [], {
     execArgv: [],
-    cwd: options.cwd,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
@@ -85,6 +85,10 @@ export function serviceMain(start) {
     if (message?.type !== "start" || starting || closing) return;
     starting = true;
     try {
+      // fork 的 cwd 会在 exec 前切换；失联 SSHFS 上的 chdir 甚至会同步卡住父进程。
+      // 先建立独立 worker 和 IPC，再访问项目目录，让 Host 仍能服务页面和启动超时。
+      if (message.options?.cwd !== undefined)
+        process.chdir(message.options.cwd);
       app = await start(message.options);
       if (closing) {
         await app.stop();
