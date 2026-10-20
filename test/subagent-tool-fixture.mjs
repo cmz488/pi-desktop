@@ -42,10 +42,7 @@ export async function subagentToolFixture(t, options = {}) {
   const parent = (await f.call(`${prefix}/api/state`)).sessionId;
   async function invoke(args, { sessionId = parent, error = false } = {}) {
     const token = `MANAGE_SUBAGENT_${calls.size}`;
-    const before = await f.call(`${prefix}/api/state?sessionId=${sessionId}`);
-    const oldCount = before.messages.filter(
-      (row) => row.toolName === "desk_subagent",
-    ).length;
+    const callId = `call-${calls.size}`;
     calls.set(token, { args, number: calls.size });
     await f.call(`${prefix}/api/prompt?sessionId=${sessionId}`, {
       sessionId,
@@ -55,11 +52,14 @@ export async function subagentToolFixture(t, options = {}) {
       () => f.call(`${prefix}/api/state?sessionId=${sessionId}`),
       (value) =>
         value.idle &&
-        value.messages.filter((row) => row.toolName === "desk_subagent")
-          .length > oldCount,
+        value.messages.some(
+          (row) =>
+            row.toolName === "desk_subagent" && row.toolCallId === callId,
+        ),
     );
-    const result = state.messages.findLast(
-      (row) => row.toolName === "desk_subagent",
+    // 原生压缩会缩短保留清单；调用身份不能依赖消息数量或最后一个同名工具。
+    const result = state.messages.find(
+      (row) => row.toolName === "desk_subagent" && row.toolCallId === callId,
     );
     if (error) return result.text;
     let value;
