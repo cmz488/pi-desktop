@@ -6,8 +6,18 @@ test(
   "子代理历史只列原生终态并分页，历史 fork 不继承 owned 记录，远程入口仍拒绝",
   { timeout: 60000 },
   async (t) => {
-    const f = await desktopFixture({ noExtensions: true });
-    t.after(() => f.close());
+    const gate = Promise.withResolvers();
+    const f = await desktopFixture({
+      noExtensions: true,
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "HISTORY_STILL_RUNNING")
+          await gate.promise;
+      },
+    });
+    t.after(async () => {
+      gate.resolve();
+      await f.close();
+    });
     const project = (await f.call("/api/workspace")).projects.find(
       (row) => row.cwd === f.cwd,
     );
@@ -43,8 +53,26 @@ test(
       );
       ids.push(task.taskId);
     }
+    const live = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+      command: "subagent.spawn",
+      id: Number(parent),
+      sessionId: parent,
+      prompt: "HISTORY_STILL_RUNNING",
+      requestId: "history-live",
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some(
+          (row) => row.messages.at(-1)?.content === "HISTORY_STILL_RUNNING",
+        ),
+    );
     const first = await f.call(
       `${prefix}/api/subagent-history?sessionId=${parent}`,
+    );
+    assert.ok(
+      first.records.every((row) => row.id !== live.taskId),
+      "在途委托不能进入终态历史接口",
     );
     assert.equal(first.records.length, 20);
     assert.deepEqual(
@@ -112,6 +140,6 @@ test(
       (error) => error.status === 409,
       "旧代际管理命令不能转发给当前存储",
     );
-    assert.equal(f.requests.length, 22, "历史读取、分页与 fork 不重放模型");
+    assert.equal(f.requests.length, 23, "历史读取、分页与 fork 不重放模型");
   },
 );

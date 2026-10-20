@@ -113,7 +113,7 @@ try {
     "收起表单不丢草稿",
   );
   await evaluate(
-    `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);let release;const gate=new Promise(resolve=>release=resolve);w.spawnProbe={inputs:[],urls:[],release};w.fetch=async(...args)=>{if(String(args[0]).includes('/api/command')&&args[1]?.body){const input=JSON.parse(args[1].body);if(input.command==='subagent.spawn'){w.spawnProbe.inputs.push(input);w.spawnProbe.urls.push(String(args[0]));const response=await original(...args);if(w.spawnProbe.inputs.length===1)throw new TypeError('模拟回执丢失');await gate;return response;}}return original(...args);};})()`,
+    `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);let release;const gate=new Promise(resolve=>release=resolve);w.spawnProbe={inputs:[],urls:[],postReceiptRead:false,release};w.fetch=async(...args)=>{if(String(args[0]).includes('/api/command')&&args[1]?.body){const input=JSON.parse(args[1].body);if(input.command==='subagent.spawn'){w.spawnProbe.inputs.push(input);w.spawnProbe.urls.push(String(args[0]));const response=await original(...args);if(w.spawnProbe.inputs.length===1)throw new TypeError('模拟回执丢失');await gate;w.spawnProbe.released=true;return response;}}const observe=String(args[0]).includes('/api/tasks')&&w.spawnProbe.released&&!w.document.querySelector('[data-task-compose]');const response=await original(...args);if(observe){if(response.status===304)w.spawnProbe.postReceiptRead=true;else{const json=response.json.bind(response);response.json=async()=>{const value=await json();w.spawnProbe.postReceiptRead=true;return value;};}}return response;};})()`,
   );
   await chat(
     "const form=d.querySelector('[data-task-compose]');form.elements.name.value='幂等重试委托';form.elements.prompt.value='SCOPED_CHILD_A';form.requestSubmit();",
@@ -143,6 +143,7 @@ try {
   await until(
     `(()=>{const d=${frame};return !d.querySelector('[data-task-compose]');})()`,
   );
+  await until(`(${frame}).defaultView.spawnProbe.postReceiptRead===true`);
   await until(
     `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('原生任务 #${a.taskId}');})()`,
   );
