@@ -83,6 +83,23 @@
 
 ## 最终完整验收的绑定
 
-本记录提交后，在同一最终 HEAD／tree 新跑约定的完整 12 项，以及额外原文 Chromium。`final/binding.json`、`final/results.json` 与 `final/after.json` 保存最终对象、命令／退出码／日志摘要和前后保护校验。每项均以实际退出结果为准；只有全部所需证据通过才完成目标。最终验收还必须确认全部 src 与 `final-performance-binding.json` 相同，并验证真实解包及文献引用；不把阶段通过预先写成最终成功。
+已在固定 `724c73aad0767a8331bcd92e95156fee5cd9f68c`／tree `d2f0405573a3a84bc8535d47b702ed3fcfa7481c` 上新跑完整 **12/12**，额外原文 Chromium 也通过。`final/binding.json`、`final/results.json` 与 `final/after.json` 保存对象、命令／退出码／日志摘要及前后保护校验；全部 src 与 `final-performance-binding.json` 相同。
+
+| 验收命令                          | 实际结果                                   |
+| --------------------------------- | ------------------------------------------ |
+| `npm test`                        | 404/404                                    |
+| `npm run check`                   | 类型与 99 个源文件通过                     |
+| `npm run format:check`            | 通过，含已授权的纯格式调整                 |
+| `npm run test:durable`            | 34/34                                      |
+| `npm run test:workspace`          | 25/25                                      |
+| `npm run test:durable:recovery`   | 通过，对照与两种真实中断恢复               |
+| `npm run test:browser`            | 通过                                       |
+| `npm run test:durable:browser`    | 通过                                       |
+| `npm run test:workspace:browser`  | 七组通过                                   |
+| `npm run test:remote:desktop`     | 通过                                       |
+| `npm run test:extensions:browser` | 两组通过                                   |
+| `npm run package:check`           | 实际解包 204 文件／883 KiB，引用与启动通过 |
+
+本次补写实际结果仅修改文献。归档提交后，仍对新的最终 HEAD／tree 再逐项跑同样的 12 项及原文 Chromium，输出保留在 `final-after-history/`，不覆盖上述已通过的证据。仅全部复验通过后完成目标；不以文档提交没有运行时差异为由省略最终版本验收。
 
 本地夹具不承诺真实 OAuth、Tailscale 公网、硬件绘制或长期生产内存行为；这些限制不允许通过降低认证、TLS、路径、readonly、generation、owner 或唯一 writer 门禁绕过。
