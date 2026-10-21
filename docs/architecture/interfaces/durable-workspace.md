@@ -14,6 +14,7 @@ export async function openAgentWorkspace(options); // -> workspace
 // options
 {
   models,            // 必需；@earendil-works/pi-ai 的 models 注册表
+  availableModels,   // 可选；async () => Model[]，仅供 read 的目录投影，默认 models.getAvailable()
   registry,          // 可选；默认 createRegistry()，内部会装入 CodingTools 或只读工具集
   readOnly,          // 可选；true 时只装 read 工具 + ReadOnlyWeb，不装完整 CodingTools
   storage,           // 可选；测试用内存 storage
@@ -125,6 +126,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 
 - 会话状态在 SQLite；`read()` 会遍历所有会话并逐个取摘要，属"全量路径"，应被 revision／增量机制挡在热路径之外（见 `GET /api/revision`）。
 - `live(id)` 刻意跳过 transcript 投影，是流式更新的低成本入口。
+- 可选 `availableModels` 让目录枚举复用本次认证文件视图；真正模型调用仍使用原 models，无跨请求认证缓存，见[模型目录契约](model-catalog.md)。
 - 原生转换与 session 管理子模块按需加载（`loadPiMessages`／`loadPiSessionManager`），不进入启动关键路径。
 - `fork` 需要复制 entry 区间并修复上下文，成本与分叉深度成正比。
 

@@ -158,6 +158,8 @@ function contextUsage(view, contextWindow) {
 // 都由 Durable 拥有。
 export async function openAgentWorkspace(options) {
   const { models } = options;
+  const availableModels =
+    options.availableModels ?? (() => models.getAvailable());
   if (
     !models ||
     typeof Harness.open !== "function" ||
@@ -730,7 +732,7 @@ export async function openAgentWorkspace(options) {
         idle: !foreground(record.id),
       });
     }
-    const available = (await models.getAvailable()).map((model) => ({
+    const available = (await availableModels()).map((model) => ({
       provider: model.provider,
       modelId: model.id,
       name: model.name,

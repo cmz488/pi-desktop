@@ -175,6 +175,7 @@ export async function startDurableDesk(options = {}) {
       (await openAgentWorkspace({
         storagePath: join(directory, "agents.sqlite"),
         models: providers.models,
+        availableModels: providers.availableModels,
         extensions,
         settings,
         ...options.workspaceOptions,

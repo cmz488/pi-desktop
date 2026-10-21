@@ -180,7 +180,7 @@ function chooseDurableAgent(id) {
     durableAgentId === String(id) &&
     sessionDrafts.read().owner === String(id)
   )
-    return;
+    return false;
   if (state?.host === "durable") {
     $("#prompt").value = sessionDrafts.select(
       String(id),
@@ -196,6 +196,7 @@ function chooseDurableAgent(id) {
   closeActionMenu();
   extensionWorkbench?.update([], readPanelContext());
   syncComposerButton();
+  return true;
 }
 const titles = {
   workspace: "会话",
@@ -531,7 +532,9 @@ window.addEventListener("message", (event) => {
       id < 0
     )
       return;
-    chooseDurableAgent(String(id));
+    const changed = chooseDurableAgent(String(id));
+    // 父窗口会重放最新意图；已加载同一目标不需要再触发服务端投影与 state_changed。
+    if (!changed && state.sessionId === String(id)) return;
     void api("/api/switch-session", { id: String(id), sessionId: String(id) })
       .then(() => refresh())
       .catch((error) => toast(error.message));

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { createProvider, lazyApi } from "@earendil-works/pi-ai";
 import {
@@ -30,6 +31,7 @@ function resolveKey(value) {
 export async function openDurableModels({ agentDir, directory }) {
   const authPath = join(directory, "auth.json"),
     modelPath = join(directory, "models.json");
+  const credentialViews = new AsyncLocalStorage();
   let mutation = Promise.resolve();
   function serial(run) {
     const result = mutation.then(run);
@@ -37,33 +39,50 @@ export async function openDurableModels({ agentDir, directory }) {
     return result;
   }
   async function credential(id) {
-    const own = (await readDocument(authPath)).data;
-    const value = Object.hasOwn(own, id)
-      ? own[id]
-      : (await readDocument(join(agentDir, "auth.json"))).data[id];
+    const view = credentialViews.getStore();
+    let value;
+    if (view) value = view[id];
+    else {
+      const own = (await readDocument(authPath)).data;
+      value = Object.hasOwn(own, id)
+        ? own[id]
+        : (await readDocument(join(agentDir, "auth.json"))).data[id];
+    }
     if (value?.type === "api_key")
       return { ...value, key: resolveKey(value.key) };
     return value?.type === "oauth" ? value : undefined;
   }
+  async function credentialView() {
+    const [inherited, own] = await Promise.all([
+      readDocument(join(agentDir, "auth.json")),
+      readDocument(authPath),
+    ]);
+    return { ...inherited.data, ...own.data };
+  }
+  async function withCredentialView(read) {
+    // 同一次目录读取不必为每个提供商重读文件；作用域外的模型认证和写操作仍取新值。
+    return credentialViews.run(await credentialView(), read);
+  }
   const credentials = {
     read: credential,
     list: async () => {
-      const inherited = (await readDocument(join(agentDir, "auth.json"))).data;
-      const own = (await readDocument(authPath)).data;
-      return Object.entries({ ...inherited, ...own })
+      const view = credentialViews.getStore() ?? (await credentialView());
+      return Object.entries(view)
         .filter(([, value]) => value?.type)
         .map(([providerId, value]) => ({ providerId, type: value.type }));
     },
     modify: (id, change) =>
-      serial(async () => {
-        const next = await change(await credential(id));
-        const document = await readDocument(authPath);
-        await mutateDocument(authPath, document.revision, (data) => {
-          data[id] = next ?? null;
-          return data;
-        });
-        return next;
-      }),
+      serial(() =>
+        credentialViews.run(undefined, async () => {
+          const next = await change(await credential(id));
+          const document = await readDocument(authPath);
+          await mutateDocument(authPath, document.revision, (data) => {
+            data[id] = next ?? null;
+            return data;
+          });
+          return next;
+        }),
+      ),
     delete: (id) =>
       serial(async () => {
         const document = await readDocument(authPath);
@@ -208,7 +227,9 @@ export async function openDurableModels({ agentDir, directory }) {
     };
   }
   await reload();
-  async function desktopInventory() {
+  const availableModels = () => withCredentialView(() => models.getAvailable());
+  const desktopInventory = () => withCredentialView(readDesktopInventory);
+  async function readDesktopInventory() {
     const document = await readDocument(modelPath);
     const inherited =
       (await readDocument(join(agentDir, "models.json"))).data.providers ?? {};
@@ -264,6 +285,7 @@ export async function openDurableModels({ agentDir, directory }) {
   }
   return {
     models,
+    availableModels,
     resourceOptions: () => ({
       credentials,
       modelsStore,

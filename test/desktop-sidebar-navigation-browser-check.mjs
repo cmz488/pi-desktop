@@ -178,8 +178,22 @@ try {
   await ready(
     `(()=>{const d=${frame};return d.querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(source)};})()`,
   );
+  const repeatedSwitches = await evaluate(
+    `(${frame}).defaultView.navigationProbe.switches.length`,
+  );
+  const repeatedIntents = await evaluate(
+    `(${frame}).defaultView.navigationProbe.selections.length`,
+  );
   await evaluate(
     `document.querySelector(${JSON.stringify(rootButton)}).click()`,
+  );
+  await ready(
+    `(${frame}).defaultView.navigationProbe.selections.length>${repeatedIntents}`,
+  );
+  assert.equal(
+    await evaluate(`(${frame}).defaultView.navigationProbe.switches.length`),
+    repeatedSwitches,
+    "已加载的同代际、同会话选择不重复 POST 切换并触发完整投影",
   );
   await evaluate(
     `(()=>{const d=${frame};d.querySelector('#sessions [data-session-id="${branches[0]}"]').click();})()`,
