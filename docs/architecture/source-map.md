@@ -37,6 +37,12 @@
 
 `src/control-plane/host-tasks.mjs` 保留公开聚合与定向转发；`src/agent/managed-subagents.mjs` 用原生 task／owned conversation／submission 组合委托，并注册模型可调用的 `desk_subagent`。`src/ui/shared/task-panel-management.js` 在既有任务页内承接当前会话的发起／详情，`task-detail-view.js` 共用纯文本展示，`subagent-history.js` 在既有分支页单列终态记录；不新增任务页面或弹窗。状态、模型循环、调度与恢复继续属于 Durable，子会话资源仍经既有能力 seam 绑定。接口和可执行证据见 [任务与子代理](interfaces/host-tasks.md) 和 [模型工具](interfaces/subagent-tools.md)。
 
+## 独立会话与输入展示 seam
+
+`src/control-plane/supervisor.mjs` 的普通创建工厂也承接独立继承，`src/session/pi-session-storage.mjs` 通过公开 SDK 捕获与发布原生快照。来源仅追溯，执行、存储与 writer 沿正常新建绑定；既有族内分支不迁移。见[独立会话契约](interfaces/independent-sessions.md)。
+
+`src/agent/input-presentation.mjs` 只关联可信输入来源，`src/shared/input-presentation.mjs` 约束原生 custom 标注的窄格式；模型贡献与 UI 原文分离，未知历史完整回退。它们不是浏览器直接加载的 module，不额外开放源文件目录。见[输入展示契约](interfaces/input-presentation.md)。
+
 ## 迁移范围
 
-此次只整理归属与路径，没有顺手拆分聊天大文件、改写 Pi 执行链或删除兼容模式。旧文献原文保存在历史／参考目录。后续提取行为时，应让调用者和测试通过同一 interface 验证，避免增加 shallow 转发 module。
+路径整理自身不改写 Pi 执行链或删除兼容模式；后续会话与展示行为分别由上述契约约束。旧文献原文保存在历史／参考目录。提取行为时，应让调用者和测试通过同一 interface 验证，避免增加 shallow 转发 module。

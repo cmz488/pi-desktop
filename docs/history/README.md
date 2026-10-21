@@ -12,6 +12,7 @@
 - [git-operations-review.md](git-operations-review.md)
 - [git-sidebar-review.md](git-sidebar-review.md)
 - [interaction-context-review.md](interaction-context-review.md)
+- [independent-session-redesign.md](independent-session-redesign.md)
 - [native-custom-context-review.md](native-custom-context-review.md)
 - [package-sidebar-review.md](package-sidebar-review.md)
 - [performance-check.md](performance-check.md)

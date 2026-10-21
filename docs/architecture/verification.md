@@ -17,6 +17,10 @@ npm run package:check
 
 Electron 的 `test:workspace:desktop`、`test:context:browser` 为额外的平台专项；环境要求见下文。
 
+独立会话、原生恢复来源与输入原文的 Node 专项已由 `npm test` 自动纳入：`desktop-independent-fork`、`desktop-independent-scope`、`desktop-native-boundaries` 与 `input-presentation`。它们验证真实 Host／worker、SDK 压缩／context edit／custom、同号任务隔离、丢失回执后的拒绝与恢复、非 fork 代理及模型文本不变。另行执行 `node test/input-presentation-browser-check.mjs`，验证真实输入框、流式、标签、历史、独立继承与自动内容默认折叠；不以包脚本未包含该文件为由略过。
+
+`node test/desktop-performance-check.mjs <证据目录>` 固定三轮同拓扑性能；`node test/independent-session-memory-check.mjs <证据目录>` 单列独立 worker 架构成本。夹具与指标限制、对齐前后各六轮及最终运行时复测见[本轮性能记录](../references/session-redesign-performance.md)。
+
 全 Host 任务与子代理由 `test/host-task-management.test.mjs` 的真实 Host／worker HTTP 验证，覆盖持久幂等、原生 owned 关系、单 writer、等待断连、目标／权限、重启与子会话自身工具 scope，以及暂停单 worker 的局部超时。`test:workspace:browser` 纳入 `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task、当前会话面板的 UI 发起／等待／中止、草稿与切换隔离、结果和窄屏边界。`test/subagent-workbench-browser-check.mjs` 验证直接整合既有任务页、移除独立入口／弹窗、实时／历史分流与页签观察回收；`test/subagent-tools.test.mjs` 由 faux provider 编排真实模型工具调用，`test/subagent-history.test.mjs` 验证真实终态分页及范围。它不是 CLI 子代理探测；任务调度和模型循环仍由 Durable 原生能力承担。当前接口见 [Host 任务契约](interfaces/host-tasks.md)。
 
 架构深化专项由 `test/host-interface.test.mjs`、`test/agent-snapshot.test.mjs`、`test/target-guard.test.mjs`、`test/agent-runtime.test.mjs`、`test/goal-panel.test.mjs`、`test/extension-workbench.test.mjs`、`test/git-review.test.mjs` 和 `test/bridge.test.mjs` 覆盖：Host 能力声明与动态 TUI slot、snapshot 统一 shape/typed activity、请求目标竞态、声明式面板动作、Durable runtime adapter，以及 Git limits／permitted actions。其中 `test/bridge.test.mjs` 明确验证“回调存在但未声明能力不会启用功能”，包括 `requestContext`、`sessionCommand`、会话新建／切换、`effectiveSettings` 和包管理清单（`updatesSupported`／`writable`）；`test/durable-server.test.mjs` 断言 Durable 的 `/api/sessions` 仍返回 `supported:true` 与 Agent 行，并验证 `/api/new-session`／`/api/switch-session` 仍返回 200，避免 capability 声明和既有会话管理行为分叉。`test/conversation-timeline-browser-check.mjs` 验证新增 activity 不改变旧的思考／生成文案。浏览器回归继续验证真实页面上的目标面板和 Git 审阅 affordance。
@@ -70,9 +74,11 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 ## 会话树退回与分叉
 
-`test/durable-session-tree.test.mjs` 在 `npm test` 内验证两类操作（真实 HTTP 命令 + 真实原生日志）：
+默认 Desktop 的分支创建由 Host 协调，返回新 Agent／generation／sessionId，并拥有独立 worker 与存储；左侧、聊天菜单与工作台入口由 `test/desktop-branch-family-browser-check.mjs` 验证，包括同一 iframe 切到设置后的迟到回执不能抢页。精确位置、正常生命周期、源不变及存量路径见[独立会话契约](interfaces/independent-sessions.md)。
 
-- **分叉（branch/fork）**：`fork` 从指定 entry 创建新会话，返回 `sessionId`；新会话拥有该点之前的上下文、以 0 用量开始，源会话的用量与消息不受影响。
+以下 `test/durable-session-tree.test.mjs` 验证低层／单进程兼容接口和既有族内分支，不代替默认 Host 独立创建验收（真实 HTTP 命令 + 真实原生日志）：
+
+- **兼容分叉（branch/fork）**：`fork` 从指定 entry 创建同 worker 的历史会话，返回 `sessionId`；新会话拥有该点之前的上下文、以 0 用量开始，源会话的用量与消息不受影响。
 - **退回（rewind）**：上下文重建到退回点——退回点之前的消息仍在上下文里，其后的回合不再出现；原条目仍在存储里（`desk.rewind` 标记记录 `rewindTo`），且不会把被放弃的回答重放进新上下文。退回后继续对话只提交一份回答。
 - **Pi JSONL 一致性**：退回在同一个文件里完成（不新建会话文件），`pi-desktop-rewind` 自定义条目对模型不可见，活跃分支经过退回点、新回合是它的子条目，被放弃的回合仍在文件里但不在活跃分支上——TUI 因此看到与 Desktop 相同的会话树。
 
@@ -82,7 +88,7 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 分支树读模型由 `GET /api/tree`（capability `sessionTree`）提供：Durable 侧给出分叉来源与会话 id，原生侧给出 parent 链与 leaf；`test/durable-session-tree.test.mjs` 断言分支点、被放弃路径不在活跃路径上、`forkOf` 与 branches 一致、无原生转录时为 `null`，`test/bridge.test.mjs` 断言未声明能力的宿主返回 `supported: false`。
 
-已知限制：退回需要该会话自己的原生转录；默认多进程 Desktop 的根与历史分支各自绑定独立转录，并使用同一 worker 的唯一 Durable writer。注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionProjection`）从原生日志取得，Desktop 不自行实现上下文推导。
+已知限制：退回需要该会话自己的原生转录；新独立会话使用自己的 worker 与唯一 writer，既有族内历史会话各自绑定转录、仍共享原 worker 的唯一 Durable writer。注入 workspace 或 `--single-process` 宿主只为启动时接管的 Agent 绑定转录，其他会话的退回返回 409，分叉不受影响。退回点之前的前缀消息由 Host 用 Pi 自己的推导（`buildSessionProjection`）从原生日志取得，Desktop 不自行实现上下文推导。
 
 ## 契约与规范的验证
 
