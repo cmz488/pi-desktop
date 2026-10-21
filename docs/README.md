@@ -25,6 +25,7 @@
 ## 参考与证据
 
 - [源码研究与版本](references/README.md)
+- [新分支独立会话决策（已确认、待实现）](adr/0001-independent-session-forks.md)
 - [历史验收与设计快照](history/README.md)
 - [领域术语](../CONTEXT.md)
 - [贡献规则](../CONTRIBUTING.md)
