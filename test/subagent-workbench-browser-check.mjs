@@ -98,10 +98,36 @@ try {
     "实时任务行使用原生 owned 子会话名称，而不只显示种类",
   );
   await chat(
-    `d.querySelector('[data-task-id="${launched.taskId}"] [data-task-inspect]').click();`,
+    `d.querySelector('[data-task-id="${launched.taskId}"] [data-task-inspect]').focus();`,
   );
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    text: "\r",
+    unmodifiedText: "\r",
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+  });
   await ready(
     `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('WORKBENCH_CHILD_HELD');})()`,
+  );
+  assert.equal(
+    await chat(
+      `const button=d.querySelector('[data-task-inspect="${launched.taskId}"]');return button.getAttribute('aria-expanded')==='true'&&d.getElementById(button.getAttribute('aria-controls'))===d.querySelector('.task-panel-detail');`,
+    ),
+    true,
+    "选中任务明确公开其展开状态及所控制的详情区域",
+  );
+  assert.equal(
+    await chat("return d.activeElement.dataset.taskInspect;"),
+    String(launched.taskId),
+    "键盘 Enter 打开详情后焦点仍在任务操作上",
   );
   assert.equal(
     await chat(
@@ -134,6 +160,34 @@ try {
   await ready(
     `(()=>{const d=${frame};return !d.querySelector('.task-panel-detail')?.textContent.includes('部分子会话未显示');})()`,
   );
+  await evaluate(
+    `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);let release;const gate=new Promise(resolve=>release=resolve);const probe={original,release,started:false};w.uiStatusProbe=probe;w.fetch=async(...args)=>{const response=await original(...args);if(String(args[0]).includes('/api/tasks?')&&!probe.started){probe.started=true;await gate;return new w.Response(JSON.stringify({error:'工作台读取测试中断'}),{status:503,headers:{'content-type':'application/json'}});}return response;};})()`,
+  );
+  await chat("d.querySelector('[data-task-refresh]').click();");
+  await ready(`(${frame}).defaultView.uiStatusProbe.started`);
+  assert.equal(
+    await chat(
+      "return d.querySelector('.task-panel').getAttribute('aria-busy');",
+    ),
+    "true",
+    "公开 HTTP 读取未完成时保留明确加载状态",
+  );
+  await evaluate(`(${frame}).defaultView.uiStatusProbe.release()`);
+  await ready(
+    `(${frame}).querySelector('.task-panel-error')?.textContent.includes('工作台读取测试中断')`,
+  );
+  assert.equal(
+    await chat(
+      `return !!d.querySelector('[data-task-id="${launched.taskId}"]');`,
+    ),
+    true,
+    "读取失败保留先前任务内容，不伪装为空清单",
+  );
+  await evaluate(
+    `(()=>{const w=(${frame}).defaultView;w.fetch=w.uiStatusProbe.original;delete w.uiStatusProbe;})()`,
+  );
+  await chat("d.querySelector('[data-task-refresh]').click();");
+  await ready(`!(${frame}).querySelector('.task-panel-error')`);
   const tree = await call("Page.getFrameTree");
   const world = await call("Page.createIsolatedWorld", {
     frameId: tree.frameTree.frame.id,
@@ -197,6 +251,9 @@ try {
   );
   await ready(
     `(()=>{const d=${frame};return d.defaultView.observationProbe.waits.every(row=>row.aborted);})()`,
+  );
+  await ready(
+    `(${frame}).querySelector('.branch-tree-note')?.textContent.includes('对话轮次')||(${frame}).querySelector('.branch-tree-note')?.textContent.includes('原生树记录')`,
   );
   await ready(
     `(()=>{const d=${frame};return d.defaultView.observationProbe.held.some(row=>row.aborted);})()`,
@@ -359,6 +416,28 @@ try {
       Buffer.from(shot.data, "base64"),
     );
   }
+  const fields = await chat(
+    "return [...d.querySelectorAll('.task-panel-field input,.task-panel-field select,.task-panel-advanced > summary')].filter(node=>node.getClientRects().length).map(node=>node.getBoundingClientRect().height);",
+  );
+  assert.ok(
+    fields.length > 0 && fields.every((height) => height >= 44),
+    "触屏表单与高级配置披露同样保留 44px 触达目标",
+  );
+  gate.resolve();
+  await until(
+    () => f.call(`${prefix}/api/tasks?sessionId=${parent}`),
+    (value) => value.tasks.length === 0,
+  );
+  await ready(
+    `(${frame}).querySelector('.task-panel-empty')?.textContent.includes('暂无进行中的任务')`,
+  );
+  assert.equal(
+    await chat(
+      "return d.querySelector('.task-panel').getAttribute('aria-busy');",
+    ),
+    "false",
+    "原生工作真正结束后才展示稳定空态",
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
     "Subagent workbench passed: one embedded panel, owned live/history split, visibility cleanup, accessible composer, two themes and narrow touch layout.",

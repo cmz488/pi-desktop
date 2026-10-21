@@ -655,6 +655,13 @@ try {
     ),
     "触屏无需悬浮，主操作保留至少 44px 触达高度",
   );
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('[data-toggle-node]')].every(node=>{const r=node.querySelector('rect').getBoundingClientRect();const graph=node.ownerSVGElement.getBoundingClientRect();const label=node.parentNode.querySelector('foreignObject').getBoundingClientRect();return r.width>=44&&r.height>=44&&r.left>=graph.left&&r.right<=label.left;})",
+    ),
+    true,
+    "折叠轮次的触达区域至少 44px，不被 SVG 裁掉或压住标签",
+  );
   await call("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-reduced-motion", value: "reduce" }],
   });

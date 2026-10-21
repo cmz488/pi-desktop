@@ -22,6 +22,8 @@ const GRAPH_WIDTH = 460;
 const MIN_GRAPH_WIDTH = 280;
 const MAX_GRAPH_WIDTH = 760;
 const MAX_LANES = 4;
+const ROUND_CONTROL_TARGET = 44;
+const TRACK_STEP = 8;
 const clampGraphWidth = (width) =>
   Math.max(MIN_GRAPH_WIDTH, Math.min(MAX_GRAPH_WIDTH, width));
 
@@ -139,7 +141,8 @@ export function createBranchTreePanel({
       usedParents.add(round.parentId);
       positions.set(round.id, {
         lane,
-        x: 16 + lane * 10,
+        // 首轨不裁触达框，末轨不压标签；44px 热区和最多四条轨道共享左侧留白。
+        x: ROUND_CONTROL_TARGET / 2 + 2 + lane * TRACK_STEP,
         y: 34 + index * ROW_HEIGHT,
       });
     }
@@ -275,10 +278,10 @@ export function createBranchTreePanel({
         });
         disclosure.append(
           vector("rect", {
-            x: point.x - 12,
-            y: point.y - 12,
-            width: 24,
-            height: 24,
+            x: point.x - ROUND_CONTROL_TARGET / 2,
+            y: point.y - ROUND_CONTROL_TARGET / 2,
+            width: ROUND_CONTROL_TARGET,
+            height: ROUND_CONTROL_TARGET,
             rx: 4,
           }),
         );
@@ -363,6 +366,7 @@ export function createBranchTreePanel({
     const view = projectRoundTree(data, limit);
     const root = element("div", "branch-tree");
     root.dataset.branchTree = sessionId;
+    root.setAttribute("aria-busy", String(loading));
     const header = element("header", "branch-tree-header");
     const heading = element("div", "branch-tree-heading");
     heading.append(
@@ -371,7 +375,7 @@ export function createBranchTreePanel({
         "small",
         "",
         data
-          ? `${view.total} 轮对话 · ${data.branches?.length ?? 0} 个分支`
+          ? `${view.total} 轮对话 · ${data.branches?.length ? `${data.branches.length} 个原有分支` : "当前会话"}`
           : loading
             ? "读取中…"
             : "",
@@ -435,7 +439,8 @@ export function createBranchTreePanel({
       note.append(follow);
       root.append(note);
     }
-    if (error) root.append(element("p", "branch-tree-note", error));
+    if (error)
+      root.append(element("p", "branch-tree-note branch-tree-error", error));
     if (view.rounds.length) {
       const { svg, selectedRound } = renderGraph(view.rounds, identity);
       const canvas = element("div", "branch-round-canvas");
@@ -472,7 +477,7 @@ export function createBranchTreePanel({
       );
     if (data?.branches?.length) {
       const branches = element("section", "branch-tree-branches");
-      branches.append(element("strong", "", "独立分支会话"));
+      branches.append(element("strong", "", "原有分支"));
       for (const branch of data.branches) {
         const row = element(
           "button",

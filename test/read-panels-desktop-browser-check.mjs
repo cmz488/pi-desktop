@@ -41,14 +41,9 @@ try {
       value.idle && value.messages.some((row) => row.text === "answer: seed"),
   );
   const point = seeded.messages.find((row) => row.text === "seed").entryId;
-  const branch = (
-    await f.call(`${prefix}/api/command?sessionId=${source}`, {
-      command: "fork",
-      id: Number(source),
-      sessionId: source,
-      entryId: point,
-    })
-  ).sessionId;
+  // A/B/A 的既有族内切换夹具；下方 UI 创建仍走默认 Host 独立会话路径。
+  const branch = (await f.legacyFork(actor.id, source, { entryId: point }))
+    .sessionId;
   await prompt(source, "hold A");
   await prompt(branch, "hold B");
   await until(

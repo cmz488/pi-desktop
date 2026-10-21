@@ -45,8 +45,21 @@ export function createTaskPanelManagement({
     read: (id, options) => fetchDetail(owner, Number(id), options),
     onChange: paint,
   });
+  // 列表补刷会替换行，但选择和详情区域保持不变；新行仍需公开同一控制关系。
+  function syncSelection() {
+    const panel = root?.closest(".task-panel");
+    for (const button of panel?.querySelectorAll("[data-task-inspect]") ?? []) {
+      const expanded = button.dataset.taskInspect === selected;
+      button.setAttribute("aria-expanded", String(expanded));
+      button.setAttribute("aria-controls", detail.id);
+      button
+        .closest(".task-panel-row")
+        ?.classList.toggle("is-selected", expanded);
+    }
+  }
   function paint() {
     if (!detail) return;
+    syncSelection();
     const data = inspector.data;
     detail.setAttribute("aria-busy", String(inspector.loading));
     if (inspector.error) detail.textContent = inspector.error;
@@ -272,6 +285,8 @@ export function createTaskPanelManagement({
         root = element("aside", "task-panel-management");
         root.append(element("h3", "", "实时详情"));
         detail = element("div", "task-panel-detail");
+        detail.setAttribute("role", "region");
+        detail.setAttribute("aria-label", "实时任务详情");
         detail.setAttribute("aria-live", "polite");
         root.append(detail);
       }
@@ -279,6 +294,7 @@ export function createTaskPanelManagement({
         form.hidden = !composeOpen;
         root.prepend(form);
       }
+      detail.id = `task-panel-detail-${owner}`;
       node.append(root);
       syncComposeToggle();
       paint();

@@ -4995,7 +4995,19 @@ body.dark {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
+}
+.branch-tree-header {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+.branch-tree-header > .outline-button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: var(--text-ui-sm);
 }
 .branch-tree-heading {
   display: grid;
@@ -5004,7 +5016,7 @@ body.dark {
   min-width: 140px;
 }
 .branch-tree-heading strong {
-  font-size: var(--text-ui-base);
+  font-size: var(--text-ui-lg);
   font-weight: 600;
 }
 .branch-tree-header small,
@@ -5014,7 +5026,11 @@ body.dark {
 }
 .branch-tree-note {
   margin: 0;
+  padding-block: var(--space-3);
   line-height: 1.6;
+}
+.branch-tree-error {
+  color: var(--danger);
 }
 .branch-round-limit {
   display: flex;
@@ -5024,8 +5040,8 @@ body.dark {
   font-size: var(--text-ui-xs);
 }
 .branch-round-limit input {
-  width: 58px;
-  min-height: 32px;
+  width: 64px;
+  min-height: 34px;
   padding: 4px 6px;
   border: 1px solid var(--control-border);
   border-radius: 8px;
@@ -5178,13 +5194,16 @@ body.dark {
 }
 .branch-round-detail {
   color: var(--muted);
-  font-size: var(--text-ui-xs);
-  padding: 0 8px;
+  font-size: var(--text-ui-sm);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--glass-raised);
   overflow-wrap: anywhere;
 }
 .branch-round-detail summary {
   cursor: pointer;
-  padding-block: 4px;
+  padding-block: var(--space-2);
 }
 .branch-round-detail p {
   margin: 8px 0;
@@ -5229,6 +5248,12 @@ body.dark {
     pointer-events: auto;
   }
   .branch-round-label .branch-round-action {
+    min-height: 44px;
+  }
+  .branch-tree-header > .outline-button,
+  .branch-round-limit input,
+  .branch-round-detail summary,
+  .branch-tree-branch {
     min-height: 44px;
   }
 }

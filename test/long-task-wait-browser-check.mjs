@@ -143,14 +143,9 @@ window.addEventListener('DOMContentLoaded',()=>{const node=document.querySelecto
   const userEntry = (await state()).messages.find(
     (row) => row.role === "user",
   ).entryId;
-  const branch = (
-    await f.call(`${prefix}/api/command?sessionId=${source}`, {
-      command: "fork",
-      id: Number(source),
-      sessionId: source,
-      entryId: userEntry,
-    })
-  ).sessionId;
+  // 存量族内切换仍须验证观察撤销；新独立 worker 创建由默认分支专项覆盖。
+  const branch = (await f.legacyFork(actor.id, source, { entryId: userEntry }))
+    .sessionId;
   await f.call(`${prefix}/api/prompt?sessionId=${source}`, {
     sessionId: source,
     message: "cancel observer",

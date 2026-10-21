@@ -26,8 +26,8 @@ loader.setActive(boolean);
 loader.dispose();
 
 taskStatusLabel(status); // 共用原生活跃态中文文案；未知值原样返回，不推断终态。
-createBranchTreePanel({ fetchTree, fetchHistory?, fetchTaskDetail?, command, toast, switchSession });
-createTaskPanel({ fetchTasks, fetchTaskDetail?, command, toast, currentSession? });
+createBranchTreePanel({ fetchTree, fetchHistory?, fetchDetail?, command, toast, switchSession, openCreatedSession? });
+createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 // 任务 command(input, { signal }?)：wait 必须遵守 signal；非 wait 不增加生命周期选项。
 // 兼容旧空回执；原生单任务回执可含 task／abortStatus，提示语只读取原生终态。
 // 返回 key/view/available、builtin.update/render/setVisible、refresh、setActive、dispose；
@@ -48,6 +48,9 @@ createTaskPanel({ fetchTasks, fetchTaskDetail?, command, toast, currentSession? 
 - 实时页只展示当前会话及 owned 后代的非终态任务；终态子会话不继续占实时清单，已提交内容转由分支页独立的只读「已结束的子代理记录」读取，不冒充历史 fork。发起目标固定当前会话，没有跨 Agent 选择器。
 - 发起表单按需展开，折叠状态公开 `aria-expanded`，收起时焦点返回可见发起按钮。草稿与不确定提交尝试按 owner 隔离；同内容重试沿用冻结的 requestId 和内容。回执晚到不得覆盖随后改选的任务。
 - 任务面板以紧凑执行行区分名称、原生状态、标识／拥有者与操作；中止仍需两次独立点击，“确认中止”只缩短文案，不授予第二次执行资格。工具／子会话已有内容时不重复空任务说明。
+- 任务页只有既有列表和详情区；选中行与“查看”按钮同步，按钮以 `aria-expanded`／`aria-controls` 指向具名详情 region。列表补刷仍恢复同一操作的焦点；不为选择另建任务真相。列表作为一栏容器，不用任意跨行数撑开详情。
+- 两页以 `aria-busy` 公开当前读取，失败保留先前内容并呈现错误，不把失败当作空态；成功重试清错。没有存量分支时摘要标明“当前会话”，存量族内记录称“原有分支”，不与新建独立会话混淆。
+- 样式只使用现有语义 token；正常动作、选中、失败与终态仍含文字。触屏的动作、表单／披露及 SVG 轮次折叠热区至少 44px；轨道留白须容纳热区，不能以裁掉的透明框冒充触达尺寸。
 - 工作台与 Host 共用原生回执提示：completed／failed／aborted／orphaned／faulted 分开显示，`marked` 只提示已请求中止、尚未确认终态。没有新回执字段的旧宿主保留泛化提示，不补造终态；任何提示仍受同一身份令牌校验。
 - 嵌入聊天的首次状态就绪后，应用父窗口为同一 Agent／generation 保留的最新导航意图；首次默认会话通知不覆盖该意图。只接受同源父窗口，旧 iframe 不能改变当前窗口导航。
 - 这是 UI 缓存与 affordance，不代替后端会话归属、权限、目标 409 或远程路径裁剪。
@@ -88,6 +91,6 @@ createTaskPanel({ fetchTasks, fetchTaskDetail?, command, toast, currentSession? 
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
 - `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
 - `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task 隔离、当前 owner 固定、表单草稿、不确定回执的冻结内容重试与真实去重、迟到发起不抢选中任务、等待／二次中止确认、切 Agent 不误中止、结果与 390px。
-- `test/subagent-workbench-browser-check.mjs`：无独立侧栏入口／弹窗、现有唯一任务面板内发起和详情、原生 owned 名称、终态实时／历史分流，以及切页撤详情和等待观察、创建折叠／焦点、实际透明表面的双主题 4.5:1 文本对比度、390px 详情／表单占满栏宽、44px 触达目标、只读历史选中后焦点保持，以及详情仅溢出标记变化的更新；`test/subagent-history.test.mjs` 验证分页与权限。
+- `test/subagent-workbench-browser-check.mjs`：无独立侧栏入口／弹窗、现有唯一任务面板内发起和详情、原生 owned 名称、终态实时／历史分流，以及切页撤详情和等待观察、创建折叠／焦点、实际透明表面的双主题 4.5:1 文本对比度、390px 详情／表单占满栏宽、44px 触达目标、只读历史选中后焦点保持，以及详情仅溢出标记变化的更新；新增 Enter 打开详情、选中控制关系、真实 HTTP 读取后注入延迟／503 的加载、错误与恢复，以及真实任务终态后的空态和表单触达验证。`test/subagent-history.test.mjs` 验证分页与权限。
 - `test/bridge.test.mjs`：完整／chat 快照都只按 Host 声明返回读能力。
 - `npm run test:extensions:browser`、`test:workspace:browser` 纳入上述浏览器证据；静态 module 统一经资产清单发布并由 `package:check` 验证。

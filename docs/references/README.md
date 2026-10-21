@@ -4,6 +4,7 @@
 
 - [independent-session-design.md](independent-session-design.md)：新分支独立会话设计与公开 API 初始能力基线；现行实现见独立会话契约。
 - [session-redesign-performance.md](session-redesign-performance.md)：固定双 worker 夹具的三轮初始性能与内存原始指标；尚无优化收益结论。
+- [workbench-ui-plan.md](workbench-ui-plan.md)：既有任务／会话工作台的视觉层级、语义 token、双主题与交互验证取舍。
 - [branch-session-archive-research.md](branch-session-archive-research.md)：分支 JSONL 路径、整族归档与独立分支接入边界。
 - [herta-workspace.md](herta-workspace.md)：固定源码、校验、设计取舍与扩展工作台边界。
 - [layout-settings-research.md](layout-settings-research.md)

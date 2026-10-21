@@ -255,6 +255,8 @@ export function createTaskPanel({
     const identity = loader.capture();
     const root = element("div", "task-panel");
     root.dataset.taskPanel = sessionId;
+    root.setAttribute("aria-busy", String(loading));
+    const content = element("div", "task-panel-content");
     const tasks = data?.tasks ?? [];
     const tools = data?.tools ?? [];
     const activeTaskIds = new Set(tasks.map((task) => task.id));
@@ -323,14 +325,17 @@ export function createTaskPanel({
         ),
       );
     header.append(actions);
-    root.append(header);
-    if (error) root.append(element("p", "task-panel-note", error));
+    root.append(header, content);
+    if (error)
+      content.append(element("p", "task-panel-note task-panel-error", error));
     if (data && !tasks.length && !tools.length && !children.length)
-      root.append(
+      content.append(
         element(
           "p",
           "task-panel-empty",
-          "暂无运行中的任务。发送提问后，可在这里查看执行进度。",
+          detailed
+            ? "当前会话暂无进行中的任务。已结束的子代理可在「对话分支」查看。"
+            : "暂无运行中的任务。发送提问后，可在这里查看执行进度。",
         ),
       );
 
@@ -476,7 +481,7 @@ export function createTaskPanel({
           tree.querySelector(`[data-task-id="${task.id}"]`) === null
         )
           tree.append(row(task, 0));
-      root.append(tree);
+      content.append(tree);
     }
 
     if (tools.length) {
@@ -498,7 +503,7 @@ export function createTaskPanel({
         node.append(copy);
         list.append(node);
       }
-      root.append(list);
+      content.append(list);
     }
 
     if (children.length) {
@@ -526,7 +531,7 @@ export function createTaskPanel({
         node.append(copy);
         list.append(node);
       }
-      root.append(list);
+      content.append(list);
     }
     management.render(root);
     container.replaceChildren(root);
