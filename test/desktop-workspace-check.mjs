@@ -288,6 +288,25 @@ try {
   await until(
     "document.querySelector('#runtime').contentDocument.querySelector('#page-label').textContent==='Pi 配置'",
   );
+  // 切换设置分类只过滤已渲染的分组，不能重建整页：重建会丢掉滚动与焦点。
+  await until(
+    "(() => {const doc=document.querySelector('#runtime').contentDocument;return doc.querySelectorAll('[data-settings-category]').length>1 && !!doc.querySelector('.settings-group');})()",
+  );
+  await evaluate(
+    "window.__settingsGroup=document.querySelector('#runtime').contentDocument.querySelector('.settings-group')",
+  );
+  await evaluate(
+    "(() => {const doc=document.querySelector('#runtime').contentDocument;const other=[...doc.querySelectorAll('[data-settings-category]')].find(tab=>tab.dataset.settingsCategory!==window.__settingsGroup.dataset.group);other.click();})()",
+  );
+  await until(
+    "window.__settingsGroup.isConnected && window.__settingsGroup.hidden",
+  );
+  await evaluate(
+    "document.querySelector('#runtime').contentDocument.querySelector('[data-settings-category]').click()",
+  );
+  await until(
+    "window.__settingsGroup.isConnected && !window.__settingsGroup.hidden",
+  );
   await evaluate(
     "document.querySelector('#runtime').contentDocument.querySelector('[data-view=appearance]').click()",
   );
@@ -887,6 +906,16 @@ try {
   await until(
     "document.querySelector('#runtime')?.contentDocument?.querySelector('#native-history-toolbar')?.hidden===false && document.querySelector('#runtime')?.contentDocument?.querySelector('#composer')?.hidden===true",
   );
+  // 已停止会话（历史视图）同样要能收起并重新展开左侧栏。
+  await evaluate("document.querySelector('#sidebar-collapse').click()");
+  await until("document.body.classList.contains('sidebar-collapsed')");
+  await until(
+    "getComputedStyle(document.querySelector('#runtime').contentDocument.querySelector('.topbar [data-action=\"sidebar\"]')).display!=='none'",
+  );
+  await evaluate(
+    "document.querySelector('#runtime').contentDocument.querySelector('.topbar [data-action=\"sidebar\"]').click()",
+  );
+  await until("!document.body.classList.contains('sidebar-collapsed')");
   await evaluate("document.querySelector('#settings').click()");
   await until(
     "document.querySelector('#workspace-nav').inert && document.body.classList.contains('sidebar-collapsed')",

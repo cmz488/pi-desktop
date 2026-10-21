@@ -440,6 +440,55 @@ try {
     await evaluate("document.querySelectorAll('.context-activity').length"),
     1,
   );
+  // An expanded activity list keeps its reading position across live redraws;
+  // rebuilding the turn must not jump back to the top of that list.
+  await evaluate(`conversationFixture.render([
+    {role:'user',id:'scroll-user',text:'scroll question'},
+    {role:'assistant',id:'scroll-a',blocks:${JSON.stringify(
+      Array.from({ length: 12 }, (_, index) => ({
+        type: "thinking",
+        text: `scroll line ${index} ` + "detail ".repeat(30),
+      })),
+    )}}
+  ],{idle:false,phase:'thinking',streamingMessage:{id:'scroll-partial',role:'assistant',blocks:${JSON.stringify(
+    Array.from({ length: 12 }, (_, index) => ({
+      type: "thinking",
+      text: `scroll line ${index} ` + "detail ".repeat(30),
+    })),
+  )}}})`);
+  await evaluate(
+    "(() => {const fold=document.querySelectorAll('.context-activity')[0];fold.open=true;})()",
+  );
+  assert(
+    await evaluate(
+      "document.querySelector('.activity-details').scrollHeight > 320",
+    ),
+    "The fixture must make the activity list scrollable",
+  );
+  await evaluate(
+    "(() => {const list=document.querySelector('.activity-details');list.scrollTop=120;})" +
+      "()",
+  );
+  await evaluate(
+    `conversationFixture.stream({id:'scroll-partial',role:'assistant',blocks:${JSON.stringify(
+      Array.from({ length: 13 }, (_, index) => ({
+        type: "thinking",
+        text: `scroll line ${index} ` + "detail ".repeat(30),
+      })),
+    )}})`,
+  );
+  await until(
+    "document.querySelector('.activity-details')?.textContent.includes('scroll line 12')",
+  );
+  assert(
+    await evaluate("document.querySelector('.context-activity').open"),
+    "A live redraw must keep the expanded activity open",
+  );
+  assert(
+    (await evaluate("document.querySelector('.activity-details').scrollTop")) >=
+      119,
+    "A live redraw must preserve the expanded activity scroll offset",
+  );
   await evaluate(
     "conversationFixture.render([{role:'user',id:'u',text:'question'},{role:'assistant',id:'a',blocks:[{type:'thinking',text:'previous thought'}]}],{idle:false,phase:'thinking'})",
   );

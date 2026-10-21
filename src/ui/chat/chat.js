@@ -219,16 +219,19 @@ function desktopMessage(type, data = {}) {
   );
 }
 function renderComposerContext() {
+  // 折叠状态属于外壳，不以内容模式为条件：历史／已停止会话也必须保留
+  // 自己的“展开侧边栏”入口，否则外壳与 iframe 两侧的按钮会同时消失。
+  if (runtimePrefix && desktopConfiguration?.agent)
+    document.body.classList.toggle(
+      "host-sidebar-collapsed",
+      !!desktopConfiguration.sidebarCollapsed,
+    );
   if (state?.capabilities?.nativeHistory) {
     $("#desktop-composer-context").hidden = true;
     $("#composer-permission").hidden = true;
     return;
   }
   if (!runtimePrefix || !desktopConfiguration?.agent) return;
-  document.body.classList.toggle(
-    "host-sidebar-collapsed",
-    !!desktopConfiguration.sidebarCollapsed,
-  );
   $("#desktop-composer-context").hidden = false;
   $("#composer-permission").hidden = false;
   $("#analysis-control").hidden = false;
@@ -535,9 +538,17 @@ window.addEventListener("message", (event) => {
     const changed = chooseDurableAgent(String(id));
     // 父窗口会重放最新意图；已加载同一目标不需要再触发服务端投影与 state_changed。
     if (!changed && state.sessionId === String(id)) return;
+    conversationSwitching = true;
+    pendingConversation = String(id);
+    renderConversationLoading("正在切换会话…");
     void api("/api/switch-session", { id: String(id), sessionId: String(id) })
       .then(() => refresh())
-      .catch((error) => toast(error.message));
+      .catch((error) => {
+        pendingConversation = "";
+        conversationSwitching = false;
+        renderMessages(state?.messages ?? []);
+        toast(error.message);
+      });
     return;
   }
   if (
@@ -942,6 +953,8 @@ async function api(path, input, { signal, selectSession = true } = {}) {
       !signal?.aborted
     ) {
       durableAgentId = "";
+      pendingConversation = "";
+      conversationSwitching = false;
       sessionStorage.removeItem(selectionKey);
     }
     throw error;
@@ -958,6 +971,7 @@ async function showView(next) {
   if (!titles[next]) return;
   if (state?.capabilities?.remote === true && !["workspace"].includes(next))
     next = "workspace";
+  const previous = view;
   const changed = view !== next;
   view = next;
   if (runtimePrefix)
@@ -969,6 +983,11 @@ async function showView(next) {
   closeCommands();
   closeModelControls();
   const workbench = next === "workspace" || next === "extensions";
+  // 设置子页之间的切换是同一块面板的换页，不需要整体入场动画；
+  // 只有跨过工作台／设置边界时才播放，避免每次打开设置都闪一下。
+  const crossing =
+    changed &&
+    workbench !== (previous === "workspace" || previous === "extensions");
   document.body.classList.toggle("settings-open", !workbench);
   document.body.classList.toggle("extensions-open", next === "extensions");
   $(".settings-back").hidden = workbench;
@@ -999,7 +1018,7 @@ async function showView(next) {
     "",
     `${location.pathname}${location.search}#${next}`,
   );
-  if (changed)
+  if (crossing)
     animateViewEnter(
       next === "workspace"
         ? $("#view-workspace")
@@ -1280,7 +1299,7 @@ function activityMarkup(message, block) {
   const status = running
     ? activityProgress(summary, animationKey)
     : (activityAnimationStarts.delete(animationKey), esc(summary));
-  return `<details class="thinking-output context-activity" data-running="${running}" ${lazyIds.length ? `data-lazy-messages="${esc(JSON.stringify(lazyIds))}"` : ""} data-disclosure="${esc(key)}" ${disclosures.get(key) ? "open" : ""}><summary>${icon("commands")}<span class="activity-title">${status}</span><span class="activity-chevron" aria-hidden="true">›</span></summary><div class="activity-details">${content}</div></details>`;
+  return `<details class="thinking-output context-activity" data-running="${running}" ${lazyIds.length ? `data-lazy-messages="${esc(JSON.stringify(lazyIds))}"` : ""} data-disclosure="${esc(key)}" ${disclosures.get(key) ? "open" : ""}><summary>${icon("commands")}<span class="activity-title">${status}</span><span class="activity-chevron" aria-hidden="true">›</span></summary><div class="activity-details" data-scroll-key="${esc(key + ":details")}">${content}</div></details>`;
 }
 function activityProgress(value, key) {
   const text = Array.from(String(value || "处理中")).slice(0, 48);
@@ -1704,6 +1723,9 @@ const isExtensionCard = (row) =>
   !!row?.extensionState ||
   (row?.role === "custom" && !!row?.extensionView?.disclosureKey);
 let conversationSwitching = false;
+// 切换中的目标会话：只有它的完整快照（带 messages）到达才能收掉骨架屏，
+// 元数据快照或空列表不能提前退回空白页／空会话首屏。
+let pendingConversation = "";
 function renderConversationLoading(label) {
   const node = $("#messages");
   const wrap = document.createElement("div");
@@ -3029,6 +3051,13 @@ function filterSettings() {
       ![...group.querySelectorAll(".setting-row")].some((row) => !row.hidden);
   }
 }
+function syncSettingsCategories() {
+  for (const tab of document.querySelectorAll("[data-settings-category]"))
+    tab.setAttribute(
+      "aria-selected",
+      String(tab.dataset.settingsCategory === settingsCategory),
+    );
+}
 $("#settings-search").addEventListener("input", filterSettings);
 function renderSettings() {
   if (!settingsDocument) return;
@@ -3305,6 +3334,15 @@ async function refreshOnce(snapshot) {
     snapshot.sessionId !== durableAgentId
   )
     return;
+  // 只有目标会话的完整快照收掉切换骨架；元数据快照仍保持加载状态。
+  if (
+    pendingConversation &&
+    snapshot.sessionId === pendingConversation &&
+    Array.isArray(snapshot.messages)
+  ) {
+    pendingConversation = "";
+    conversationSwitching = false;
+  }
   if (snapshot.host === "durable" && !durableAgentId) {
     durableAgentId = snapshot.sessionId;
     sessionStorage.setItem(selectionKey, durableAgentId);
@@ -4138,7 +4176,9 @@ document.addEventListener("click", async (event) => {
     if (button.dataset.settingsCategory) {
       settingsCategory = button.dataset.settingsCategory;
       $("#settings-search").value = "";
-      renderSettings();
+      // 只切换可见分组：重建整页会丢失滚动与焦点，并在每次打开分类时闪一下。
+      syncSettingsCategories();
+      filterSettings();
       return;
     }
     if (button.dataset.expandProvider) {
@@ -4386,6 +4426,7 @@ document.addEventListener("click", async (event) => {
         if (state?.host === "durable")
           chooseDurableAgent(button.dataset.sessionId);
         conversationSwitching = true;
+        pendingConversation = String(button.dataset.sessionId);
         renderConversationLoading("正在切换会话…");
         try {
           await api("/api/switch-session", {
