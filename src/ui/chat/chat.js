@@ -1488,6 +1488,13 @@ function openSessionMenu(row, x, y) {
 }
 function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
   const assistant = message.role !== "user";
+  const automatic =
+    message.role === "user" && message.presentation?.source === "automatic";
+  const inputLabel = automatic
+    ? "扩展自动输入"
+    : message.presentation?.source === "user"
+      ? "你"
+      : "原生输入（来源未记录）";
   const stateCard = message.extensionState === true;
   let article = host.lastElementChild;
   if (
@@ -1497,32 +1504,52 @@ function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
     !article?.classList.contains("assistant-turn")
   ) {
     article = document.createElement("article");
-    article.className = `message ${stateCard ? "extension-state" : assistant ? "assistant-turn" : "user-message"}`;
+    article.className = `message ${automatic ? "automatic-input" : stateCard ? "extension-state" : assistant ? "assistant-turn" : "user-message"}`;
     if (rail) article.classList.add("extension-rail-card");
     if (message.extensionView) article.dataset.extensionCard = "true";
     article.dataset.turn = message.id ?? `turn-${host.children.length}`;
     // 消息动作（退回／分叉）挂在条目 id 上；流式占位消息没有该字段。
-    if (Number.isSafeInteger(message.entryId))
+    if (Number.isSafeInteger(message.entryId) && !message.commandOnly)
       article.dataset.entryId = String(message.entryId);
     else delete article.dataset.entryId;
-    article.innerHTML = `<span class="${assistant ? "agent-avatar" : "avatar"}">${assistant ? piLogo : "你"}</span><div class="message-body"><div class="message-label">${esc(message.extensionView?.label ?? (message.role === "custom" ? (message.customType ?? "扩展") : assistant ? "Pi" : "你"))}</div></div>`;
+    article.innerHTML = `<span class="${assistant ? "agent-avatar" : "avatar"}">${assistant ? piLogo : automatic ? "扩" : message.presentation?.source === "user" ? "你" : "录"}</span><div class="message-body"><div class="message-label">${esc(message.extensionView?.label ?? (message.role === "custom" ? (message.customType ?? "扩展") : assistant ? "Pi" : inputLabel))}</div></div>`;
     host.append(article);
   }
   const body = article.querySelector(".message-body");
   const blocks =
-    message.role === "toolResult"
-      ? [{ type: "toolCall", id: message.toolCallId, name: message.toolName }]
-      : message.blocks?.length
-        ? message.blocks
-        : [{ type: "text", text: message.text ?? "" }];
+    message.role === "user"
+      ? automatic
+        ? []
+        : [
+            {
+              type: "text",
+              text:
+                message.presentation?.source === "user"
+                  ? (message.presentation.original ?? message.text ?? "")
+                  : (message.text ?? ""),
+            },
+            ...(message.blocks ?? []).filter((block) => block.type !== "text"),
+          ]
+      : message.role === "toolResult"
+        ? [{ type: "toolCall", id: message.toolCallId, name: message.toolName }]
+        : message.blocks?.length
+          ? message.blocks
+          : [{ type: "text", text: message.text ?? "" }];
   let output;
   for (const block of blocks) {
     const segment = document.createElement("div");
     if (message.id === "streaming") segment.className = "streaming-segment";
     if (block.type === "text") {
       segment.classList.add("markdown-body");
-      if (assistant) segment.classList.add("process-entry");
-      segment.innerHTML = renderMarkdown(block.text);
+      if (assistant) {
+        segment.classList.add("process-entry");
+        segment.innerHTML = renderMarkdown(block.text);
+      } else {
+        // 用户的标签和 Markdown 字符也是原文，不能经渲染器解释后悄悄消失。
+        segment.dataset.inputOriginal = "true";
+        segment.classList.add("input-original");
+        segment.textContent = block.text;
+      }
       output = segment;
     } else if (block.type === "activity") {
       const markup = activityMarkup(message, block);
@@ -1542,6 +1569,28 @@ function appendMessage(message, host = $("#messages"), { rail = false } = {}) {
       segment.textContent = block.text ?? "";
     }
     body.append(segment);
+  }
+  if (
+    automatic ||
+    (message.presentation?.source === "user" &&
+      typeof message.presentation.original === "string" &&
+      message.presentation.original !== message.text)
+  ) {
+    const key = `input:${runtimePrefix}:${desktopConfiguration?.agent?.generation ?? 0}:${state?.sessionId}:${message.id}`;
+    const fold = document.createElement("details");
+    fold.className = "input-injection";
+    fold.dataset.inputInjection = "true";
+    fold.dataset.disclosure = key;
+    fold.open = disclosures.get(key) ?? false;
+    const title = document.createElement("summary");
+    title.textContent = automatic
+      ? "扩展自动输入（非用户原文）"
+      : "自动展开与附加上下文（模型输入）";
+    const content = document.createElement("pre");
+    content.dataset.scrollKey = key;
+    content.textContent = message.text ?? "";
+    fold.append(title, content);
+    body.append(fold);
   }
   if (message.error || ["error", "aborted"].includes(message.stopReason)) {
     const failure = document.createElement("div");
@@ -1771,6 +1820,7 @@ function rowSignature(row) {
   const blocks = row.blocks ?? [];
   return [
     row.role,
+    JSON.stringify(row.presentation ?? null),
     row.lazy ? "l" : "",
     row.streaming ? "s" : "",
     row.currentActivity ? "a" : "",
@@ -5126,8 +5176,17 @@ function completeSubmission(submission) {
 }
 function composerHistory(owner) {
   const persisted = messageRows
-    .filter((row) => row.role === "user" && typeof row.text === "string")
-    .map((row) => row.text);
+    .filter(
+      (row) =>
+        row.role === "user" &&
+        row.presentation?.source !== "automatic" &&
+        typeof row.text === "string",
+    )
+    .map((row) =>
+      row.presentation?.source === "user"
+        ? (row.presentation.original ?? row.text)
+        : row.text,
+    );
   const pending = sentHistory.get(owner) ?? [];
   let overlap = Math.min(persisted.length, pending.length);
   while (
@@ -5374,6 +5433,7 @@ $("#composer").addEventListener("submit", async (event) => {
     if (live) {
       await api("/api/prompt", {
         message,
+        ...(submission.text === message ? {} : { original: submission.text }),
         mode: submission.mode,
         sessionId: submission.owner,
         ...(submission.retry ? { requestId: submission.retry.requestId } : {}),
@@ -5387,7 +5447,7 @@ $("#composer").addEventListener("submit", async (event) => {
             }
           : {}),
       });
-      rememberComposerMessage(submission.owner, message);
+      rememberComposerMessage(submission.owner, submission.text);
     } else {
       messageRows.push({ role: "user", text: message });
       rememberComposerMessage(submission.owner, message);

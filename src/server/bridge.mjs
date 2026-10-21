@@ -889,6 +889,13 @@ export function createDeskBridge(input) {
         input.message.length > 50000
       )
         throw new DeskError(422, "消息长度无效");
+      if (
+        input.original !== undefined &&
+        (typeof input.original !== "string" ||
+          input.original.length > 50000 ||
+          input.original.trim() !== input.message.trim())
+      )
+        throw new DeskError(422, "输入原文与消息不一致");
 
       if (/^\/git(?:\s|$)/.test(input.message.trim()))
         throw new DeskError(
@@ -926,10 +933,14 @@ export function createDeskBridge(input) {
         const args = input.attachments?.length
           ? [input.message || "请根据所附上下文继续。", input.mode, context]
           : [input.message, input.mode];
-        if (input.requestId !== undefined) {
+        const originalInput =
+          input.original ??
+          (input.attachments?.length ? input.message : undefined);
+        if (input.requestId !== undefined || originalInput !== undefined) {
           if (args.length === 2) args.push(undefined);
           args.push(input.requestId);
         }
+        if (originalInput !== undefined) args.push(originalInput);
         await prompt.submit(...args);
       }
     } else if (url.pathname === "/api/abort") {

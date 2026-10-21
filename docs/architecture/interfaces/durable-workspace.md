@@ -36,8 +36,9 @@ workspace.read(id?)        // async -> { agents: [摘要], recovery, tasks, ... 
                            //   （无则 null）；tasks 是当前任务图
 workspace.live(id?)        // async -> 流式期间的轻量视图；也可观察 owned 子会话，不授予写命令权限
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
-workspace.execute(command, input?, { signal } = {})  // async -> 命令结果；signal 只供 wait 观察者
-workspace.transcript(id)   // async -> { entries, ... }：Pi 消息形状的投影
+workspace.execute(command, input?, { signal, presentation } = {})  // async -> 命令结果；signal 只供 wait 观察者
+workspace.recordInput(id, original, requestId?) // 原生 passive write 的只展示命令，不发起模型
+workspace.transcript(id)   // async -> { entries, presentations, ... }：Pi 消息形状的投影
 workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生回合；可预置初始化资源状态
 workspace.importNative(id, entries, {digest} = {})                   // 导入原生树并核对初始化摘要
 workspace.install(extension)                         // 运行期装入 Durable 扩展
@@ -49,6 +50,8 @@ workspace.taskDetail(id, taskId);                      // 同 owned 范围的持
 workspace.subagentHistory(id, {before?,limit?} = {});    // owned 终态记录，默认 20，范围 1–50
 workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，须先于 resume
 ```
+
+输入的可信 `presentation` 只由宿主第三参数传入，不从命令 JSON 采纳；原文、自动来源、只展示命令、原生导出与继承见[输入展示契约](input-presentation.md)。
 
 全 Host 组合、子代理准入与上述追加接口见 [Host 任务契约](host-tasks.md)；受管 owned 子会话仍只出现在 `children`，不变成第二个 Desktop Agent。这里的 `execute("fork")` 保留低层原生语义；默认 Desktop 的新创建由 Host 协调为独立 Agent，见[独立会话契约](independent-sessions.md)。
 

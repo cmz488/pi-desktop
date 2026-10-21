@@ -1,6 +1,6 @@
 import { mkdir, realpath, stat, chmod } from "node:fs/promises";
 import { dirname, resolve, basename } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import lockfile from "proper-lockfile";
 import {
   BACKGROUND_CONTEXT,
@@ -23,10 +23,16 @@ import {
   calculateContextTokens,
   estimateMessageTokens,
 } from "@earendil-works/pi-ai/utils/estimate";
-import { projectMessage } from "../shared/conversation.mjs";
+import { contentText, projectMessage } from "../shared/conversation.mjs";
+import {
+  INPUT_PRESENTATION_TYPE,
+  INPUT_COMMAND_TYPE,
+  normalizeInputCommand,
+} from "../shared/input-presentation.mjs";
 import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
+import { createInputPresentation } from "./input-presentation.mjs";
 import {
   createManagedSubagents,
   MANAGED_SUBAGENT_KIND,
@@ -308,11 +314,33 @@ export async function openAgentWorkspace(options) {
       const children = [];
       let remaining = MAX_MODEL_READ_UNITS;
       for (const row of records.slice(0, MAX_DETAIL_CHILDREN)) {
-        const page = await api.commit(
-          (tx) =>
-            tx.scanEntries({ conversationId: row.id }, MAX_MODEL_READ_ENTRIES),
-          ctx,
-        );
+        const page = await api.commit(async (tx) => {
+          const items = [];
+          let cursor;
+          do {
+            const found = await tx.scanEntries(
+              { conversationId: row.id },
+              MAX_MODEL_READ_ENTRIES,
+              cursor,
+            );
+            items.push(
+              ...found.items.filter(
+                (entry) => entry.kind !== "desk.input-command",
+              ),
+            );
+            cursor = found.next;
+          } while (
+            items.length < MAX_MODEL_READ_ENTRIES &&
+            cursor !== undefined
+          );
+          return {
+            items: items.slice(0, MAX_MODEL_READ_ENTRIES),
+            next:
+              items.length > MAX_MODEL_READ_ENTRIES || cursor !== undefined
+                ? true
+                : undefined,
+          };
+        }, ctx);
         const live = await api.snapshot(LiveDoc, row.id, ctx);
         const projected = page.items.reverse().flatMap((entry) =>
           contributed(entry).map((message) => ({
@@ -484,6 +512,7 @@ export async function openAgentWorkspace(options) {
     await release?.();
     throw error;
   }
+  const inputPresentations = createInputPresentation(harness, context);
   const unsubscribe = harness.subscribeCommits(() => queueMicrotask(notify));
   const unsubscribeRegistry = registry.subscribe(notify);
   const guard = () => {
@@ -565,11 +594,19 @@ export async function openAgentWorkspace(options) {
   /* Pi 的 UI 角色已规范成 LLM 消息，界面贡献不能再从 model 反推，否则会丢卡片或显示摘要。
    * `projectActive` 与退回的“消息原点”必须沿用同一条规则，避免过滤后发生索引错位。 */
   const contributed = (entry) =>
-    (Array.isArray(entry.data?.nativeMessages)
-      ? entry.data.nativeMessages
-      : entry.data?.nativeMessage?.role === "custom"
-        ? [entry.data.nativeMessage]
-        : (entry.model ?? [])
+    (entry.kind === "desk.input-command"
+      ? [
+          {
+            role: "user",
+            content: entry.data.original,
+            timestamp: entry.data.timestamp,
+          },
+        ]
+      : Array.isArray(entry.data?.nativeMessages)
+        ? entry.data.nativeMessages
+        : entry.data?.nativeMessage?.role === "custom"
+          ? [entry.data.nativeMessage]
+          : (entry.model ?? [])
     ).filter((message) =>
       ["user", "assistant", "toolResult", "custom"].includes(message.role),
     );
@@ -640,6 +677,9 @@ export async function openAgentWorkspace(options) {
         );
       const projected = await selected.context(context);
       const lastEntry = entries.at(-1);
+      const presentations = withTranscript
+        ? await inputPresentations.read(id)
+        : {};
       const active = {
         ...agentSummary,
         contextUsage: contextUsage(projected, model?.contextWindow),
@@ -648,6 +688,18 @@ export async function openAgentWorkspace(options) {
               messages: entries.flatMap((entry) =>
                 contributed(entry).map((message, index) => ({
                   ...projectMessage(message, `${entry.id}:${index}`),
+                  ...(message.role === "user" &&
+                  presentations[entry.data?.origins?.[index] ?? entry.id]
+                    ? {
+                        presentation:
+                          presentations[
+                            entry.data?.origins?.[index] ?? entry.id
+                          ],
+                      }
+                    : {}),
+                  ...(entry.kind === "desk.input-command"
+                    ? { commandOnly: true, presentation: { source: "user" } }
+                    : {}),
                   entryId: entry.data?.origins?.[index] ?? entry.id,
                   stopReason: message.stopReason,
                   error: message.errorMessage,
@@ -934,7 +986,7 @@ export async function openAgentWorkspace(options) {
       background: true,
     });
   }
-  async function execute(command, input = {}, { signal } = {}) {
+  async function execute(command, input = {}, { signal, presentation } = {}) {
     guard();
     if (command === "create") {
       const { patch, profile } = await changes(input);
@@ -978,7 +1030,8 @@ export async function openAgentWorkspace(options) {
       const mode = input.mode ?? "followUp";
       if (!["steer", "followUp", "reject"].includes(mode))
         throw new DeskError(422, "消息模式无效");
-      const submission = await selected.submit(
+      const submission = await inputPresentations.submit(
+        selected,
         {
           type: "input",
           content: input.images?.length
@@ -987,7 +1040,7 @@ export async function openAgentWorkspace(options) {
           requestId,
           whenBusy: mode,
         },
-        context,
+        presentation,
       );
       return { id: selected.id, submissionId: submission.id };
     }
@@ -1377,6 +1430,15 @@ export async function openAgentWorkspace(options) {
       };
     },
     read,
+    async recordInput(id, original, requestId = randomUUID()) {
+      guard();
+      text(requestId, 200, "请求 ID");
+      return inputPresentations.record(
+        await conversation(id),
+        original,
+        requestId,
+      );
+    },
     async persistNative(id, entries, messages = [], { seedDigest } = {}) {
       guard();
       const { convertToLlm } = await loadPiMessages();
@@ -1409,6 +1471,7 @@ export async function openAgentWorkspace(options) {
           resourceState: await harness.snapshot(DesktopResources, id, context),
         },
         entries: entries.sort((a, b) => a.id - b.id),
+        presentations: await inputPresentations.read(id),
       };
     },
     async importNative(id, entries, { digest } = {}) {
@@ -1460,6 +1523,27 @@ export async function openAgentWorkspace(options) {
         } else resources.entries = inheritedResources;
         const ids = new Map();
         for (const entry of branch) {
+          if (
+            entry.type === "custom" &&
+            entry.customType === INPUT_COMMAND_TYPE
+          ) {
+            const command = normalizeInputCommand(entry.data);
+            if (command) {
+              const added = await tx.appendEntry(id, {
+                kind: "desk.input-command",
+                model: [],
+                data: {
+                  ...command,
+                  nativeSessionId: nativeHeader.id,
+                  nativeEntryId: entry.id,
+                },
+              });
+              ids.set(entry.id, added.id);
+              mapping.push([added.id, entry.id]);
+              through = added.id;
+            }
+            continue;
+          }
           const sourceMessages = sessionEntryToContextMessages(entry);
           const model = convertToLlm(sourceMessages).filter((message) =>
             ["user", "assistant", "toolResult"].includes(message.role),
@@ -1502,6 +1586,23 @@ export async function openAgentWorkspace(options) {
                   },
             ];
           const added = await tx.appendEntry(id, draft);
+          const origin = native.getEntry(entry.parentId);
+          if (
+            entry.type === "message" &&
+            entry.message.role === "user" &&
+            origin?.customType === INPUT_PRESENTATION_TYPE &&
+            origin.data?.version === 1 &&
+            origin.data.textHash ===
+              createHash("sha256")
+                .update(contentText(entry.message.content))
+                .digest("hex")
+          )
+            await inputPresentations.seed(
+              tx,
+              id,
+              added.id,
+              origin.data.presentation,
+            );
           ids.set(entry.id, added.id);
           mapping.push([added.id, entry.id]);
           through = added.id;

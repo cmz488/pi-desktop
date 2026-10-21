@@ -48,13 +48,13 @@ facade.execute(action, ...args);
 
 `facade.execute` 的 action 表：
 
-| action                                                                                                                         | 参数       | 语义                                      |
-| ------------------------------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------------- |
-| `approvalMode`                                                                                                                 | `mode`     | 修改审批模式（经 `validateApprovalMode`） |
-| `expandPrompt`                                                                                                                 | `message`  | 展开 `/命令`、提示模板或 `skill:<名称>`   |
-| `packageAction`                                                                                                                | `input`    | 包管理动作（自动带当前 `sessionId`）      |
-| `interactions.list` / `.reply` / `.version`                                                                                    | 同交互存储 | 读取／回答／探测交互版本                  |
-| `settingsChanged`、`skillInventory`、`mcpRegistered`、`mcpTools`、`mcpAction`、`trustProject`、`packageRoot`、`packageUpdates` | `...args`  | 转发给宿主 capability                     |
+| action                                                                                                                         | 参数                               | 语义                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------- |
+| `approvalMode`                                                                                                                 | `mode`                             | 修改审批模式（经 `validateApprovalMode`）                |
+| `expandPrompt`                                                                                                                 | `message, {original?,requestId?}?` | 展开模板／技能；注册命令另保留只展示原文，不额外发起模型 |
+| `packageAction`                                                                                                                | `input`                            | 包管理动作（自动带当前 `sessionId`）                     |
+| `interactions.list` / `.reply` / `.version`                                                                                    | 同交互存储                         | 读取／回答／探测交互版本                                 |
+| `settingsChanged`、`skillInventory`、`mcpRegistered`、`mcpTools`、`mcpAction`、`trustProject`、`packageRoot`、`packageUpdates` | `...args`                          | 转发给宿主 capability                                    |
 
 native 桥：
 
@@ -66,6 +66,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 ## 不变量
 
 - **owned 资源 scope 独立**：发起前绑定子会话自己的工具 scope，恢复时也先于 Harness resume 注册；不会为此创建第二个 worker／SQLite，也不借用父会话工具闭包。`attach` 在 workspace 显式声明 `spawnSubagent` 时注册其 owned preparer；具体契约见 [Host 任务](host-tasks.md)。
+- **输入来源**：宿主在展开前捕获用户原文；原生程序发送标注为 automatic，注册命令的只展示记录与模型贡献分开。可靠关联、继承与兼容回退见[输入展示契约](input-presentation.md)。
 - **资源会话不跑模型循环**：它只提供工具与交互；所有被接受的模型回合都由 Durable 拥有（源码注释：`The resource Session never runs a second model loop`）。
 - **事件方向单向**：Durable 提交 → `record`／`beforeRequest`／`afterResponse`／`afterTools` → Pi 生命周期事件（`message_start`／`message_end`／`turn_end`／`tool_execution_end` 等）；Pi 事件不得反向驱动 Durable 状态。
 - **`ensure(active)` 幂等且按会话缓存**：同一 `active.id` 多次调用返回同一 facade（`readyHosts` 缓存）；`active` 变化时才新建宿主。

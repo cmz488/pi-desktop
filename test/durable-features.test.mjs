@@ -573,10 +573,18 @@ test("native resource commands, templates and skills retain their behavior behin
     message: "/fixture-notice",
     requestId: "native-command",
   });
-  assert.equal(
-    (await f.app.workspace.read(f.id)).active.messages.length,
-    before,
+  const commandView = (await f.app.workspace.read(f.id)).active;
+  assert.equal(commandView.messages.length, before + 1);
+  assert.equal(commandView.messages.at(-1).text, "/fixture-notice");
+  assert.equal(commandView.messages.at(-1).commandOnly, true);
+  assert.deepEqual(
+    (await f.app.workspace.transcript(f.id)).entries.find(
+      (entry) => entry.kind === "desk.input-command",
+    ).model,
+    [],
+    "命令原文只是展示记录，不能多开模型回合",
   );
+  assert.equal(commandView.idle, true);
   for (const [message, content, answer] of [
     ["/fixture-template", "Template resource instruction.", "template served"],
     [

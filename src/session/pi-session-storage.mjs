@@ -17,6 +17,13 @@ import lockfile from "proper-lockfile";
 import { DatabaseSync } from "node:sqlite";
 import { embeddedSdkEntry, loadPiSessionManager } from "../agent/pi-sdk.mjs";
 import { DeskError } from "../config/config-store.mjs";
+import { contentText } from "../shared/conversation.mjs";
+import {
+  INPUT_PRESENTATION_TYPE,
+  INPUT_COMMAND_TYPE,
+  normalizeInputPresentation,
+  normalizeInputCommand,
+} from "../shared/input-presentation.mjs";
 
 /**
  * 原生会话存储：Durable 转录的 Pi 互操作导出与原生文件的可恢复归档。
@@ -390,7 +397,11 @@ export async function openNativeTranscript({
     let synchronizedProfile;
     async function synchronize() {
       if (failure) throw failure;
-      const { active, entries } = await workspace.transcript(id);
+      const {
+        active,
+        entries,
+        presentations = {},
+      } = await workspace.transcript(id);
       synchronizedProfile = active;
       // 发现器只能识别原生文件，必须显式保留所属 Desktop Agent，不能把分支误认成另一个宿主。
       if (
@@ -458,7 +469,11 @@ export async function openNativeTranscript({
         }
         let first;
         if (entry.kind === "pi.reset") manager.resetLeaf();
-        if (entry.kind === "pi.compaction") {
+        if (entry.kind === "desk.input-command") {
+          const command = normalizeInputCommand(entry.data);
+          if (command)
+            first = manager.appendCustomEntry(INPUT_COMMAND_TYPE, command);
+        } else if (entry.kind === "pi.compaction") {
           const summary = (entry.model ?? [])
             .map((m) =>
               typeof m.content === "string"
@@ -491,6 +506,19 @@ export async function openNativeTranscript({
             }
             if (!["user", "assistant", "toolResult"].includes(message.role))
               continue;
+            const presentation =
+              message.role === "user"
+                ? normalizeInputPresentation(presentations[entry.id])
+                : undefined;
+            if (presentation)
+              // 先写来源，使精确 fork 到消息时仍包含标注；只关联其直接子消息，不猜正文。
+              manager.appendCustomEntry(INPUT_PRESENTATION_TYPE, {
+                version: 1,
+                textHash: createHash("sha256")
+                  .update(contentText(message.content))
+                  .digest("hex"),
+                presentation,
+              });
             const native = manager.appendMessage(message);
             first ??= native;
           }

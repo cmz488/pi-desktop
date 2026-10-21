@@ -5257,3 +5257,40 @@ body.dark {
     min-height: 44px;
   }
 }
+
+/* 来源由宿主标注；用户正文不参与标签猜测，自动展开单独披露。 */
+.automatic-input .avatar {
+  background: var(--input);
+  color: var(--muted);
+}
+.automatic-input .input-injection {
+  margin-top: 0;
+}
+.input-original {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.input-injection {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: var(--text-ui-sm);
+}
+.input-injection > summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding-block: var(--space-3);
+}
+.input-injection > pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--text-ui-sm) / 1.7 var(--mono);
+}

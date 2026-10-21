@@ -1102,7 +1102,8 @@ export async function startDurableDesk(options = {}) {
         const selected = (await workspace.read(Number(id))).active;
         return { sessionId: String(selected.id) };
       },
-      async prompt(message, mode, attachments, requestId) {
+      async prompt(message, mode, attachments, requestId, original = message) {
+        requestId ??= randomUUID();
         const ctx = target();
         if (
           auth.running ||
@@ -1121,20 +1122,34 @@ export async function startDurableDesk(options = {}) {
           if (name === "name") return configure({ name: args });
           if (name === "reload") return reload();
           if (!ctx.native) throw new DeskError(422, "未知 Pi 命令");
-          const expanded = await ctx.native.execute("expandPrompt", message);
+          const expanded = await ctx.native.execute("expandPrompt", message, {
+            original,
+            requestId,
+          });
           if (expanded.handled) return;
           message = expanded.message;
         }
         await applyDeferredConfiguration(ctx.active.id);
         await transcripts?.check();
-        await workspace.execute("send", {
-          id: ctx.active.id,
-          message:
-            message + (attachments?.text ? "\n\n" + attachments.text : ""),
-          images: attachments?.images,
-          requestId: requestId ?? randomUUID(),
-          mode: mode === "follow_up" ? "followUp" : "steer",
-        });
+        await workspace.execute(
+          "send",
+          {
+            id: ctx.active.id,
+            message:
+              message + (attachments?.text ? "\n\n" + attachments.text : ""),
+            images: attachments?.images,
+            requestId,
+            mode: mode === "follow_up" ? "followUp" : "steer",
+          },
+          {
+            presentation: {
+              source: "user",
+              ...(original === message && !attachments?.text
+                ? {}
+                : { original }),
+            },
+          },
+        );
         await transcripts?.sync(root.agents);
       },
       abort: () => workspace.execute("abort", { id: target().active.id }),

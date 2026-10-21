@@ -205,6 +205,7 @@ export function createDurableResources({
         }
       };
       const host = {
+        id: active.id,
         cwd: active.cwd,
         app,
         capabilities,
@@ -455,7 +456,10 @@ export function createDurableResources({
   function facade(host) {
     if (!host) return undefined;
     const capabilities = host.capabilities;
-    async function expandPrompt(message) {
+    async function expandPrompt(
+      message,
+      { original = message, requestId } = {},
+    ) {
       const match = message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
       if (!match) return { message };
       const name = match[1],
@@ -463,6 +467,7 @@ export function createDurableResources({
       const session = host.app.runtime.session;
       const command = session.extensionRunner.getCommand(name);
       if (command) {
+        await workspace.recordInput(host.id, original, requestId);
         await command.handler(
           args,
           session.extensionRunner.createCommandContext(),
@@ -522,7 +527,7 @@ export function createDurableResources({
           host.approvalPolicy.mode = validateApprovalMode(args[0]);
           return;
         }
-        if (action === "expandPrompt") return expandPrompt(args[0]);
+        if (action === "expandPrompt") return expandPrompt(...args);
         if (action === "packageAction")
           return capabilities.packageAction({
             ...args[0],

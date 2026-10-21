@@ -121,15 +121,19 @@ export function createNativeRuntime({
           nativeInputs.push(message);
         } else await save();
         const content = item.custom ? item.message.content : item.content;
-        await workspace.execute("send", {
-          id,
-          message: contentText(content),
-          images: Array.isArray(content)
-            ? content.filter((block) => block.type === "image")
-            : undefined,
-          mode: item.options?.deliverAs === "steer" ? "steer" : "followUp",
-          requestId: `native:${randomUUID()}`,
-        });
+        await workspace.execute(
+          "send",
+          {
+            id,
+            message: contentText(content),
+            images: Array.isArray(content)
+              ? content.filter((block) => block.type === "image")
+              : undefined,
+            mode: item.options?.deliverAs === "steer" ? "steer" : "followUp",
+            requestId: `native:${randomUUID()}`,
+          },
+          { presentation: { source: "automatic" } },
+        );
       }
     })();
     try {
