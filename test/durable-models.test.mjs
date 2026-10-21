@@ -213,6 +213,9 @@ test("model catalogs read one credential view per operation but request auth sta
       release.resolve();
       await listing;
     }
+    reads = 0;
+    await app.availableModels();
+    assert.equal(reads, 2, "工作区模型清单也只读本次两份认证文件");
   } finally {
     fs.readFile = original;
     syncBuiltinESMExports();
