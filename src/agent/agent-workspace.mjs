@@ -14,6 +14,8 @@ import {
   section,
   configure,
   LiveDoc,
+  InboxDoc,
+  UsageDoc,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -513,7 +515,18 @@ export async function openAgentWorkspace(options) {
     throw error;
   }
   const inputPresentations = createInputPresentation(harness, context);
-  const unsubscribe = harness.subscribeCommits(() => queueMicrotask(notify));
+  // 只保留上下文的数字摘要，不持有 entries 或模型消息。原生文档 tracker 已负责
+  // 实时字段的复用；条目提交才改变上下文，流式文档更新不应触发历史重读。
+  const contextSummaries = new Map();
+  let contextRevision = 0;
+  const unsubscribe = harness.subscribeCommits((publication) => {
+    for (const change of publication.changes) {
+      if (change.type !== "entry") continue;
+      contextRevision++;
+      contextSummaries.delete(change.value.conversationId);
+    }
+    queueMicrotask(notify);
+  });
   const unsubscribeRegistry = registry.subscribe(notify);
   const guard = () => {
     if (closed || compromised) throw new DeskError(409, "Agent 宿主已关闭");
@@ -656,102 +669,104 @@ export async function openAgentWorkspace(options) {
       ),
     };
   }
-  // Agent 投影的轻量一半：足够便宜，可以每个流式窗口跑一次。`transcript` 会加上
-  // 昂贵部分（每条已提交 entry 都过 projectMessage），所以只需要状态／流式片段／
-  // 工具的调用者必须关掉它。
+  // live 只读原生文档与数字摘要；完整 read 才读取并投影有效历史。两者不再各建
+  // viewState 又读取 context，也无需为省读取而常驻一份完整会话观察视图。
   async function projectActive(
     id,
     { transcript: withTranscript = true, allowOwned = false } = {},
   ) {
     const selected = await conversation(id, { allowOwned });
-    const view = await selected.viewState(context);
-    try {
-      const live = view.value.docs["pi.live"] ?? {};
-      const entries = view.value.entries;
-      const agentSummary = await summary(selected);
-      const model =
-        agentSummary.model &&
-        models.getModel(
-          agentSummary.model.provider,
-          agentSummary.model.modelId,
-        );
-      const projected = await selected.context(context);
-      const lastEntry = entries.at(-1);
-      const presentations = withTranscript
-        ? await inputPresentations.read(id)
-        : {};
-      const active = {
-        ...agentSummary,
-        contextUsage: contextUsage(projected, model?.contextWindow),
-        ...(withTranscript
-          ? {
-              messages: entries.flatMap((entry) =>
-                contributed(entry).map((message, index) => ({
-                  ...projectMessage(message, `${entry.id}:${index}`),
-                  ...(message.role === "user" &&
-                  presentations[entry.data?.origins?.[index] ?? entry.id]
-                    ? {
-                        presentation:
-                          presentations[
-                            entry.data?.origins?.[index] ?? entry.id
-                          ],
-                      }
-                    : {}),
-                  ...(entry.kind === "desk.input-command"
-                    ? { commandOnly: true, presentation: { source: "user" } }
-                    : {}),
-                  entryId: entry.data?.origins?.[index] ?? entry.id,
-                  stopReason: message.stopReason,
-                  error: message.errorMessage,
-                })),
-              ),
-            }
-          : {}),
-        partial: live.generation?.message
-          ? projectMessage(live.generation.message, "partial")
-          : null,
-        liveTools: live.tools ?? [],
-        retry: live.generation?.retry,
-        compactions: live.compactions ?? [],
-        queued: (view.value.docs["pi.inbox"]?.items ?? []).map((item) => ({
-          id: item.id,
-          mode: item.mode,
-        })),
-        usage: usageTotal(view.value.docs["pi.usage"]),
-        resourceState: await harness.snapshot(
-          DesktopResources,
-          selected.id,
-          context,
-        ),
-        // 廉价的结构指纹：live 窗口用它比对，而不是重建整个 transcript 来判断
-        // 历史是否变化。
-        entryCount: entries.length,
-        lastEntryId: lastEntry ? String(lastEntry.id) : "",
+    const agentSummary = await summary(selected);
+    const model =
+      agentSummary.model &&
+      models.getModel(agentSummary.model.provider, agentSummary.model.modelId);
+    const contextWindow = model?.contextWindow;
+    let facts = contextSummaries.get(id);
+    let projected;
+    if (withTranscript || !facts || facts.contextWindow !== contextWindow) {
+      const revision = contextRevision;
+      projected = await selected.context(context);
+      facts = {
+        contextWindow,
+        contextUsage: contextUsage(projected, contextWindow),
+        entryCount: projected.entries.length,
+        lastEntryId: String(projected.entries.at(-1)?.id ?? ""),
       };
-      if (!withTranscript) return active;
-      const latestResources = new Map(
-        (active.resourceState?.entries ?? []).map((entry) => [
-          entry.customType,
-          entry,
-        ]),
-      );
-      for (const [type, entry] of latestResources) {
-        const message = projectMessage(
-          {
-            role: "custom",
-            customType: type,
-            display: true,
-            content: "",
-            details: entry.data,
-          },
-          `resource:${type}`,
-        );
-        if (message.extensionView) active.messages.push(message);
-      }
-      return active;
-    } finally {
-      view.dispose();
+      // context 在捕获范围后可离开提交队列计算；期间若有新条目，不能把旧摘要
+      // 重新写回刚失效的缓存。关闭期间也不保留已读取的状态。
+      if (!closed && revision === contextRevision)
+        contextSummaries.set(id, facts);
     }
+    const [live = {}, inbox, usage, resourceState] = await Promise.all([
+      harness.snapshot(LiveDoc, id, context),
+      harness.snapshot(InboxDoc, id, context),
+      harness.snapshot(UsageDoc, id, context),
+      harness.snapshot(DesktopResources, id, context),
+    ]);
+    const presentations = withTranscript
+      ? await inputPresentations.read(id)
+      : {};
+    const active = {
+      ...agentSummary,
+      contextUsage: facts.contextUsage ? { ...facts.contextUsage } : null,
+      ...(withTranscript
+        ? {
+            messages: projected.entries.flatMap((entry) =>
+              contributed(entry).map((message, index) => ({
+                ...projectMessage(message, `${entry.id}:${index}`),
+                ...(message.role === "user" &&
+                presentations[entry.data?.origins?.[index] ?? entry.id]
+                  ? {
+                      presentation:
+                        presentations[entry.data?.origins?.[index] ?? entry.id],
+                    }
+                  : {}),
+                ...(entry.kind === "desk.input-command"
+                  ? { commandOnly: true, presentation: { source: "user" } }
+                  : {}),
+                entryId: entry.data?.origins?.[index] ?? entry.id,
+                stopReason: message.stopReason,
+                error: message.errorMessage,
+              })),
+            ),
+          }
+        : {}),
+      partial: live.generation?.message
+        ? projectMessage(live.generation.message, "partial")
+        : null,
+      liveTools: live.tools ?? [],
+      retry: live.generation?.retry,
+      compactions: live.compactions ?? [],
+      queued: (inbox?.items ?? []).map((item) => ({
+        id: item.id,
+        mode: item.mode,
+      })),
+      usage: usageTotal(usage),
+      resourceState,
+      entryCount: facts.entryCount,
+      lastEntryId: facts.lastEntryId,
+    };
+    if (!withTranscript) return active;
+    const latestResources = new Map(
+      (active.resourceState?.entries ?? []).map((entry) => [
+        entry.customType,
+        entry,
+      ]),
+    );
+    for (const [type, entry] of latestResources) {
+      const message = projectMessage(
+        {
+          role: "custom",
+          customType: type,
+          display: true,
+          content: "",
+          details: entry.data,
+        },
+        `resource:${type}`,
+      );
+      if (message.extensionView) active.messages.push(message);
+    }
+    return active;
   }
   async function live(id) {
     guard();
@@ -1229,6 +1244,7 @@ export async function openAgentWorkspace(options) {
       unsubscribe();
       unsubscribeRegistry();
       listeners.clear();
+      contextSummaries.clear();
       graph.dispose();
       try {
         await harness.close(context);

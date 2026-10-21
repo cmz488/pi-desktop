@@ -74,7 +74,7 @@
     "format": "prettier --write \"*.{mjs,ts,md,json}\" \"src/**/*.{mjs,js,cjs,ts,html,css,json}\" \"docs/**/*.md\" \"test/*.mjs\" \"examples/*.mjs\" \"scripts/*.mjs\"",
     "format:check": "prettier --check \"*.{mjs,ts,md,json}\" \"src/**/*.{mjs,js,cjs,ts,html,css,json}\" \"docs/**/*.md\" \"test/*.mjs\" \"examples/*.mjs\" \"scripts/*.mjs\"",
     "web:legacy": "node src/server/web.mjs --legacy",
-    "test:durable": "node --test --test-isolation=none test/agent-workspace.test.mjs test/durable-models.test.mjs test/durable-server.test.mjs test/durable-features.test.mjs test/durable-network.test.mjs",
+    "test:durable": "node --test --test-isolation=none test/agent-workspace.test.mjs test/agent-live-projection.test.mjs test/durable-models.test.mjs test/durable-server.test.mjs test/durable-features.test.mjs test/durable-network.test.mjs",
     "test:durable:browser": "node test/durable-browser-check.mjs",
     "test:durable:desktop": "node test/durable-desktop-check.mjs",
     "test:durable:recovery": "node test/durable-recovery-check.mjs",

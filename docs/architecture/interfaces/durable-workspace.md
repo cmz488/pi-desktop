@@ -88,7 +88,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - **`guard()` 前置**：`read`／`live`／`agent`／`execute`／`transcript`／`subscribe` 每次调用都先断言生命周期；`close()` 之后调用即抛 `DeskError(409, "Agent 宿主已关闭")`。
 - **任务图在打开时读取**：`harness.taskGraph(context)` 提供在跑的任务与后台任务；`idle` 判定基于“该会话没有前台任务”。
 - **提交先于显示**：任何可见状态都必须先经过 commit；`subscribe` 的监听者只看到已提交的变更。
-- **`read` 与 `live` 的差别是契约的一部分**：`read` 是全量摘要（供快照），`live` 不带 transcript（供流式期间的增量视图，见 01 性能深化）。
+- **`read` 与 `live` 的差别是契约的一部分**：`read` 读取有效上下文并生成消息展示；`live` 通过 Durable 原生文档快照读取实时状态，不构建完整会话观察视图。上下文用量、条目数与末尾 ID 只缓存数字摘要；本会话新条目（含压缩、编辑与退回标记）提交后失效，模型窗口改变后重新计算，关闭时释放。计算期间发生提交不能恢复已经失效的旧摘要。
 - **每个会话一份 agent 文档**：模型、思考级别、扩展名、工具名、cwd 存在 Durable 文档里（不是进程内存），因此重启后一致。
 - **恢复是追加式读模型**：打开时记录任务图里的待恢复任务（重启后运行中的任务显示为 `pending`），之后按当前任务图汇报每项是否结束。`recovery` 只在打开时任务图为空的情况下为 `null`；重启后即使待恢复任务已全部结束（`outstanding` 为 0）仍会报告 `count` 与 `resumedAt`，界面只在 `outstanding > 0` 时提示。它不改变 transcript，也不重发已提交且不依赖中断工作的条目。
 - **`fork` 记录来源**：Durable 在会话记录里保存 `parent { conversationId, at }`，`read()` 的会话摘要把它作为 `parent` 带出，因此分支树在重启后仍能读出父子关系（界面读模型见 [分支树契约](session-tree.md)）。
@@ -128,7 +128,8 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 ## 性能特征
 
 - 会话状态在 SQLite；`read()` 会遍历所有会话并逐个取摘要，属"全量路径"，应被 revision／增量机制挡在热路径之外（见 `GET /api/revision`）。
-- `live(id)` 刻意跳过 transcript 投影，是流式更新的低成本入口。
+- `live(id)` 直接读取 `pi.live`／`pi.inbox`／`pi.usage` 等原生文档，复用 SDK 的文档 tracker。有效历史和模型窗口未变时不再扫描 entries；冷读或本会话新条目提交后仍需一次原生上下文读取，不承诺恒定成本。
+- `read(id)` 只读取一次原生有效上下文，同时生成消息展示与数字摘要，不再先建 `viewState()` 又调用 `context()`。不长期保留 entries／contributions／messages，不为省读取而常驻第二份完整会话视图。
 - 可选 `availableModels` 让目录枚举复用本次认证文件视图；真正模型调用仍使用原 models，无跨请求认证缓存，见[模型目录契约](model-catalog.md)。
 - 原生转换与 session 管理子模块按需加载（`loadPiMessages`／`loadPiSessionManager`），不进入启动关键路径。
 - `fork` 需要复制 entry 区间并修复上下文，成本与分叉深度成正比。
@@ -136,6 +137,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 ## 可执行证据
 
 - `test/agent-workspace.test.mjs`：打开、只读裁剪、命令表与 guard 行为。
+- `test/agent-live-projection.test.mjs`：MemoryStorage／SQLite 两个 adapter 的重复实时读取零历史扫描、完整读取只取一次上下文、工具与队列文档更新、在途提交失效、模型窗口与会话隔离、返回值不污染摘要及关闭拒绝。
 - `test/durable-features.test.mjs`：会话、工具、权限、归档与重启语义。
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
