@@ -1455,13 +1455,19 @@ export async function openAgentWorkspace(options) {
           });
       }, context);
     },
-    async transcript(id) {
+    async transcript(id, { since } = {}) {
       guard();
       const selected = await conversation(id),
         entries = [];
+      // 增量读取：`since` 是调用方已经处理到的条目水位。导出循环在每个流式窗口都要
+      // 跑一次，读整段历史会让每次同步的成本随会话长度线性增长直到占满事件循环；
+      // 从水位之后开始读，稳态成本只与新增条目有关。
+      const query = Number.isSafeInteger(since)
+        ? { minEntryId: since + 1 }
+        : {};
       let cursor;
       do {
-        const page = await selected.entries({}, 200, cursor, context);
+        const page = await selected.entries(query, 200, cursor, context);
         entries.push(...page.items);
         cursor = page.next;
       } while (cursor !== undefined);

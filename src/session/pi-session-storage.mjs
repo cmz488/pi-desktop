@@ -401,7 +401,7 @@ export async function openNativeTranscript({
         active,
         entries,
         presentations = {},
-      } = await workspace.transcript(id);
+      } = await workspace.transcript(id, { since: through });
       synchronizedProfile = active;
       // 发现器只能识别原生文件，必须显式保留所属 Desktop Agent，不能把分支误认成另一个宿主。
       if (

@@ -648,3 +648,29 @@ test("取消等待只释放观察者，不中止真实前台任务", async (t) =
     await observer;
   }
 });
+
+test("增量 transcript 只返回水位之后的条目，默认仍返回整段历史", async (t) => {
+  const f = await workspaceFixture(t);
+  const { id } = await f.create();
+  f.faux.setResponses([fauxAssistantMessage("增量答案")]);
+  await f.workspace.execute("send", {
+    id,
+    message: "增量问题",
+    requestId: "incremental-transcript",
+  });
+  await settled(f.workspace, id);
+  const all = (await f.workspace.transcript(id)).entries;
+  assert(all.length > 1);
+  const water = all[0].id;
+  const tail = (await f.workspace.transcript(id, { since: water })).entries;
+  assert.deepEqual(
+    tail.map((entry) => entry.id),
+    all.filter((entry) => entry.id > water).map((entry) => entry.id),
+    "since 之后只返回更新条目，且顺序仍是从旧到新",
+  );
+  assert.equal(
+    (await f.workspace.transcript(id, { since: all.at(-1).id })).entries.length,
+    0,
+    "水位追平后不再有增量，导出循环因此不必重读历史",
+  );
+});
