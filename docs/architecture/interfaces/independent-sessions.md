@@ -82,7 +82,9 @@ readForkSnapshot(nativeId,cwd,agentDir,source)
 
 ## 可执行证据
 
-- `test/desktop-independent-fork.test.mjs`：新 worker、源不变、停止源与重启、两入口、拒绝后无空行、丢失回执、忙时工具上下文配对／任务隔离、精确位置与配置、空初始化、原生资源状态与单次启动钩子、context edit 的历史／模型分离。
+- `test/desktop-independent-fork.test.mjs`：新 worker、源不变、停止源与重启、两入口、拒绝后无空行、丢失回执后的缺失文件／错误来源拒绝及原快照恢复、忙时工具上下文配对／任务隔离、精确位置与配置、空初始化、原生资源状态与单次启动钩子、context edit 的历史／模型分离。
+- `test/desktop-independent-scope.test.mjs`：默认 Host 的压缩／编辑／custom 有效上下文及源摘要不变；真实继承旧回执、同号 task 碰撞、未授权读取拒绝及中止只影响自己的 owned 工作。
+- `test/desktop-native-boundaries.test.mjs`：非法／重复原生身份不毒化源队列，初始化代理始终拒绝，非 fork JSON 的 Unicode／chunked／768 KiB 边界不变。
 - `test/desktop-sidebar-fork.test.mjs`：跨项目同号会话、代际／只读／remote、初始化路径裁剪、请求目标与有界超时。
 - `test/desktop-branch-family-browser-check.mjs`：真实默认 Host 左侧／内层／工作台创建、同级导航与焦点、退回、多次退回后的来源、存量分支、重载、源停止与迟到回执。
 - `test/desktop-branch-family.test.mjs`、`test/desktop-sidebar-navigation-browser-check.mjs`：由公开低层接口仅布置存量记录，原归档、恢复、选择竞态及权限断言不弱化。

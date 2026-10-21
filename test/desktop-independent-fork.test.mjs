@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, rename } from "node:fs/promises";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 
 const digest = async (path) =>
@@ -231,6 +231,7 @@ test("初始化回执丢失后重试启动接管已发布的同一快照，而�
         id: source.id,
         generation: 0,
         conversationId: Number(state.sessionId),
+        expectedEntryId: state.messages.at(-1).entryId,
       }),
       (error) => error.status === 503,
     );
@@ -238,6 +239,61 @@ test("初始化回执丢失后重试启动接管已发布的同一快照，而�
       (row) => row.id !== source.id,
     );
     assert.equal(reserved.nativeInitializationPending, true);
+    const { loadPiSessionManager } = await import("../src/agent/pi-sdk.mjs");
+    const { nativeSessionDirectory } = await import(
+      "../src/session/pi-session-storage.mjs"
+    );
+    const { SessionManager } = await loadPiSessionManager();
+    const path = SessionManager.findById(
+      fixture.cwd,
+      reserved.nativeSessionId,
+      await nativeSessionDirectory(fixture.cwd, fixture.agentDir),
+    );
+    const original = await readFile(path, "utf8");
+    // 只改夹具自己尚未启动的快照：错误来源与缺失文件都不能被当作普通空会话启动。
+    for (const [field, value] of [
+      ["agentId", "other-agent"],
+      ["generation", 93],
+      ["conversationId", 1234],
+      ["entryId", state.messages.at(-1).entryId + 1],
+    ]) {
+      const entries = original
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      entries.findLast(
+        (entry) => entry.customType === "pi-desktop-origin",
+      ).data.createdFrom[field] = value;
+      try {
+        await writeFile(
+          path,
+          entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+        );
+        await assert.rejects(
+          fixture.command("agent.start", { id: reserved.id }),
+          (error) => error.status === 409 && /来源不一致/.test(error.message),
+        );
+      } finally {
+        await writeFile(path, original);
+      }
+      assert.equal(
+        (await fixture.call("/api/workspace")).agents.find(
+          (row) => row.id === reserved.id,
+        ).nativeInitializationPending,
+        true,
+      );
+    }
+    const hidden = `${path}.fixture-missing`;
+    await rename(path, hidden);
+    try {
+      await assert.rejects(
+        fixture.command("agent.start", { id: reserved.id }),
+        (error) =>
+          error.status === 409 && /尚未找到完整继承记录/.test(error.message),
+      );
+    } finally {
+      await rename(hidden, path);
+    }
     await send(fixture, source, "SOURCE_AFTER_LOST_RECEIPT");
     await fixture.command("agent.start", { id: reserved.id });
     const restored = await fixture.call(`/agents/${reserved.id}/api/state`);

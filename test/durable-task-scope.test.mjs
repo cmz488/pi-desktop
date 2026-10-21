@@ -508,7 +508,8 @@ test("HTTP 取消等待释放有界观察配额，不中止当前任务", async 
       .catch(() => {}),
   );
   try {
-    await sleep(500);
+    // 并行回归下请求抵达时间有波动；等实际配额拒绝，不把 500ms 当作已全部抵达。
+    await f.waitFor(() => replies.includes(429), "第 33 个观察请求被配额拒绝");
     assert.ok(
       replies.includes(429),
       "同一 worker 最多保留 32 个观察者，不能无限积累",

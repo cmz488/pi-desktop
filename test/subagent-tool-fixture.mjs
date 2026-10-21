@@ -40,16 +40,20 @@ export async function subagentToolFixture(t, options = {}) {
   });
   const prefix = `/agents/${actor.id}`;
   const parent = (await f.call(`${prefix}/api/state`)).sessionId;
-  async function invoke(args, { sessionId = parent, error = false } = {}) {
+  async function invoke(
+    args,
+    { sessionId = parent, agentId = actor.id, error = false } = {},
+  ) {
+    const targetPrefix = `/agents/${agentId}`;
     const token = `MANAGE_SUBAGENT_${calls.size}`;
     const callId = `call-${calls.size}`;
     calls.set(token, { args, number: calls.size });
-    await f.call(`${prefix}/api/prompt?sessionId=${sessionId}`, {
+    await f.call(`${targetPrefix}/api/prompt?sessionId=${sessionId}`, {
       sessionId,
       message: token,
     });
     const state = await until(
-      () => f.call(`${prefix}/api/state?sessionId=${sessionId}`),
+      () => f.call(`${targetPrefix}/api/state?sessionId=${sessionId}`),
       (value) =>
         value.idle &&
         value.messages.some(
