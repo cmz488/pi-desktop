@@ -8,6 +8,72 @@ import { join } from "node:path";
 import { openDurableModels } from "../src/agent/durable-models.mjs";
 import { createProvider, lazyApi } from "@earendil-works/pi-ai";
 
+test("catalog credential views expire before delayed descendant authentication", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-model-view-lifetime-"));
+  const release = Promise.withResolvers();
+  t.after(async () => {
+    release.resolve();
+    await rm(root, { recursive: true, force: true });
+  });
+  const agentDir = join(root, "agent"),
+    directory = join(root, "desk");
+  await mkdir(agentDir);
+  await mkdir(directory);
+  const id = "fixture-descendant",
+    authPath = join(directory, "auth.json");
+  await writeFile(
+    join(agentDir, "models.json"),
+    JSON.stringify({
+      providers: {
+        [id]: {
+          api: "openai-completions",
+          baseUrl: "https://fixture.invalid/v1",
+          models: [{ id: "model" }],
+        },
+      },
+    }),
+  );
+  await writeFile(
+    authPath,
+    JSON.stringify({ [id]: { type: "api_key", key: "fixture-old" } }),
+  );
+  const app = await openDurableModels({ agentDir, directory });
+  let delayed;
+  app.models.setProvider(
+    createProvider({
+      id,
+      name: id,
+      models: app.models.getProvider(id).getModels(),
+      api: lazyApi(
+        () => import("@earendil-works/pi-ai/api/openai-completions"),
+      ),
+      auth: {
+        apiKey: {
+          resolve: async ({ credential }) => {
+            // 真实 SDK auth resolver 内创建回调，保留枚举的异步上下文，再在枚举结束后执行。
+            delayed ??= release.promise.then(() => app.models.getAuth(id));
+            return credential
+              ? { auth: { apiKey: credential.key }, source: "fixture" }
+              : undefined;
+          },
+        },
+      },
+    }),
+  );
+  await app.availableModels();
+  assert.ok(delayed, "必须在真实目录枚举中建立延迟读取");
+  await writeFile(
+    authPath,
+    JSON.stringify({ [id]: { type: "api_key", key: "fixture-new" } }),
+  );
+  release.resolve();
+  assert.equal(
+    (await delayed).auth.apiKey,
+    "fixture-new",
+    "目录操作完成后，继承其异步上下文的实际认证也必须重新读取凭据",
+  );
+});
+
 test("model catalogs read one credential view per operation but request auth stays fresh", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-model-catalog-"));
   t.after(() => rm(root, { recursive: true, force: true }));

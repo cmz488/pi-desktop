@@ -24,7 +24,7 @@ openAgentWorkspace({ models, availableModels?, ...options });
 ## 不变量
 
 - 每次目录操作开始时，各读一次继承与 Desktop 认证文件；同次 SDK 可用性检查和目录行共用该视图。Desktop 的显式 null 仍遮盖继承凭据，不因无值而回退。
-- 视图只在该异步操作的 `AsyncLocalStorage` 内生效，不按 TTL 缓存，不跨目录操作或 worker 共享，不存储于浏览器。
+- 视图只在该异步操作尚未结束时生效，完成或失败时立即释放；由该操作创建但稍后才执行的异步后代也不能延长有效期。不按 TTL 缓存，不跨目录操作或 worker 共享，不存储于浏览器。
 - 作用域外的 `models.getAuth` 与实际请求每次重新取值。目录尚在等待时，并发认证也不能借用目录视图。
 - `credentials.modify` 在明确退出目录视图的作用域内串行读当前值、变更并按 revision 落盘；删除与配置写路径不采用旧视图。OAuth 刷新、注销覆盖与认证失败语义不降低。
 - 权限、TLS、沙箱、请求目标／generation、路径隔离和单 writer 不改变；返回的模型列表与原生可用性规则不改变。没有删除目录的认证检查，只合并其重复文件读取。
@@ -49,6 +49,6 @@ openAgentWorkspace({ models, availableModels?, ...options });
 
 ## 可执行证据
 
-- `test/durable-models.test.mjs`：读取实际临时文件，计数钩子透传原 fs 实现。目录读取由 253 次减少为 2 次；验证列表内容、下一次枚举的注销覆盖、实际原生认证读取新值、目录等待时的并发认证，以及目录回调中的凭据修改仍取当前值。
+- `test/durable-models.test.mjs`：读取实际临时文件，计数钩子透传原 fs 实现。目录读取由 253 次减少为 2 次；验证列表内容、下一次枚举的注销覆盖、实际原生认证读取新值、目录等待时的并发认证，目录回调中的凭据修改仍取当前值，以及枚举结束后的真实 SDK resolver 异步后代也重新认证。
 - `test/desktop-profile-check.mjs`／`performance-profile-fixture.mjs`：通过已注册工具和真实模型回合做进程内 CPU／分配采样，无调试端口、不装入生产配置。
 - `test/desktop-performance-check.mjs`：固定双 worker、60 轮与 87 个实际 provider 请求，保留前后各三轮的原始数据；不是减少工作量后的对比。

@@ -9,6 +9,14 @@ import {
   DeskError,
 } from "../config/config-store.mjs";
 
+/**
+ * 模型目录与认证持久化：继承只读，Desktop 自有修改沿原生 revision／锁提交。
+ *
+ * 接口：openDurableModels 返回模型与目录能力；见 docs/architecture/interfaces/model-catalog.md。
+ * 不变量：目录只在单次操作内复用凭据视图；结束后的异步后代、实际认证与写入读取新值；
+ *   明确注销不能退回继承凭据，目录不暴露密钥，也不扩大模型执行权限。
+ * 错误：存储、配置冲突和原生认证错误原样传播，不用空配置降级。
+ */
 const implementations = {
   "openai-completions": () =>
     import("@earendil-works/pi-ai/api/openai-completions"),
@@ -38,8 +46,11 @@ export async function openDurableModels({ agentDir, directory }) {
     mutation = result.catch(() => {});
     return result;
   }
+  function credentialViewInScope() {
+    return credentialViews.getStore()?.data;
+  }
   async function credential(id) {
-    const view = credentialViews.getStore();
+    const view = credentialViewInScope();
     let value;
     if (view) value = view[id];
     else {
@@ -61,12 +72,20 @@ export async function openDurableModels({ agentDir, directory }) {
   }
   async function withCredentialView(read) {
     // 同一次目录读取不必为每个提供商重读文件；作用域外的模型认证和写操作仍取新值。
-    return credentialViews.run(await credentialView(), read);
+    const scope = { data: await credentialView() };
+    return credentialViews.run(scope, async () => {
+      try {
+        return await read();
+      } finally {
+        // 异步后代可能比目录操作长寿；继承上下文不意味着延长凭据视图的有效期。
+        scope.data = undefined;
+      }
+    });
   }
   const credentials = {
     read: credential,
     list: async () => {
-      const view = credentialViews.getStore() ?? (await credentialView());
+      const view = credentialViewInScope() ?? (await credentialView());
       return Object.entries(view)
         .filter(([, value]) => value?.type)
         .map(([providerId, value]) => ({ providerId, type: value.type }));
