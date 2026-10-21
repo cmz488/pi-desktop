@@ -359,6 +359,38 @@ try {
     (await f.call(`/agents/${other.id}/api/sessions`)).rows.length,
     1,
   );
+  // 同一个 iframe 只换页面时，旧 frame 校验仍会通过；导航 epoch 必须另行防迟到抢页。
+  await evaluate(
+    `window.sameFrameReceiptProbe={pending:0,refreshes:0,delivered:false};(()=>{const probe=sameFrameReceiptProbe,fetcher=fetch.bind(window);window.fetch=async(...args)=>{const tracked=String(args[0]).includes('/api/workspace');if(tracked)probe.pending++;try{const response=await fetcher(...args);if(tracked){await response.clone().arrayBuffer();probe.refreshes++;}return response;}finally{if(tracked)probe.pending--;}};window.addEventListener('message',e=>{if(e.data?.type==='pi-desktop:fork-result')probe.delivered=true;});const w=document.querySelector('#runtime').contentDocument.defaultView,inner=w.fetch.bind(w);w.fetch=async(...args)=>{const response=await inner(...args);if(String(args[0]).includes('/api/command')&&args[1]?.body&&JSON.parse(args[1].body).command==='fork'){probe.accepted=true;await new Promise(resolve=>probe.release=resolve);}return response;};})();`,
+  );
+  known = await ids();
+  await chat(
+    "d.querySelector('#sessions .session.active').dispatchEvent(new d.defaultView.MouseEvent('contextmenu',{bubbles:true,clientX:90,clientY:120}))",
+  );
+  await chat("d.querySelector('.session-menu [data-command=fork]').click()");
+  await until("sameFrameReceiptProbe.accepted===true");
+  await evaluate("document.querySelector('#settings').click()");
+  await ready("d.querySelector('#view-general')?.hidden===false");
+  await evaluate(
+    "sameFrameReceiptProbe.refreshes=0;sameFrameReceiptProbe.release()",
+  );
+  await createdSince(known);
+  await until(
+    "sameFrameReceiptProbe.delivered&&sameFrameReceiptProbe.refreshes>0&&sameFrameReceiptProbe.pending===0",
+  );
+  await evaluate(
+    "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+  );
+  assert.equal(
+    await actorId(),
+    other.id,
+    "同一 frame 的设置页面也不能被迟到创建回执抢走",
+  );
+  assert.equal(
+    await chat("return d.querySelector('#view-general').hidden;"),
+    false,
+    "来源 iframe 还在，不意味着它仍持有导航意图",
+  );
   known = await ids();
   await evaluate(
     `window.sidebarReceiptProbe={};(()=>{const fetcher=fetch.bind(window);window.fetch=async(...args)=>{const response=await fetcher(...args);if(String(args[0]).includes('/api/workspace/command')&&args[1]?.body&&JSON.parse(args[1].body).command==='conversation.fork'){sidebarReceiptProbe.accepted=true;await new Promise(resolve=>sidebarReceiptProbe.release=resolve);}return response;};})()`,
