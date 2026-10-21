@@ -32,8 +32,7 @@ try {
   const branches = [];
   for (let index = 0; index < 2; index++)
     branches.push(
-      (await f.command("conversation.fork", { id: actor.id, generation: 0 }))
-        .sessionId,
+      (await f.legacyFork(actor.id, source, { mode: "tail" })).sessionId,
     );
   const profile = join(f.root, "navigation-browser");
   browser = spawn(

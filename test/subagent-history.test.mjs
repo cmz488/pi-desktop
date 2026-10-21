@@ -93,10 +93,7 @@ test(
       [ids[0]],
     );
     assert.equal(second.nextBefore, null);
-    const branch = await f.command("conversation.fork", {
-      id: actor.id,
-      generation: 0,
-    });
+    const branch = await f.legacyFork(actor.id, parent, { mode: "tail" });
     assert.deepEqual(
       (
         await f.call(

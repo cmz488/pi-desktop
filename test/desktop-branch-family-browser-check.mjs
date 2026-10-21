@@ -2,22 +2,22 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
-import { desktopFixture } from "./desktop-fixture.mjs";
+import { desktopFixture, until as settled } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
 
-// 不能用注入 workspace 的浏览器夹具替代默认 worker，否则 singleAgent 的拒绝路径不会被测到。
+// 新创建走默认 Host；存量族内记录仅由 legacyFork 布置，不能拿它冒充新语义验收。
 const f = await desktopFixture({ noExtensions: true });
 let browser, driver;
 try {
   const project = (await f.call("/api/workspace")).projects.find(
     (row) => row.cwd === f.cwd,
   );
-  const actor = await f.command("conversation.create", {
+  const source = await f.command("conversation.create", {
     projectId: project.id,
     name: "分支来源",
   });
   const url = new URL(f.app.url);
-  url.searchParams.set("agent", actor.id);
+  url.searchParams.set("agent", source.id);
   const profile = join(f.root, "family-browser");
   browser = spawn(
     "/usr/bin/chromium",
@@ -44,239 +44,240 @@ try {
   await call("Page.navigate", { url: url.href });
   const frame = "document.querySelector('#runtime')?.contentDocument";
   const chat = (source) =>
-    evaluate(`(async () => { const d = ${frame}; ${source} })()`);
-  const chatUntil = (expression) =>
-    until(`(() => { const d = ${frame}; return !!d && (${expression}); })()`, {
+    evaluate(`(async()=>{const d=${frame};${source}})()`);
+  const ready = (condition) =>
+    until(`(()=>{const d=${frame};return !!d&&(${condition});})()`, {
       timeoutMs: 15000,
     });
-  await chatUntil(
-    "d.querySelector('#connection-status')?.textContent === 'Pi 已连接'",
-  );
-  await chat(
-    "d.querySelector('#prompt').value='Q1'; d.querySelector('#composer').requestSubmit()",
-  );
-  await chatUntil(
-    "d.querySelector('#messages').textContent.includes('answer: Q1') && d.querySelector('#stop-button').hidden",
-  );
-  const source = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
-  );
-  const tokenText = await chat(
-    "return d.querySelector('#token-total').textContent",
-  );
-  assert.notEqual(tokenText, "Token 0");
-  const snapshot = (id) =>
-    chat(
-      `return (await d.defaultView.fetch(${JSON.stringify(`/agents/${actor.id}/api/state`)} + '?sessionId=' + ${JSON.stringify(id)}, {cache:'no-store'})).json()`,
+  const actorId = () =>
+    evaluate("document.querySelector('#runtime')?.dataset.owner");
+  const waitActor = async (id) => {
+    await until(
+      `document.querySelector('#runtime')?.dataset.owner===${JSON.stringify(id)}`,
     );
-  const before = await snapshot(source);
-  await evaluate(
-    `document.querySelector('#projects [data-agent-id="${actor.id}"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}))`,
-  );
-  await until("!document.querySelector('#agent-menu').hidden");
-  assert.equal(
-    await evaluate(
-      "[...document.querySelectorAll('#agent-menu [role=menuitem]')].some(button=>button.textContent==='创建分支')",
-    ),
-    true,
-    "左侧工作区会话右键菜单提供创建分支",
-  );
-  await call("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "Escape",
-    code: "Escape",
-    windowsVirtualKeyCode: 27,
-  });
-  await call("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "Escape",
-    code: "Escape",
-    windowsVirtualKeyCode: 27,
-  });
-  const openMenu = (id) =>
-    chat(
-      `const row = d.querySelector('[data-session-id="${id}"]'); row.dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true, clientX:90, clientY:120}));`,
-    );
-  await openMenu(source);
-  await chatUntil("!!d.querySelector('.session-menu')");
-  await chat("d.querySelector('.session-menu [data-command=fork]').click()");
-  await chatUntil(
-    `d.querySelectorAll('#sessions [data-session-id]').length === 2 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(source)}`,
-  );
-  await chatUntil("d.querySelector('#token-total').textContent === 'Token 0'");
-  const branch = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
-  );
-  assert.equal((await snapshot(branch)).stats.tokens.total, 0);
-  const leftBranch = `#projects [data-project-id="${project.id}"] button[data-agent-id="${actor.id}"][data-conversation-id="${branch}"]`;
-  await until(`!!document.querySelector(${JSON.stringify(leftBranch)})`, {
-    timeoutMs: 4000,
-  });
-  assert.equal(
-    await evaluate(
-      `document.querySelector(${JSON.stringify(leftBranch)}).classList.contains('selected')`,
-    ),
-    true,
-    "分支创建后在原工作区侧栏出现，并与内层当前会话同步选中",
-  );
-  await openMenu(branch);
-  assert.equal(
-    await chat(
-      "return d.querySelector('.session-menu [data-command=rewind]').disabled",
-    ),
-    false,
-    "默认分支也绑定了自己的原生转录",
-  );
-  await chat("d.querySelector('.session-menu [data-command=tree]').click()");
-  await chatUntil(
-    "!!d.querySelector('#view-extensions [data-branch-action=fork]')",
-  );
-  const point = await chat(
-    "return Number(d.querySelector('#view-extensions [data-branch-action=fork]').dataset.entryId)",
-  );
-  await chat(
-    "d.querySelector('#view-extensions [data-branch-action=fork]').click()",
-  );
-  await chatUntil(
-    `d.querySelectorAll('#sessions [data-session-id]').length === 3 && ![${JSON.stringify(source)},${JSON.stringify(branch)}].includes(d.querySelector('#sessions .session.active')?.dataset.sessionId)`,
-  );
-  await chatUntil("d.querySelector('#token-total').textContent === 'Token 0'");
-  const child = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
-  );
-  const tree = await chat(
-    `return (await d.defaultView.fetch(${JSON.stringify(`/agents/${actor.id}/api/tree`)} + '?id=' + ${JSON.stringify(child)}, {cache:'no-store'})).json()`,
-  );
-  assert.deepEqual(tree.forkOf, {
-    conversationId: Number(branch),
-    entryId: point,
-  });
-  assert.ok(tree.native);
-  const unchanged = await snapshot(source);
-  assert.deepEqual(unchanged.messages, before.messages);
-  assert.deepEqual(unchanged.stats, before.stats);
-  await chat("d.querySelector('[data-view=workspace]').click()");
-  await chat(`d.querySelector('[data-session-id="${source}"]').click()`);
-  await chatUntil(
-    `d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(source)} && d.querySelector('#token-total').textContent === ${JSON.stringify(tokenText)}`,
-  );
-  assert.deepEqual(driver.errors, []);
-  assert.equal(f.requests.length, 1, "分叉没有重新调用模型或重放源回答");
-  const submit = async (message) => {
-    await chat(
-      `d.querySelector('#prompt').value=${JSON.stringify(message)}; d.querySelector('#composer').requestSubmit()`,
-    );
-    await chatUntil(
-      `d.querySelector('#messages').textContent.includes(${JSON.stringify(`answer: ${message}`)}) && d.querySelector('#stop-button').hidden`,
+    await ready(
+      "d.querySelector('#connection-status')?.textContent==='Pi 已连接'",
     );
   };
-  const messageCommand = async (entryId, command) => {
+  const state = (id) => f.call(`/agents/${id}/api/state`);
+  const submit = async (message) => {
     await chat(
-      `d.querySelector('#messages [data-entry-id="${entryId}"]').dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true, clientX:80, clientY:80}))`,
+      `d.querySelector('#prompt').value=${JSON.stringify(message)};d.querySelector('#composer').requestSubmit()`,
     );
-    await chatUntil("!!d.querySelector('.message-menu')");
+    await ready(
+      `d.querySelector('#messages').textContent.includes(${JSON.stringify("answer: " + message)})&&d.querySelector('#stop-button').hidden`,
+    );
+  };
+  const messageMenu = async (entryId) => {
+    await chat(
+      `d.querySelector('#messages [data-entry-id="${entryId}"]').dispatchEvent(new d.defaultView.MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:80}))`,
+    );
+    await ready("!!d.querySelector('.message-menu')");
+  };
+  const commandMessage = async (entryId, command) => {
+    await messageMenu(entryId);
     await chat(
       `d.querySelector('.message-menu [data-command=${command}]').click()`,
     );
   };
-  await submit("Q2");
-  const q2 = (await snapshot(source)).messages.find((row) => row.text === "Q2");
-  await submit("Q3");
-  await messageCommand(q2.entryId, "rewind");
-  await chatUntil("!d.querySelector('#messages').textContent.includes('Q3')");
-  await submit("Q4");
-  const q4 = (await snapshot(source)).messages.find((row) => row.text === "Q4");
-  await messageCommand(q4.entryId, "rewind");
-  await chatUntil(
-    "!d.querySelector('#messages').textContent.includes('answer: Q4')",
+  const openLeftMenu = async (id, conversationId) => {
+    const selector = `#projects button[data-agent-id="${id}"]${conversationId === undefined ? ":not([data-conversation-id])" : `[data-conversation-id="${conversationId}"]`}`;
+    await evaluate(
+      `(()=>{if(!document.querySelector(${JSON.stringify(selector)}))document.querySelector('#projects .more-sessions')?.click();})()`,
+    );
+    await until(`!!document.querySelector(${JSON.stringify(selector)})`);
+    await evaluate(
+      `document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}))`,
+    );
+    await until("!document.querySelector('#agent-menu').hidden");
+  };
+  const createdSince = async (before) => {
+    let catalog;
+    try {
+      catalog = await settled(
+        () => f.call("/api/workspace"),
+        (value) => value.agents.some((row) => !before.has(row.id)),
+      );
+    } catch (error) {
+      console.error(
+        "创建诊断",
+        await chat(
+          "return {toast:d.querySelector('#toast')?.textContent,buttons:[...d.querySelectorAll('[data-branch-action]')].map(node=>({...node.dataset,disabled:node.disabled}))}",
+        ),
+      );
+      const tree = await f.call(`/agents/${await actorId()}/api/tree`);
+      console.error(
+        "当前树",
+        JSON.stringify({
+          currentEntryId: tree.currentEntryId,
+          rewinds: tree.rewinds,
+          active: tree.native.nodes.filter((node) => node.active),
+        }),
+      );
+      throw error;
+    }
+    return catalog.agents.find((row) => !before.has(row.id));
+  };
+  const ids = async () =>
+    new Set((await f.call("/api/workspace")).agents.map((row) => row.id));
+  const openBranches = async () => {
+    await evaluate("document.querySelector('#extensions-entry').click()");
+    await ready(
+      "[...d.querySelectorAll('.extension-page-choice')].some(node=>node.textContent.includes('对话分支'))",
+    );
+    await chat(
+      "[...d.querySelectorAll('.extension-page-choice')].find(node=>node.textContent.includes('对话分支')).click()",
+    );
+    await ready("!!d.querySelector('[data-branch-action=fork]')");
+  };
+  await waitActor(source.id);
+  await submit("Q1");
+  const before = await state(source.id);
+  const sourceToken = await chat(
+    "return d.querySelector('#token-total').textContent",
   );
-  const q1 = before.messages.find((row) => row.text === "Q1");
+  assert.notEqual(sourceToken, "Token 0");
+
+  let known = await ids();
+  await openLeftMenu(source.id);
+  await evaluate(
+    "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
+  );
+  const first = await createdSince(known);
+  await waitActor(first.id);
+  assert.equal(
+    await evaluate("document.activeElement?.dataset.agentId"),
+    first.id,
+  );
   assert.equal(
     await chat(
-      "return Number(d.querySelector('#messages [data-entry-id]').dataset.entryId)",
+      "return d.querySelectorAll('#sessions [data-session-id]').length",
     ),
-    q1.entryId,
-    "第二次退回后可见 Q1 仍带原始消息目标",
+    1,
   );
+  await ready(
+    "d.querySelector('#messages').textContent.includes('answer: Q1')&&d.querySelector('#token-total').textContent==='Token 0'",
+  );
+  assert.equal((await f.call(`/agents/${first.id}/api/tree`)).forkOf, null);
+  assert.equal(first.createdFrom.agentId, source.id);
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('#projects button[data-conversation-id]').length",
+    ),
+    0,
+  );
+
+  known = await ids();
   await chat(
-    `d.querySelector('#messages [data-entry-id="${q1.entryId}"]').dispatchEvent(new d.defaultView.MouseEvent('contextmenu', {bubbles:true,clientX:80,clientY:80}))`,
+    "d.querySelector('#sessions .session.active').dispatchEvent(new d.defaultView.MouseEvent('contextmenu',{bubbles:true,clientX:90,clientY:120}))",
   );
+  await ready("!!d.querySelector('.session-menu [data-command=fork]')");
+  await chat("d.querySelector('.session-menu [data-command=fork]').click()");
+  const second = await createdSince(known);
+  await waitActor(second.id);
+  await ready(
+    "d.querySelector('#messages').textContent.includes('Q1')&&d.querySelector('#token-total').textContent==='Token 0'",
+  );
+  assert.equal(second.createdFrom.agentId, first.id);
+  assert.equal(f.requests.length, 1, "创建不重放源模型回合");
+  assert.deepEqual((await state(source.id)).messages, before.messages);
+  assert.deepEqual((await state(source.id)).stats, before.stats);
+
+  await submit("Q2");
+  const q2 = (await state(second.id)).messages.find((row) => row.text === "Q2");
+  await submit("Q3");
+  await commandMessage(q2.entryId, "rewind");
+  await ready("!d.querySelector('#messages').textContent.includes('Q3')");
+  await submit("Q4");
+  const q4 = (await state(second.id)).messages.find((row) => row.text === "Q4");
+  await commandMessage(q4.entryId, "rewind");
+  await ready(
+    "!d.querySelector('#messages').textContent.includes('answer: Q4')",
+  );
+  const q1 = (await state(second.id)).messages.find((row) => row.text === "Q1");
+  await messageMenu(q1.entryId);
   assert.equal(
     await chat(
       "return d.querySelector('.message-menu [data-command=fork]').disabled",
     ),
     true,
-    "历史消息只提供退回，不能绕过 SVG 从历史位置直接分支",
   );
   await chat("d.querySelector('.message-menu [data-command=rewind]').click()");
-  await chatUntil(
-    "d.querySelector('#messages').textContent.includes('Q1') && !d.querySelector('#messages').textContent.includes('Q2')",
+  await ready(
+    "d.querySelector('#messages').textContent.includes('Q1')&&!d.querySelector('#messages').textContent.includes('Q2')",
   );
-  await messageCommand(q1.entryId, "fork");
-  await chatUntil(
-    `d.querySelectorAll('#sessions [data-session-id]').length === 4 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(source)}`,
+  assert.equal(
+    await chat(
+      "return Number(d.querySelector('#messages [data-entry-id]').dataset.entryId)",
+    ),
+    q1.entryId,
   );
-  await chatUntil("d.querySelector('#token-total').textContent === 'Token 0'");
-  const replayFork = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
+  const rewrittenSource = await state(second.id);
+
+  known = await ids();
+  await openBranches();
+  await ready(
+    `d.querySelector('[data-branch-action=fork]')?.dataset.entryId===${JSON.stringify(String(q1.entryId))}`,
   );
+  await chat("d.querySelector('[data-branch-action=fork]').click()");
+  const third = await createdSince(known);
+  await waitActor(third.id);
   assert.deepEqual(
-    (await snapshot(replayFork)).messages.map((row) => row.text),
+    (await state(third.id)).messages.map((row) => row.text),
     ["Q1"],
   );
-  assert.equal(
-    f.requests.length,
-    4,
-    "退回历史节点后从当前位置分支，不重放模型",
+  assert.equal(third.createdFrom.agentId, second.id);
+  assert.equal(f.requests.length, 4);
+  await submit("Q5");
+  await openBranches();
+  await ready(
+    "!!d.querySelector('[data-branch-action=rewind]:not(:disabled)')",
+  );
+  await chat(
+    "d.querySelector('[data-branch-action=rewind]:not(:disabled)').click()",
+  );
+  await settled(
+    () => state(third.id),
+    (value) => !value.messages.some((row) => row.text === "Q5"),
   );
   await evaluate(
-    `document.querySelector('#projects [data-agent-id="${actor.id}"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}))`,
+    `document.querySelector('#projects button[data-agent-id="${third.id}"]:not([data-conversation-id])').click()`,
   );
-  await evaluate(
-    "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
-  );
-  await chatUntil(
-    `d.querySelectorAll('#sessions [data-session-id]').length === 5 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(replayFork)}`,
-  );
-  const sidebarFork = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
-  );
-  const sidebarTree = await f.call(
-    `/agents/${actor.id}/api/tree?id=${sidebarFork}`,
-  );
-  assert.equal(
-    sidebarTree.forkOf.conversationId,
-    Number(source),
-    "外层会话菜单固定原会话，不能偷用 iframe 当前选中的分支",
-  );
+  await ready("!d.querySelector('#messages').textContent.includes('Q5')");
   assert.deepEqual(
-    (await snapshot(sidebarFork)).messages.map((row) => row.text),
-    ["Q1"],
+    (await state(second.id)).messages,
+    rewrittenSource.messages,
+    "新会话退回不改源上下文",
   );
-  assert.equal(
-    f.requests.length,
-    4,
-    "外层右键创建的是继承当前位置的新会话，不重放模型",
+
+  const legacy = await f.legacyFork(source.id, before.sessionId, {
+    mode: "tail",
+  });
+  await f.call(
+    `/agents/${source.id}/api/prompt?sessionId=${legacy.sessionId}`,
+    {
+      sessionId: legacy.sessionId,
+      message: "LEGACY_ONLY",
+    },
   );
-  await call("Page.reload");
-  await chatUntil(
-    `d.querySelector('#connection-status')?.textContent === 'Pi 已连接' && d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(sidebarFork)}`,
+  await settled(
+    () =>
+      f.call(`/agents/${source.id}/api/state?sessionId=${legacy.sessionId}`),
+    (value) =>
+      value.idle &&
+      value.messages.some((row) => row.text === "answer: LEGACY_ONLY"),
   );
-  await until(`!!document.querySelector(${JSON.stringify(leftBranch)})`);
+  const leftLegacy = `#projects button[data-agent-id="${source.id}"][data-conversation-id="${legacy.sessionId}"]`;
+  await until(`!!document.querySelector(${JSON.stringify(leftLegacy)})`);
   await evaluate(
-    `document.querySelector('#projects button[data-agent-id="${actor.id}"]:not([data-conversation-id])').click()`,
+    `document.querySelector(${JSON.stringify(leftLegacy)}).click()`,
   );
-  await chatUntil(
-    `d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(source)}`,
-  );
-  await evaluate(
-    `document.querySelector(${JSON.stringify(leftBranch)}).click()`,
-  );
-  await chatUntil(
-    `d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(branch)}`,
+  await waitActor(source.id);
+  await ready(
+    `d.querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(legacy.sessionId)}`,
   );
   await evaluate(
-    `document.querySelector(${JSON.stringify(leftBranch)}).focus()`,
+    `document.querySelector(${JSON.stringify(leftLegacy)}).focus()`,
   );
   await call("Input.dispatchKeyEvent", {
     type: "keyDown",
@@ -289,92 +290,106 @@ try {
   assert.equal(
     await evaluate("document.querySelectorAll('#agent-menu button').length"),
     1,
-    "历史分支菜单不把进程归档、人格或重命名误施加给外层 Agent",
+    "存量分支仍不授予根进程管理操作",
   );
+  known = await ids();
   await evaluate(
     "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
   );
-  await chatUntil(
-    `d.querySelectorAll('#sessions [data-session-id]').length === 6 && d.querySelector('#sessions .session.active')?.dataset.sessionId !== ${JSON.stringify(branch)}`,
-  );
-  const branchMenuFork = await chat(
-    "return d.querySelector('#sessions .session.active').dataset.sessionId",
-  );
-  assert.equal(
-    (await f.call(`/agents/${actor.id}/api/tree?id=${branchMenuFork}`)).forkOf
-      .conversationId,
-    Number(branch),
-  );
+  const fromLegacy = await createdSince(known);
+  await waitActor(fromLegacy.id);
+  assert.equal(fromLegacy.createdFrom.conversationId, Number(legacy.sessionId));
   assert.deepEqual(
-    (await snapshot(branchMenuFork)).messages.map((row) => row.text),
-    ["Q1", "answer: Q1"],
-  );
-  assert.equal(f.requests.length, 4);
-  await until(
-    `document.querySelector('#projects button[data-conversation-id="${branchMenuFork}"]')?.classList.contains('selected')`,
-  );
-  await f.command("agent.stop", { id: actor.id });
-  await until(
-    "document.querySelector('#process-count').textContent === '0 个进程'",
+    (await state(fromLegacy.id)).messages.map((row) => row.text),
+    ["Q1", "answer: Q1", "LEGACY_ONLY", "answer: LEGACY_ONLY"],
   );
   assert.equal(
-    await evaluate("document.querySelector('#agent-boot').hidden"),
-    false,
-    "已停止的分支不能冒充根会话的只读转录，应先启动原 worker",
+    (await f.call("/api/workspace")).agents.find((row) => row.id === source.id)
+      .branches.length,
+    1,
   );
   await call("Page.reload");
-  await until("!document.querySelector('#agent-boot').hidden");
-  await evaluate("document.querySelector('#agent-boot-start').click()");
-  await chatUntil(
-    `d.querySelector('#connection-status')?.textContent === 'Pi 已连接' && d.querySelector('#sessions .session.active')?.dataset.sessionId === ${JSON.stringify(branchMenuFork)}`,
+  await waitActor(fromLegacy.id);
+  await ready(
+    "d.querySelector('#messages').textContent.includes('answer: Q1')",
   );
-  assert.deepEqual(
-    (await snapshot(branchMenuFork)).messages.map((row) => row.text),
-    ["Q1", "answer: Q1"],
+  await f.command("agent.stop", { id: source.id });
+  await settled(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.agents.find((row) => row.id === source.id)?.status === "stopped",
   );
+  assert.equal(
+    (await f.call("/api/workspace")).agents.find(
+      (row) => row.id === fromLegacy.id,
+    ).status,
+    "running",
+  );
+  await submit("SOURCE_STOPPED_STILL_ACTIVE");
+
   const other = await f.command("conversation.create", {
     projectId: project.id,
-    name: "并行会话 B",
+    name: "并行会话",
   });
   await until(
     `!!document.querySelector('#projects button[data-agent-id="${other.id}"]')`,
   );
   await evaluate(
-    `window.sidebarForkProbe={};(()=>{const original=window.fetch;window.fetch=async(input,options)=>{const response=await original(input,options);if(String(input).includes('/api/workspace/command')&&options?.body&&JSON.parse(options.body).command==='conversation.fork'){sidebarForkProbe.accepted=true;await new Promise(resolve=>sidebarForkProbe.release=resolve);}return response;};})()`,
+    `window.forkReceiptProbe={};window.forkReceiptFrame=document.querySelector('#runtime');(()=>{const w=forkReceiptFrame.contentDocument.defaultView,fetcher=w.fetch.bind(w);w.fetch=async(...args)=>{const response=await fetcher(...args);if(String(args[0]).includes('/api/command')&&args[1]?.body&&JSON.parse(args[1].body).command==='fork'){forkReceiptProbe.accepted=true;await new Promise(resolve=>forkReceiptProbe.release=resolve);}return response;};})()`,
   );
-  await evaluate(
-    `document.querySelector('#projects button[data-agent-id="${actor.id}"]:not([data-conversation-id])').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:140}));document.querySelector('#agent-menu [data-command="conversation.fork"]').click()`,
+  known = await ids();
+  await chat(
+    "d.querySelector('#sessions .session.active').dispatchEvent(new d.defaultView.MouseEvent('contextmenu',{bubbles:true,clientX:90,clientY:120}))",
   );
-  await until("sidebarForkProbe.accepted===true");
+  await chat("d.querySelector('.session-menu [data-command=fork]').click()");
+  await until("forkReceiptProbe.accepted===true");
   await evaluate(
     `document.querySelector('#projects button[data-agent-id="${other.id}"]').click()`,
   );
-  await chatUntil(
-    "d.querySelector('#connection-status')?.textContent === 'Pi 已连接'",
-  );
-  await evaluate("sidebarForkProbe.release()");
-  await until(
-    `document.querySelector('#projects button[data-agent-id="${actor.id}"]').getAttribute('aria-busy')==='false'`,
-  );
+  await waitActor(other.id);
+  await evaluate("forkReceiptProbe.release()");
+  await createdSince(known);
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(
-    await evaluate("document.querySelector('#runtime').dataset.owner"),
+    await actorId(),
     other.id,
-    "分支回执晚到不得把已切换的 B 导航回 A",
-  );
-  assert.equal(
-    (await f.call(`/agents/${actor.id}/api/sessions`)).rows.length,
-    7,
-    "固定源会话的分支仍成功提交，切换客户端不会取消工作",
+    "内层创建迟到回执不能抢走新的导航意图",
   );
   assert.equal(
     (await f.call(`/agents/${other.id}/api/sessions`)).rows.length,
     1,
-    "不可变源目标不借用后来选中的 B",
   );
-  assert.equal(f.requests.length, 4);
+  known = await ids();
+  await evaluate(
+    `window.sidebarReceiptProbe={};(()=>{const fetcher=fetch.bind(window);window.fetch=async(...args)=>{const response=await fetcher(...args);if(String(args[0]).includes('/api/workspace/command')&&args[1]?.body&&JSON.parse(args[1].body).command==='conversation.fork'){sidebarReceiptProbe.accepted=true;await new Promise(resolve=>sidebarReceiptProbe.release=resolve);}return response;};})()`,
+  );
+  await openLeftMenu(first.id);
+  await evaluate(
+    "document.querySelector('#agent-menu [data-command=\"conversation.fork\"]').click()",
+  );
+  await until("sidebarReceiptProbe.accepted===true");
+  await evaluate(
+    `document.querySelector('#projects button[data-agent-id="${second.id}"]:not([data-conversation-id])').click()`,
+  );
+  await waitActor(second.id);
+  await evaluate("sidebarReceiptProbe.release()");
+  const late = await createdSince(known);
+  await until(
+    `document.querySelector('#projects button[data-agent-id="${first.id}"]').getAttribute('aria-busy')==='false'`,
+  );
+  assert.equal(await actorId(), second.id, "外层右键迟到回执也不能抢选择");
+  assert.equal(
+    late.createdFrom.agentId,
+    first.id,
+    "不可变来源不借用后来选中的会话",
+  );
+  assert.deepEqual(
+    (await state(source.id)).messages.map(({ role, text }) => ({ role, text })),
+    before.messages.map(({ role, text }) => ({ role, text })),
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
-    "Default Desktop branch browser passed: sidebar/tree forks, native identity, independent usage, unchanged source, switching and Q1/Q2/Q3 → rewind Q2 → Q4 → rewind Q4 → rewind Q1 → fork current.",
+    "默认独立分支浏览器通过：左侧同级与焦点、内层菜单、工作台创建及退回、重复退回来源、存量分支兼容、停止源不影响新会话、重载与迟到回执。",
   );
 } finally {
   driver?.close();

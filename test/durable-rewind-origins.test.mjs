@@ -111,14 +111,16 @@ test(
   "两次退回后从界面可见的 Q1 分叉只继承 Q1，不把 Q2/Q4 发给模型",
   { timeout: 60000 },
   async (t) => {
-    const { f, prefix, source, state, command, turn } = await rewoundFixture(t);
+    const { f, actor, source, state, command } = await rewoundFixture(t);
     const before = await state();
     const visibleQ1 = before.messages.find((row) => row.text === "Q1");
     const fork = await command(source, {
       command: "fork",
       entryId: visibleQ1.entryId,
     });
-    const branch = await state(fork.sessionId);
+    const forkState = () =>
+      f.call(`/agents/${fork.agentId}/api/state?sessionId=${fork.sessionId}`);
+    const branch = await forkState();
     assert.deepEqual(
       branch.messages.map((row) => row.text),
       ["Q1"],
@@ -126,12 +128,29 @@ test(
     assert.equal(branch.stats.tokens.total, 0);
     assert.deepEqual((await state()).messages, before.messages);
     assert.deepEqual((await state()).stats, before.stats);
-    const tree = await f.call(`${prefix}/api/tree?id=${fork.sessionId}`);
-    assert.deepEqual(tree.forkOf, {
-      conversationId: Number(source),
-      entryId: visibleQ1.entryId,
-    });
-    await turn(fork.sessionId, "verify fork");
+    const tree = await f.call(
+      `/agents/${fork.agentId}/api/tree?id=${fork.sessionId}`,
+    );
+    assert.equal(tree.forkOf, null);
+    const createdFrom = (await f.call("/api/workspace")).agents.find(
+      (row) => row.id === fork.agentId,
+    ).createdFrom;
+    assert.equal(createdFrom.agentId, actor.id);
+    assert.equal(createdFrom.conversationId, Number(source));
+    assert.equal(createdFrom.entryId, visibleQ1.entryId);
+    await f.call(
+      `/agents/${fork.agentId}/api/prompt?sessionId=${fork.sessionId}`,
+      {
+        sessionId: fork.sessionId,
+        message: "verify fork",
+      },
+    );
+    await until(
+      forkState,
+      (value) =>
+        value.idle &&
+        value.messages.some((row) => row.text === "answer: verify fork"),
+    );
     const sent = f.requests
       .at(-1)
       .messages.filter((row) => row.role !== "system");

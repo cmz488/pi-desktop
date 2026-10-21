@@ -1,6 +1,6 @@
 # 独立会话分支：设计与公开能力基线
 
-**状态：已确认设计，默认 Host 实现待完成。** 本文不能作为新创建语义已经交付的证明。现行族内分支契约仍见[分支树](../architecture/interfaces/session-tree.md)；本设计只替代未来默认 Desktop 创建行为，不迁移已有数据。决策见 [ADR-0001](../adr/0001-independent-session-forks.md)。
+**状态：独立会话实现已落地，本目标最终验收尚未完成。** 本文保留设计基线，现行接口以[独立会话契约](../architecture/interfaces/independent-sessions.md)为准；存量关系见[分支树](../architecture/interfaces/session-tree.md)。只替代新创建，不迁移已有数据。决策见 [ADR-0001](../adr/0001-independent-session-forks.md)。
 
 ## 位置与职责
 
@@ -10,11 +10,11 @@
 - `src/agent/agent-workspace.mjs`：继续用现有公开导入适配及 Pi 的 canonical projection 恢复有效上下文，不重建模型循环或任务存储。
 - `src/ui/workspace.js` 与既有会话／工作台模块：新条目进入左侧同级导航；旧分支仍可访问，退回入口保留。
 
-这些是拟修改的职责，不表示本文列出的新行为已经存在。
+上述职责已落地；最初能力实验与完整默认 Host 验收分开记录。
 
 ## 签名
 
-### 拟定的默认 Desktop 命令
+### 默认 Desktop 命令设计
 
 ```js
 // POST /api/workspace/command
@@ -96,4 +96,4 @@ NO_PROXY='127.0.0.1,localhost,::1,[::1]' PI_OFFLINE=1 \
 
 两项测试分别证明：新 worker 继承／精确退回／恢复且源消息与 JSONL 不变；压缩摘要、保留消息、上下文编辑与 custom 贡献出现在真实模型请求中，被压缩和替换的原文不再进入模型。它们不等于默认 Host 新分支功能验收。
 
-待实现阶段的真实 HTTP／Chromium 矩阵还包括：正常创建共用生命周期、不同 pid／存储／原生身份、同级左侧条目、右键及工作台入口、忙时快照、在途工具与 owned 任务不转移、同号历史任务引用不越权、必要配置、空初始化、旧分支、重启、迟到响应、只读／remote／generation、原始输入与注入来源继承。最终必须新跑完整 12 项和本轮隔离行为反向，不能引用旧目标结果代替。
+实现阶段的真实 HTTP／Chromium 矩阵包括：正常创建共用生命周期、不同 pid／存储／原生身份、同级左侧条目、右键及工作台入口、忙时快照、在途工具与 owned 任务不转移、同号历史任务引用不越权、必要配置、空初始化、旧分支、重启、迟到响应、只读／remote／generation、原始输入与注入来源继承。最终必须新跑完整 12 项和本轮隔离行为反向，不能引用旧目标结果代替。

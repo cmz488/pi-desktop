@@ -30,6 +30,7 @@ export function workspaceIndex(catalog) {
         "generation",
         "rootConversationId",
         "branches",
+        "createdFrom",
         "source",
         "status",
         "pid",

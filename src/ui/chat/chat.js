@@ -808,10 +808,47 @@ function toast(message) {
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 4200);
 }
 const TASK_WAIT_REQUEST_MS = 45000;
+const forkNavigationRequests = new WeakMap();
+function openCreatedSession(result) {
+  if (!result?.agentId) return false;
+  if (window.parent !== window) {
+    const requestId = forkNavigationRequests.get(result);
+    if (requestId)
+      window.parent.postMessage(
+        {
+          type: "pi-desktop:fork-result",
+          requestId,
+          result: {
+            agentId: result.agentId,
+            generation: result.generation,
+            sessionId: result.sessionId,
+          },
+        },
+        location.origin,
+      );
+  } else {
+    const url = new URL("/", location.href);
+    url.searchParams.set("agent", result.agentId);
+    location.assign(url.href);
+  }
+  return true;
+}
 async function api(path, input, { signal, selectSession = true } = {}) {
   const taskWait = path === "/api/command" && input?.command === "wait";
   const requestOwner = durableAgentId;
   const requestEpoch = actionEpoch;
+  const forkRequestId =
+    runtimePrefix && path === "/api/command" && input?.command === "fork"
+      ? crypto.randomUUID()
+      : undefined;
+  if (forkRequestId)
+    window.parent.postMessage(
+      {
+        type: "pi-desktop:fork-start",
+        requestId: forkRequestId,
+      },
+      location.origin,
+    );
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   if (signal?.aborted) abort();
@@ -854,8 +891,17 @@ async function api(path, input, { signal, selectSession = true } = {}) {
             }),
           },
     );
+    if (forkRequestId) {
+      if (data.agentId) forkNavigationRequests.set(data, forkRequestId);
+      else
+        window.parent.postMessage(
+          { type: "pi-desktop:fork-result", requestId: forkRequestId },
+          location.origin,
+        );
+    }
     if (
       selectSession &&
+      !data.agentId &&
       requestEpoch === actionEpoch &&
       requestOwner === durableAgentId &&
       state?.host === "durable" &&
@@ -876,6 +922,14 @@ async function api(path, input, { signal, selectSession = true } = {}) {
       sessionInventories.invalidate();
     return data;
   } catch (error) {
+    if (forkRequestId)
+      window.parent.postMessage(
+        {
+          type: "pi-desktop:fork-result",
+          requestId: forkRequestId,
+        },
+        location.origin,
+      );
     if (
       error.status === 404 &&
       path === "/api/state" &&
@@ -1314,6 +1368,7 @@ async function runAgentCommand(command, input, message) {
       { selectSession: false },
     );
     if (readPanelContext().sessionId !== owner || epoch !== actionEpoch) return;
+    if (openCreatedSession(result)) return result;
     if (result?.sessionId) chooseDurableAgent(result.sessionId);
     else toast(message);
     return result;
@@ -6509,6 +6564,7 @@ const branchTree = createBranchTreePanel({
   command: (name, input) =>
     api("/api/command", { command: name, ...input }, { selectSession: false }),
   toast: (message) => toast(message),
+  openCreatedSession,
   switchSession: async (id) => {
     const value = String(id);
     chooseDurableAgent(value);

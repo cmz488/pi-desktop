@@ -18,6 +18,7 @@ import { projectMessage } from "../shared/conversation.mjs";
 import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { openNativeTranscriptFamily } from "../session/native-transcript-family.mjs";
+import { readNativeRecord } from "../session/pi-session-storage.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
 import { DeskError, readDocument } from "../config/config-store.mjs";
 import { attachmentLimits } from "./context-attachments.mjs";
@@ -182,7 +183,7 @@ export async function startDurableDesk(options = {}) {
       }));
     if (options.workspace) await resources?.attach(workspace);
     // Resource sessions (tool scope, extensions, interactions) need the SDK.
-    await sdkReady;
+    const sdk = await sdkReady;
     root = await workspace.read();
     if (!root.agents.length) {
       const settings = (await readDocument(join(agentDir, "settings.json")))
@@ -206,6 +207,42 @@ export async function startDurableDesk(options = {}) {
           : {}),
         thinkingLevel: settings.defaultThinkingLevel ?? "medium",
       });
+      if (options.nativeSessionPath && !options.nativeResumePath) {
+        const record = await readNativeRecord(
+          options.nativeSessionPath,
+          agentDir,
+        );
+        if (
+          record.entries.some(
+            (entry) =>
+              entry.customType === "pi-desktop-origin" &&
+              entry.data?.nativeSessionId === record.header.id,
+          )
+        ) {
+          const native = sdk.SessionManager.inMemory(
+            undefined,
+            undefined,
+            record.entries,
+          );
+          // 首次 SDK 资源 Session 就应看到继承状态；重建 Session 会重复执行启动钩子。
+          await workspace.persistNative(
+            created.id,
+            native
+              .getBranch()
+              .filter(
+                (entry) =>
+                  entry.type === "custom" &&
+                  !entry.customType.startsWith("pi-desktop-"),
+              )
+              .map(({ customType, data }) => ({
+                customType,
+                ...(data === undefined ? {} : { data }),
+              })),
+            [],
+            { seedDigest: record.digest },
+          );
+        }
+      }
       await resources?.selectTools((await workspace.read(created.id)).active, {
         defaults: true,
       });
@@ -715,6 +752,35 @@ export async function startDurableDesk(options = {}) {
             403,
             "无项目会话不提供 Git 写入或本地语言服务器执行",
           );
+        if (url.pathname === "/api/fork-source") {
+          if (request.method !== "POST")
+            throw new DeskError(405, "请求方式不支持");
+          if (
+            !options.nativeSessionOwner ||
+            options.readOnly ||
+            request.headers["x-pi-remote-client"] === "1"
+          )
+            throw new DeskError(403, "此会话不提供创建分支");
+          const input = await body(request);
+          const ctx = target();
+          if (input.id !== ctx.active.id)
+            throw new DeskError(409, "操作目标与所选 Agent 不一致");
+          for (const key of ["entryId", "expectedEntryId"])
+            if (
+              input[key] !== undefined &&
+              (!Number.isSafeInteger(input[key]) || input[key] < 0)
+            )
+              throw new DeskError(422, "分支位置无效");
+          if (
+            input.entryId !== undefined &&
+            input.expectedEntryId !== undefined
+          )
+            throw new DeskError(422, "精确分支位置不能与当前位置检查点混用");
+          const transcript = transcripts?.get(ctx.active.id);
+          if (!transcript) throw new DeskError(403, "此会话不提供创建分支");
+          json(response, await transcript.forkSnapshot(input));
+          return true;
+        }
         if (url.pathname === "/api/approval" && request.method === "POST") {
           const ctx = target();
           if (!ctx.active.idle || (options.singleAgent && !familyIdle()))

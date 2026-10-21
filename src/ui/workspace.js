@@ -48,6 +48,7 @@ if (scanUrl.searchParams.has("agent")) {
 }
 let timer;
 const frames = new Map();
+const forkIntents = new WeakMap();
 const collapsedProjects = {};
 const expandedSessions = new Set();
 const pendingDrafts = new Map();
@@ -360,8 +361,19 @@ function openMenu(id, event, anchor, conversationId) {
               !row.archived &&
               (row.generation ?? 0) === (agent.generation ?? 0),
           )
-        )
-          selectAgent(agent, Number(result.sessionId));
+        ) {
+          const created = state.agents.find(
+            (row) => row.id === (result.agentId ?? agent.id),
+          );
+          if (
+            !created ||
+            (created.generation ?? 0) !==
+              (result.generation ?? agent.generation ?? 0)
+          )
+            return;
+          selectAgent(created, Number(result.sessionId));
+          queueMicrotask(() => $("#projects button.agent.selected")?.focus());
+        }
       });
       node.dataset.command = command;
       node.setAttribute("role", "menuitem");
@@ -486,6 +498,7 @@ function sendConversation(frame) {
   );
 }
 function setView(next) {
+  navigationEpoch++;
   tab = next;
   if (next !== "workspace")
     void window.piDesk?.browserCommand?.({ action: "hide" }).catch(() => {});
@@ -514,6 +527,52 @@ window.addEventListener("message", (event) => {
   if (event.origin !== location.origin) return;
   const frame = frames.get(frameKey);
   if (!frame || event.source !== frame.contentWindow) return;
+  if (event.data?.type === "pi-desktop:fork-start") {
+    const requestId = event.data.requestId;
+    const source = state.agents.find((row) => row.id === frame.dataset.owner);
+    if (typeof requestId !== "string" || requestId.length > 100 || !source)
+      return;
+    forkIntents.set(frame, {
+      requestId,
+      epoch: navigationEpoch,
+      generation: source.generation ?? 0,
+    });
+    return;
+  }
+  if (event.data?.type === "pi-desktop:fork-result") {
+    const intent = forkIntents.get(frame);
+    if (!intent || intent.requestId !== event.data.requestId) return;
+    forkIntents.delete(frame);
+    const result = event.data.result;
+    if (
+      !result ||
+      typeof result.agentId !== "string" ||
+      !Number.isSafeInteger(result.generation) ||
+      !Number.isSafeInteger(Number(result.sessionId)) ||
+      Number(result.sessionId) < 0
+    )
+      return;
+    void refresh()
+      .then(() => {
+        const source = state.agents.find(
+          (row) => row.id === frame.dataset.owner,
+        );
+        const created = state.agents.find((row) => row.id === result.agentId);
+        if (
+          frames.get(frameKey) !== frame ||
+          navigationEpoch !== intent.epoch ||
+          (source?.generation ?? 0) !== intent.generation ||
+          !created ||
+          (created.generation ?? 0) !== result.generation ||
+          created.createdFrom?.agentId !== source?.id
+        )
+          return;
+        selectAgent(created, Number(result.sessionId));
+        queueMicrotask(() => $("#projects button.agent.selected")?.focus());
+      })
+      .catch((error) => notice(error.message));
+    return;
+  }
   if (event.data?.type === "pi-desktop:browser-request") {
     const { requestId, input } = event.data;
     if (
@@ -609,6 +668,7 @@ window.addEventListener("message", (event) => {
     );
   if (event.data?.type === "pi-desktop:toggle-sidebar") toggleSidebar();
   if (event.data?.type === "pi-desktop:view-changed") {
+    if (tab !== event.data.view) navigationEpoch++;
     tab = event.data.view;
     if (tab !== "workspace")
       void window.piDesk?.browserCommand?.({ action: "hide" }).catch(() => {});

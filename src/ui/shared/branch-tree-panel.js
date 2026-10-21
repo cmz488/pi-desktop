@@ -45,6 +45,7 @@ export function createBranchTreePanel({
   command,
   toast,
   switchSession,
+  openCreatedSession,
 }) {
   let owner = "",
     target = "",
@@ -515,7 +516,9 @@ export function createBranchTreePanel({
       const result = await command(kind, input);
       if (!loader.isCurrent(identity)) return;
       toast(kind === "fork" ? "已从当前位置创建分支" : "已退回到所选轮次");
-      if (kind === "fork" && result?.sessionId)
+      if (kind === "fork" && result?.agentId)
+        await openCreatedSession?.(result);
+      else if (kind === "fork" && result?.sessionId)
         await switchSession(result.sessionId);
       else await loader.refresh({ force: true });
     } catch (failure) {

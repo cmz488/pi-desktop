@@ -272,10 +272,7 @@ test(
       action: "spawn",
       prompt: "LIST_CHILD_HELD",
     });
-    const branch = await f.command("conversation.fork", {
-      id: actor.id,
-      generation: 0,
-    });
+    const branch = await f.legacyFork(actor.id, parent, { mode: "tail" });
     const foreign = await invoke(
       { action: "list" },
       { sessionId: branch.sessionId },
@@ -369,10 +366,7 @@ test(
       action: "spawn",
       prompt: "ABORT_CHILD_HELD",
     });
-    const branch = await f.command("conversation.fork", {
-      id: actor.id,
-      generation: 0,
-    });
+    const branch = await f.legacyFork(actor.id, parent, { mode: "tail" });
     const denied = await invoke(
       { action: "abort", taskId: spawned.taskId },
       { sessionId: branch.sessionId, error: true },

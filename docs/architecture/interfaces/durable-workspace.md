@@ -37,8 +37,8 @@ workspace.live(id?)        // async -> 流式期间的轻量视图；也可观�
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
 workspace.execute(command, input?, { signal } = {})  // async -> 命令结果；signal 只供 wait 观察者
 workspace.transcript(id)   // async -> { entries, ... }：Pi 消息形状的投影
-workspace.persistNative(id, entries, messages = [])  // 把原生回合写回 transcript
-workspace.importNative(id, entries)                  // 导入原生树（归档恢复路径）
+workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生回合；可预置初始化资源状态
+workspace.importNative(id, entries, {digest} = {})                   // 导入原生树并核对初始化摘要
 workspace.install(extension)                         // 运行期装入 Durable 扩展
 workspace.subscribe(listener)                        // -> unsubscribe；变更通知
 workspace.close()                                    // 释放 Harness、锁与资源
@@ -49,7 +49,7 @@ workspace.subagentHistory(id, {before?,limit?} = {});    // owned 终态记录�
 workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，须先于 resume
 ```
 
-全 Host 组合、子代理准入与上述追加接口见 [Host 任务契约](host-tasks.md)；受管 owned 子会话仍只出现在 `children`，不变成第二个 Desktop Agent。
+全 Host 组合、子代理准入与上述追加接口见 [Host 任务契约](host-tasks.md)；受管 owned 子会话仍只出现在 `children`，不变成第二个 Desktop Agent。这里的 `execute("fork")` 保留低层原生语义；默认 Desktop 的新创建由 Host 协调为独立 Agent，见[独立会话契约](independent-sessions.md)。
 
 `read()` 的 `recovery` 形状（追加字段，不影响既有消费方）：
 
@@ -96,6 +96,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - **原生子代理不产生新 writer**：原生 task 检查点、owned 会话与 submission 复用当前 Harness；模型与工具循环、取消与恢复仍由 Durable 承担。子资源绑定在恢复前完成，不借用父会话工具闭包。
 - **等待不拥有执行生命周期**：`execute("wait", input, { signal })` 把 signal 仅用于 Durable 的等待 Context；其他命令沿用原有上下文。取消观察不会 abort 任务，指定任务的所有权校验不变。HTTP 额外的租约／配额、前端续租与总预算见 [任务契约](task-graph.md)。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
+- **新继承会话的资源初始化**：首次 SDK 资源 Session 前可用 `seedDigest` 预置 custom 状态；导入必须匹配同一原生文件 `digest`，否则 409。摘要只是初始化栅栏，不是第二份会话真相；导入成功后清除，保留启动钩子已经追加的状态，不再次初始化覆盖。
 
 ## 顺序约束
 
@@ -133,6 +134,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - `test/durable-features.test.mjs`：会话、工具、权限、归档与重启语义。
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
+- 新独立会话：`test/desktop-independent-fork.test.mjs` 覆盖资源状态、单次启动钩子、有效上下文、空初始化与恢复。
 - 模型工具与终态历史：`test/subagent-tools.test.mjs`、`test/subagent-history.test.mjs`，从真实模型工具调用和公开 HTTP 验证。
 - 全 Host 与子代理：`test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`，覆盖同 writer、重启幂等、原生工具 scope 与管理身份。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

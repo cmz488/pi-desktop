@@ -20,11 +20,13 @@ async function fixture(t, options = {}) {
   const state = (id) =>
     f.call(`${prefix}/api/state${id === undefined ? "" : `?sessionId=${id}`}`);
   const command = (id, input) =>
-    f.call(`${prefix}/api/command?sessionId=${id}`, {
-      id: Number(id),
-      sessionId: String(id),
-      ...input,
-    });
+    input.command === "fork"
+      ? f.legacyFork(created.id, id, input)
+      : f.call(`${prefix}/api/command?sessionId=${id}`, {
+          id: Number(id),
+          sessionId: String(id),
+          ...input,
+        });
   const source = (await state()).sessionId;
   const turn = async (id, message) => {
     await f.call(`${prefix}/api/prompt?sessionId=${id}`, {
@@ -42,7 +44,7 @@ async function fixture(t, options = {}) {
 }
 
 test(
-  "默认 Host 的分支是同一 worker 内的独立 Durable 会话，且各有原生转录",
+  "存量族内分支兼容同一 worker 的独立 Durable 会话与各自原生转录",
   { timeout: 60000 },
   async (t) => {
     const { f, agent, prefix, source, state, command, turn } = await fixture(t);

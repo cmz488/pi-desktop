@@ -29,6 +29,8 @@
 | [会话只读面板](read-panels.md)                 | `src/ui/shared/session-panel-loader.js`、`branch-tree-panel.js`、`task-panel.js`、`extension-workbench.js`                             | 身份失效、确认、能力／权限、节流与生命周期                                                       | `test/session-panel-loader.test.mjs`、`test/read-panels-browser-check.mjs`、`test/read-panels-desktop-browser-check.mjs`                |
 | [全 Host 任务与子代理](host-tasks.md)          | `src/control-plane/host-tasks.mjs`、`src/agent/managed-subagents.mjs`、`src/ui/shared/host-task-panel.js`                              | 跨 worker 聚合、存储代际目标、原生 owned 子代理准入／恢复、等待／中止                            | `test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`                                                               |
 
+默认 Desktop 的新继承创建另见[独立会话契约](independent-sessions.md)：正常创建工厂、原生快照、初始化回执恢复、同级导航与存量兼容；不改变原生 owned 任务归属。
+
 模型侧内置扩展另见 [子代理管理工具](subagent-tools.md)：`desk_subagent` 的原生后台准入、消息投递、读取／列举、等待／中止与 owned 权限，由 `test/subagent-tools.test.mjs` 的真实工具调用覆盖。
 
 形状测试（`test/boundary-contracts.test.mjs`）只断言接口形状、能力集、深路径与命令表：重命名或删掉其中一项就会失败；行为语义仍由各自的专项测试覆盖。

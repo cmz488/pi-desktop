@@ -1375,13 +1375,14 @@ export async function openAgentWorkspace(options) {
       };
     },
     read,
-    async persistNative(id, entries, messages = []) {
+    async persistNative(id, entries, messages = [], { seedDigest } = {}) {
       guard();
       const { convertToLlm } = await loadPiMessages();
       await conversation(id);
       await harness.commit(async (tx) => {
         const document = await tx.doc(DesktopResources, id);
         document.entries = entries;
+        if (seedDigest !== undefined) document.seedDigest = seedDigest;
         for (const { message, triggerTurn } of messages)
           await tx.appendEntry(id, {
             kind: "desk.native-message",
@@ -1408,7 +1409,7 @@ export async function openAgentWorkspace(options) {
         entries: entries.sort((a, b) => a.id - b.id),
       };
     },
-    async importNative(id, entries) {
+    async importNative(id, entries, { digest } = {}) {
       guard();
       const { convertToLlm } = await loadPiMessages();
       const { SessionManager, sessionEntryToContextMessages } =
@@ -1439,7 +1440,7 @@ export async function openAgentWorkspace(options) {
       await selected.commit(async (tx) => {
         const branch = native.getBranch();
         const resources = await tx.doc(DesktopResources, id);
-        resources.entries = branch
+        const inheritedResources = branch
           .filter(
             (entry) =>
               entry.type === "custom" &&
@@ -1449,6 +1450,12 @@ export async function openAgentWorkspace(options) {
             customType: entry.customType,
             ...(entry.data === undefined ? {} : { data: entry.data }),
           }));
+        if (resources.seedDigest !== undefined) {
+          if (resources.seedDigest !== digest)
+            throw new DeskError(409, "原生记录在初始化期间已变化，未接管会话");
+          // 原生 session_start 可能已追加状态；不能用较早快照覆盖它。
+          delete resources.seedDigest;
+        } else resources.entries = inheritedResources;
         const ids = new Map();
         for (const entry of branch) {
           const sourceMessages = sessionEntryToContextMessages(entry);

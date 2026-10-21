@@ -8,4 +8,4 @@ status: accepted
 
 共享 worker 可以减少资源占用，但会把会话的启停、归档和配置边界继续绑在一起；独立会话的开销则必须诚实计入架构成本。已有族内分支保持兼容，不自动迁移；原生低层精确分叉与退回能力不因此删除，也不另外设计回收策略。
 
-本决策已确认，**实现验收尚未完成**。公开 SDK 文件分叉、正常 worker 导入、继承历史的精确退回，以及压缩／上下文编辑的模型请求已通过临时夹具验证；默认 Host 创建、同级导航、在途任务隔离和完整兼容验收仍待实现。边界与证据见[设计基线](../references/independent-session-design.md)。
+本决策已确认，独立会话创建与同级导航已落地，**本目标最终验收尚未完成**。真实 Host／worker 与 Chromium 专项覆盖原生继承、精确退回、压缩／上下文编辑、在途任务隔离和存量兼容；现行边界见[独立会话契约](../architecture/interfaces/independent-sessions.md)，初始实验见[设计基线](../references/independent-session-design.md)。

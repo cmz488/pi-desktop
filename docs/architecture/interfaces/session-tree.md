@@ -6,7 +6,7 @@
 - `src/session/pi-session-storage.mjs` 的 `tree()`：把 Pi 原生会话树投影成只读结构（父子、活跃路径、leaf、分支点）。
 - `src/server/durable-server.mjs` 的 `sessionTree` 宿主实现 + `src/server/bridge.mjs` 的 `GET /api/tree`：把两者合成一个只读读模型。
 
-读模型只描述结构；**创建分支与退回仍然走 `POST /api/command`**（`fork`／`rewind`），这里不做任何写入。
+读模型只描述结构；**创建分支与退回仍然走 `POST /api/command`**（`fork`／`rewind`），这里不做写入。默认 Desktop Host 将 `fork` 统一协调为新的独立 Agent，返回 `agentId`；新根没有 Durable `parent`，来源只在 Host 的 `createdFrom` 中追溯。`rewind` 留在自己的 worker。存量族内关系和独立 SDK 兼容宿主的低层 fork 保持原语义，详见[独立会话契约](independent-sessions.md)。
 
 ## 签名
 
@@ -56,7 +56,7 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 ## 不变量
 
 - **只读**：不改变任何会话状态；`/api/state`、`/api/events`、`/api/command` 的既有字段与语义不变；`read()` 的会话 `parent` 在本接口映射为 `forkOf`。
-- **每个分支都是独立会话**：`branches[].id` 就是会话栏里的会话 id；`forkOf` 来自 Durable 的会话记录 `parent`，重启后仍可读，不依赖原生文件。
+- **存量分支是独立 Durable 会话**：`branches[].id` 是同一 worker 内的会话 id，`forkOf` 来自原生 Durable `parent`，重启后仍可读。新 Desktop 独立会话不放入此数组，也不以 `createdFrom` 伪造 parent。
 - **原生树按需可信**：`native` 只在宿主绑定的原生转录**属于该会话**时返回（默认 worker 的根与历史分支各自绑定转录）；否则为 `null`，此时 `leaf` 也为 `null`，界面只显示 Durable 侧信息。未启用会话族的单进程／注入 workspace 模式仍只绑定最初的会话。
 - **活跃/放弃由 `active` 表达**：`active === true` 的节点在活跃路径上（leaf 必然在其中）；其余节点是被放弃的路径，仍保留在树里。
 - **两类条目身份不可混用**：`native.nodes[].id`／`parentId`／`leafId` 是原生字符串 id；节点 `entryId`、退回 `rewindTo` 和 `rewinds[].entryId` 是 Durable 数值 id。未建立 Durable 映射时 `entryId` 为 null，不能拿原生 id 发命令。`preview` 是展示文本，不是节点身份；空文本和非消息节点返回 null。
@@ -101,13 +101,13 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 「对话分支」另有独立折叠区，通过 `GET /api/subagent-history` 读取当前显示会话的 owned 范围终态委托；默认每页 20 条、按需加载更多。记录可只读查看原生消息／结果，不加入 `native.nodes` 或 `branches`，没有 fork／rewind 动作，也不把 `owner` 当作 `parent`。折叠、离开或切目标会撤观察；需要显式 `taskDetails`，远程不提供详情。返回和错误契约见 [Host 任务契约](host-tasks.md)。
 
-## 默认 worker 的会话族
+## 默认 worker 的存量会话族
 
-一个 Desktop Agent 继续独占一个 worker 和 SQLite。`singleAgent: true` 表示禁止在 worker 内任意新建 Desktop Agent，不再禁止其已有会话的历史分叉。每个分支仍使用 Durable 原生 `fork`、`parent` 与独立 usage；分支不会创建第二个 writer。
+一个 Desktop Agent 独占一个 worker 和 SQLite。`singleAgent: true` 仍禁止在 worker 内任意新建 Desktop Agent；默认 Host 的新分支复用正常创建工厂，成为另一个同级 Agent。旧族成员继续使用原生 `parent` 与独立 usage，不迁移、不增加旧族 writer；独立 SDK／TUI 兼容接口的低层 fork 不变。
 
 `src/session/native-transcript-family.mjs` 的接口：
 
-- `openNativeTranscriptFamily({ workspace, agentDir, directory, owner, agents, branches, resumePath?, pathHint? })` 返回 `sync(agents?)`、`get(id)`、`check()`、幂等 `close()` 与根 `metadata`。根元数据兼容原来的 `path`／`nativeSessionId`／`digest`，追加 `family`；分支模式只绑定根的历史后代，不绑定工具拥有的子会话。`sync` 串行执行，工作量随族成员及其转录长度增长，不调度新任务。
+- `openNativeTranscriptFamily({ workspace, agentDir, directory, owner, agents, branches, resumePath?, pathHint? })` 返回 `sync(agents?)`、`get(id)`、`check()`、幂等 `close()` 与根 `metadata`；`get(id)` 句柄的 `forkSnapshot` 初始化能力见[独立会话契约](independent-sessions.md)。根元数据兼容原来的 `path`／`nativeSessionId`／`digest`，追加 `family`；分支模式只绑定根的历史后代，不绑定工具拥有的子会话。`sync` 串行执行，工作量随族成员及其转录长度增长，不调度新任务。
 - `nativeBranchIdentity(owner, id)` 给出稳定、独立的原生身份；重启不重新分配，且不与根复用同一个原生 id。
 - `readNativeTranscriptFamily(directory)` 返回原子发布的清单 `{ version: 1, root, members: [{ id, path, nativeSessionId, name?, forkOf? }] }`，文件名为 `native-sessions.json`；`name` 与 `forkOf: { conversationId, entryId } | null` 是原生记录的导航摘要；旧清单可省略，缺少成员的较旧读取不会清空已绑定分支的摘要。旧宿主无清单返回 `null`，损坏／重复成员或新增摘要类型无效返回 409。
 - 原生 `pi-desktop-family` 条目的 `{ owner, conversationId }` 是只读互操作归属，供发现器处理文件与清单之间的发布窗口。清单和标记都不是第二份会话真相；分支与上下文始终以 Durable 为准。
@@ -134,8 +134,8 @@ Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契�
 - `test/bridge.test.mjs`：未声明能力的宿主返回 `supported: false`；声明后按 `id` 传参且只调用一次。
 - `test/boundary-contracts.test.mjs`：Host capability 集包含 `sessionTree`（41 个键）。
 
-默认模式的补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。
+默认新创建由 `test/desktop-independent-fork.test.mjs` 与 `test/desktop-branch-family-browser-check.mjs` 验证独立 worker、同级条目、三个入口、退回与异步导航。存量兼容补充证据：`test/desktop-branch-family.test.mjs`（真实 Host／worker／runtime、独立用量、根与分支转录、整族忙闲与重启／迁移恢复）、`test/session-family-ownership.test.mjs`（发现不创建 Pi 替身），以及 `test/desktop-branch-family-browser-check.mjs`（会话栏与树节点分叉、浏览器内零用量、源不变、随后切换）。后者纳入 `test:workspace:browser`。
 
-多次退回的来源、重启与再次分叉见 `test/durable-rewind-origins.test.mjs`；原生编辑／压缩／批量贡献的来源投影见 `test/native-rewind-context.test.mjs`。默认浏览器验收也覆盖两次退回后从可见 Q1 分叉，不能带入 Q2/Q4；外层左侧工作区显示同一 worker 的分支按钮，内外会话切换同步，刷新后仍可进入；右键和 Shift+F10 从按钮的固定会话当前位置创建新会话，不偷用 iframe 的当前选择。分支菜单不提供外层 Agent 的进程归档、人格或重命名操作。
+多次退回的来源、重启与再次分叉见 `test/durable-rewind-origins.test.mjs`；原生编辑／压缩／批量贡献的来源投影见 `test/native-rewind-context.test.mjs`。默认浏览器验收覆盖多次退回后从 Q1 创建独立会话，不能带入 Q2/Q4；同级条目、焦点与刷新保持正确，工作台仍可退回。存量按钮及首次加载／连续选择竞态由 `test/desktop-sidebar-navigation-browser-check.mjs` 保留验证；Shift+F10 仍固定旧分支来源，旧菜单不提供根进程归档、人格或重命名。
 
 入口与管理按钮门控、读取生命周期见 [会话只读面板契约](read-panels.md)。`capabilities.sessionTree` 显式来自 Host；unsupported 时内置页及会话栏的分支树入口一起隐藏。只读仅展示，远程不放宽既有分支命令裁剪。

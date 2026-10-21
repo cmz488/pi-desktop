@@ -15,6 +15,7 @@ import {
   openSessionArchives,
   assertNoNativeTui,
   readNativeRecord,
+  readForkSnapshot,
 } from "../session/pi-session-storage.mjs";
 import { projectPiRecord } from "./pi-sessions.mjs";
 
@@ -33,6 +34,8 @@ import { projectPiRecord } from "./pi-sessions.mjs";
  */
 
 const FORK_REQUEST_MS = 12000;
+const AGENT_NAME_LIMIT = 120;
+const FORK_NAME_SUFFIX = " · 分支";
 const runningState = (state) =>
   ["starting", "running", "stopping"].includes(state.status);
 
@@ -125,6 +128,27 @@ export function createSupervisor(store, options) {
     const { agent, project } = await lookup(id);
     if (agent.source === "pi")
       throw new DeskError(409, "此会话由 Pi TUI 管理，Desktop 仅同步查看记录");
+    if (agent.nativeInitializationPending) {
+      if (!project) throw new DeskError(409, "继承记录的项目已不可用");
+      const seed = await readForkSnapshot(
+        agent.nativeSessionId,
+        project.cwd,
+        options.agentDir,
+        agent.nativeInitializationSource,
+      );
+      const patch = {
+        nativeSessionPath: seed.path,
+        createdFrom: seed.createdFrom,
+        nativeInitializationPending: false,
+      };
+      await store.update({}, (data) => {
+        const row = data.agents.find((entry) => entry.id === id);
+        Object.assign(row, patch);
+        delete row.nativeInitializationSource;
+        delete row.nativeInitializationError;
+      });
+      Object.assign(agent, patch);
+    }
     if (closing) throw new DeskError(409, "Desktop 正在关闭");
     let state = processes.get(id);
     if (state?.status === "running") return state;
@@ -259,6 +283,58 @@ export function createSupervisor(store, options) {
       revision: profile.revision,
       ...patch,
     });
+  }
+  async function createConversation(input, initialize, source) {
+    const created = await store.agent({
+      ...input,
+      name: input.name ?? "新对话",
+    });
+    if (initialize) {
+      // 先保留新身份，发现器不会把发布中的副本误认成另一份 TUI 会话。
+      await store.update({}, (data) =>
+        Object.assign(
+          data.agents.find((row) => row.id === created.id),
+          {
+            nativeSessionId: created.id,
+            nativeInitializationPending: true,
+            nativeInitializationSource: source,
+          },
+        ),
+      );
+      let seed;
+      try {
+        seed = await initialize(created.id);
+      } catch (error) {
+        await store.update({}, (data) => {
+          // 4xx 在原生发布之前拒绝；网络／5xx 的结果不确定，保留身份但禁止空白启动。
+          if (error.status >= 400 && error.status < 500)
+            data.agents = data.agents.filter((row) => row.id !== created.id);
+          else
+            data.agents.find(
+              (row) => row.id === created.id,
+            ).nativeInitializationError =
+              "继承记录初始化结果未确认，请重试启动检查记录";
+        });
+        throw error;
+      }
+      await store.update({}, (data) =>
+        Object.assign(
+          data.agents.find((row) => row.id === created.id),
+          {
+            nativeSessionId: seed.nativeSessionId,
+            nativeSessionPath: seed.path,
+            createdFrom: seed.createdFrom,
+            nativeInitializationPending: false,
+            nativeInitializationSource: undefined,
+          },
+        ),
+      );
+    }
+    await store.update({}, (data) => {
+      data.agents.find((row) => row.id === created.id).desired = true;
+    });
+    await start(created.id);
+    return created;
   }
   async function closeHistory(id) {
     const prior = histories.get(id);
@@ -427,7 +503,8 @@ export function createSupervisor(store, options) {
                   state?.error ??
                   row.archiveError ??
                   row.familyError ??
-                  row.migrationError,
+                  row.migrationError ??
+                  row.nativeInitializationError,
                 historyAvailable:
                   row.source === "pi" ||
                   row.archiveStored ||
@@ -507,14 +584,42 @@ export function createSupervisor(store, options) {
             throw new DeskError(403, "此会话不提供创建分支");
           if (!snapshot.agents.some((row) => row.id === selected))
             throw new DeskError(404, "会话不存在");
-          const result = await request(`/api/command?sessionId=${selected}`, {
-            command: "fork",
-            id: selected,
-            sessionId: String(selected),
-            mode: "tail",
-          });
-          await families.remember(agent);
-          return result;
+          const created = await createConversation(
+            {
+              projectId: project.id,
+              name: `${snapshot.name.slice(0, AGENT_NAME_LIMIT - FORK_NAME_SUFFIX.length)}${FORK_NAME_SUFFIX}`,
+              approvalMode: agent.approvalMode,
+              promptProfileId: agent.promptProfileId,
+            },
+            (nativeId) =>
+              request(`/api/fork-source?sessionId=${selected}`, {
+                id: selected,
+                nativeId,
+                ...(input.mode === "tail" || input.entryId === undefined
+                  ? {}
+                  : { entryId: input.entryId }),
+                ...(input.expectedEntryId === undefined
+                  ? {}
+                  : { expectedEntryId: input.expectedEntryId }),
+              }),
+            {
+              agentId: agent.id,
+              generation: input.generation,
+              conversationId: selected,
+              ...(input.mode === "tail" || input.entryId === undefined
+                ? {}
+                : { entryId: input.entryId }),
+              ...(input.expectedEntryId === undefined
+                ? {}
+                : { expectedEntryId: input.expectedEntryId }),
+            },
+          );
+          const opened = await worker(created.id, "/api/agent");
+          return {
+            agentId: created.id,
+            generation: 0,
+            sessionId: String(opened.active.id),
+          };
         }
         if (command === "project.rename") {
           if (
@@ -704,17 +809,7 @@ export function createSupervisor(store, options) {
             throw new DeskError(409, "请先停止该项目的 Agent 再修改配置");
           return store.project(input);
         }
-        if (command === "conversation.create") {
-          const created = await store.agent({
-            ...input,
-            name: input.name ?? "新对话",
-          });
-          await store.update({}, (data) => {
-            data.agents.find((row) => row.id === created.id).desired = true;
-          });
-          await start(created.id);
-          return created;
-        }
+        if (command === "conversation.create") return createConversation(input);
         if (command === "agent.save") {
           if (input.id && running(input.id))
             throw new DeskError(409, "请先停止 Agent 再修改配置");

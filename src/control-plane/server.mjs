@@ -40,12 +40,18 @@ const remoteWorkspaceCommands = new Set([
   "agent.restart",
 ]);
 
-async function body(request) {
+const CONFIG_BODY_BYTES = 256 * 1024;
+const AGENT_COMMAND_BYTES = 768 * 1024;
+async function body(request, limit = CONFIG_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 256 * 1024) throw new DeskError(413, "配置内容过大");
+    if (size > limit)
+      throw new DeskError(
+        413,
+        limit === CONFIG_BODY_BYTES ? "配置内容过大" : "请求内容过大",
+      );
     chunks.push(chunk);
   }
   try {
@@ -97,7 +103,7 @@ function headers(source) {
   );
 }
 // Stream the existing Pi UI and SSE without buffering transcripts or tool output.
-function proxy(request, response, target, path, onAccepted) {
+function proxy(request, response, target, path, onAccepted, payload) {
   const url = new URL(target);
   const incoming = new URL(`http://localhost${path}`);
   url.pathname = incoming.pathname;
@@ -107,6 +113,9 @@ function proxy(request, response, target, path, onAccepted) {
   forwarded.host = url.host;
   if (request.headers.origin) forwarded.origin = url.origin;
   delete forwarded.referer;
+  const encoded =
+    payload === undefined ? undefined : Buffer.from(JSON.stringify(payload));
+  if (encoded) forwarded["content-length"] = String(encoded.length);
   const upstream = httpRequest(
     url,
     { method: request.method, headers: forwarded },
@@ -126,7 +135,8 @@ function proxy(request, response, target, path, onAccepted) {
     else response.end();
   });
   response.once("close", () => upstream.destroy());
-  request.pipe(upstream);
+  if (encoded) upstream.end(encoded);
+  else request.pipe(upstream);
 }
 
 export async function startDesktopHost(options = {}) {
@@ -433,7 +443,46 @@ export async function startDesktopHost(options = {}) {
             generation < 0)
         )
           throw new DeskError(422, "Agent 存储代际无效");
+        if (route[2] === "/api/fork-source")
+          throw new DeskError(403, "分支快照只供 Desktop 宿主初始化会话");
         const target = await supervisor.openTarget(route[1], generation);
+        let commandInput;
+        if (request.method === "POST" && route[2] === "/api/command") {
+          commandInput = await body(request, AGENT_COMMAND_BYTES);
+          if (commandInput.command === "fork") {
+            if (request.headers["x-pi-remote-client"] === "1")
+              throw new DeskError(403, "远程连接不提供创建分支");
+            if (!Number.isSafeInteger(commandInput.id) || commandInput.id < 0)
+              throw new DeskError(422, "会话 ID 无效");
+            const selected =
+              url.searchParams.get("sessionId") ?? url.searchParams.get("id");
+            if (
+              (selected !== null && Number(selected) !== commandInput.id) ||
+              (commandInput.sessionId !== undefined &&
+                String(commandInput.sessionId) !== String(commandInput.id))
+            )
+              throw new DeskError(409, "操作目标与所选 Agent 不一致");
+            const currentGeneration =
+              generation ??
+              (await supervisor.read()).agents.find(
+                (row) => row.id === route[1],
+              )?.generation ??
+              0;
+            sendJson(
+              response,
+              200,
+              await supervisor.execute("conversation.fork", {
+                id: route[1],
+                generation: currentGeneration,
+                conversationId: commandInput.id,
+                mode: commandInput.mode,
+                entryId: commandInput.entryId,
+                expectedEntryId: commandInput.expectedEntryId,
+              }),
+            );
+            return;
+          }
+        }
         const settingsMutation =
           request.method === "POST" && route[2] === "/api/settings";
         const forward = () =>
@@ -450,6 +499,7 @@ export async function startDesktopHost(options = {}) {
                 : settingsMutation
                   ? () => scheduleSettingsReload()
                   : undefined,
+            commandInput,
           );
         const sharedMutation =
           request.method === "POST" &&

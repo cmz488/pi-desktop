@@ -145,6 +145,36 @@ export async function desktopFixture(options = {}) {
     get app() {
       return app;
     },
+    async legacyFork(agentId, sessionId, input = {}) {
+      // 仅布置存量族内记录：新创建语义的断言必须走 Desktop Host URL，不能用此入口替代。
+      const origin = new URL(app.supervisor.target(agentId)).origin;
+      const response = await fetch(
+        `${origin}/api/command?sessionId=${sessionId}`,
+        {
+          method: "POST",
+          headers: { Origin: origin, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...input,
+            command: "fork",
+            id: Number(sessionId),
+            sessionId: String(sessionId),
+          }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok)
+        throw Object.assign(new Error(result.error), {
+          status: response.status,
+        });
+      await until(
+        () => call("/api/workspace"),
+        (catalog) =>
+          catalog.agents
+            .find((row) => row.id === agentId)
+            ?.branches.some((row) => String(row.id) === result.sessionId),
+      );
+      return result;
+    },
     async reopen() {
       await app.stop();
       app = await startDesktopHost({

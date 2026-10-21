@@ -63,16 +63,21 @@ test(
       id: a.id,
       generation: 0,
     });
-    const tree = await f.call(`${prefix(a.id)}/api/tree?id=${fork.sessionId}`);
-    assert.deepEqual(tree.forkOf, {
-      conversationId: Number(rootA),
-      entryId: point,
-    });
+    assert.notEqual(fork.agentId, a.id);
+    const tree = await f.call(
+      `${prefix(fork.agentId)}/api/tree?id=${fork.sessionId}`,
+    );
+    assert.equal(tree.forkOf, null);
     assert.deepEqual(
-      (await state(a.id, fork.sessionId)).messages.map((row) => row.text),
+      (await state(fork.agentId, fork.sessionId)).messages.map(
+        (row) => row.text,
+      ),
       ["A question", "answer: A question"],
     );
-    assert.equal((await state(a.id, fork.sessionId)).stats.tokens.total, 0);
+    assert.equal(
+      (await state(fork.agentId, fork.sessionId)).stats.tokens.total,
+      0,
+    );
     assert.deepEqual(
       (await state(a.id, rootA)).messages,
       before.messages,
@@ -82,42 +87,44 @@ test(
     const index = await f.call("/api/workspace?view=index");
     const owner = index.agents.find((row) => row.id === a.id);
     assert.equal(owner.projectId, project.id);
-    assert.equal(owner.pid, pid, "历史分支不创建第二个 worker");
-    assert.equal(owner.branches.length, 1);
-    assert.equal(owner.branches[0].id, Number(fork.sessionId));
-    assert.deepEqual(owner.branches[0].forkOf, tree.forkOf);
+    assert.equal(owner.pid, pid, "来源的 worker 不改变");
+    assert.equal(owner.branches.length, 0);
+    const sibling = index.agents.find((row) => row.id === fork.agentId);
+    assert.equal(sibling.projectId, project.id);
+    assert.notEqual(sibling.pid, pid);
+    assert.equal(sibling.createdFrom.agentId, a.id);
+    assert.equal(sibling.createdFrom.conversationId, Number(rootA));
+    assert.equal(sibling.createdFrom.entryId, point);
     assert.equal(
       index.agents.find((row) => row.id === b.id).branches.length,
       0,
     );
     assert.equal(
       index.agents.length,
-      2,
-      "分支只增加导航会话，不伪造 Desktop Agent",
+      3,
+      "新分支直接增加正常独立会话，不在来源内部增加导航子项",
     );
     assert.equal("nativeSessions" in owner, false);
     assert.equal("nativeSessionPath" in owner, false);
-    const nativeName = (await f.call(`${prefix(a.id)}/api/sessions`)).rows.find(
-      (row) => row.id === fork.sessionId,
-    ).name;
-    assert.equal(
-      owner.branches[0].name,
-      nativeName,
-      "导航名称来自原生会话，不另造一份上下文",
-    );
-    await turn(a.id, fork.sessionId, "branch question");
+    const nativeName = (
+      await f.call(`${prefix(fork.agentId)}/api/sessions`)
+    ).rows.find((row) => row.id === fork.sessionId).name;
+    assert.equal(sibling.name, nativeName, "同级条目仍使用正常会话名称");
+    await turn(fork.agentId, fork.sessionId, "branch question");
     const child = await f.command("conversation.fork", {
-      id: a.id,
+      id: fork.agentId,
       generation: 0,
       conversationId: Number(fork.sessionId),
     });
+    assert.notEqual(child.agentId, fork.agentId);
     assert.equal(
-      (await f.call(`${prefix(a.id)}/api/tree?id=${child.sessionId}`)).forkOf
-        .conversationId,
-      Number(fork.sessionId),
+      (await f.call("/api/workspace?view=index")).agents.find(
+        (row) => row.id === child.agentId,
+      ).createdFrom.agentId,
+      fork.agentId,
     );
     assert.ok(
-      (await state(a.id, child.sessionId)).messages.some(
+      (await state(child.agentId, child.sessionId)).messages.some(
         (row) => row.text === "branch question",
       ),
     );
@@ -140,6 +147,38 @@ test(
       ),
       (error) => error.status === 403,
     );
+    const guardedCount = (await f.call("/api/workspace")).agents.length;
+    for (const [path, input, extra, status] of [
+      [
+        `${prefix(a.id)}/api/fork-source`,
+        { id: Number(rootA), nativeId: b.id },
+        {},
+        403,
+      ],
+      [
+        `${prefix(a.id)}/api/command?sessionId=${rootA}`,
+        { command: "fork", id: Number(rootA), sessionId: rootA },
+        { headers: { "x-pi-remote-client": "1" } },
+        403,
+      ],
+      [
+        `${prefix(a.id)}/api/command?sessionId=${Number(rootA) + 1}`,
+        { command: "fork", id: Number(rootA), sessionId: rootA },
+        {},
+        409,
+      ],
+      [
+        `${prefix(a.id)}/api/command?sessionId=${rootA}&generation=1`,
+        { command: "fork", id: Number(rootA), sessionId: rootA },
+        {},
+        409,
+      ],
+    ])
+      await assert.rejects(
+        f.call(path, input, extra),
+        (error) => error.status === status,
+      );
+    assert.equal((await f.call("/api/workspace")).agents.length, guardedCount);
     const readOnly = await f.command("conversation.create", {
       name: "只读会话",
     });
@@ -230,7 +269,7 @@ test(
     assert.deepEqual(
       (
         await f.call(
-          `${prefix(actor.id)}/api/state?sessionId=${fork.sessionId}`,
+          `${prefix(fork.agentId)}/api/state?sessionId=${fork.sessionId}`,
         )
       ).messages.map((row) => row.text),
       ["pending question"],

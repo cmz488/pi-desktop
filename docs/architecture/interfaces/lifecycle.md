@@ -42,9 +42,9 @@ class DeskError extends Error { status }
 | `agent.archive`、`agent.restore`、`agent.resume`                          | 归档／恢复／续跑 |
 | `conversation.create`、`conversation.fork`、`prompt.save`                 | 会话与提示词     |
 
-`conversation.fork` 输入 `{ id: desktopAgentId, generation, conversationId? }`，只在本地受管、非只读且运行中的 worker 上执行。省略 `conversationId` 指向该 Agent 的根会话；指定时必须是它的受管历史会话。它薄转发现有 `fork { mode: "tail" }`，创建继承目标当前位置的新会话，不新建 Desktop Agent／SQLite／worker，不重放模型；忙碌快照仍可分叉。返回原生命令的 `{ id, sessionId, ... }`。缺少或非法 generation／会话 id 为 422，代际过期或进程未运行为 409，无权限或远程入口为 403，不存在的会话为 404。实际进程转发再次检查 generation；整次原生 RPC 预算 12 秒，超时为 503，提示刷新确认是否已提交，不把超时解释为中止任务。
+`conversation.fork` 在本地受管、非只读且运行中的来源上创建**正常独立 Desktop 会话**，返回 `{agentId,generation,sessionId}`；原生记录、有效上下文和创建时配置继承，源不变。省略 `conversationId` 取根，指定时固定该历史会话；可选精确位置与 tail 检查点、默认 worker URL 的统一入口及失败恢复见[独立会话契约](independent-sessions.md)。新会话直接进入左侧原项目的同级列表，复用正常新建的 worker／存储／配置绑定，不新设计回收策略。忙时复制已提交快照，不重放模型或复制任务。缺少或非法 generation／会话 id 为 422，代际过期或进程未运行为 409，无权限或远程入口为 403，不存在的会话为 404。原生 RPC 预算仍为 12 秒，超时为 503，提示刷新确认结果，不把超时解释为中止。
 
-`read()` 与 `GET /api/workspace?view=index` 的每个 Agent 追加 `rootConversationId?: number`、`branches: [{ id, name, forkOf: { conversationId, entryId } }]`，并在 index 保留 `generation`。它们是当前代际的导航投影，来自 worker 发布的清单，不暴露内部文件路径，不承载上下文或权限；旧清单升级前可为空。停止、重启、归档不把分支伪装成另一个 Agent。客户端选择按 Agent／generation 存在 sessionStorage；iframe 加载与首次状态就绪后应用最新有效选择，首次默认会话通知不得覆盖加载期间的导航意图。旧窗口或失效代际的消息不能改变当前选择。停止的历史分支必须先启动原 worker，再进入原数值会话，不能把根的单文件只读历史冒充为该分支。
+`read()` 与 `GET /api/workspace?view=index` 的每个 Agent 追加 `rootConversationId?: number`、`branches: [{ id, name, forkOf: { conversationId, entryId } }]`，并在 index 保留 `generation`。它们是当前代际的导航投影，来自 worker 发布的清单，不暴露内部文件路径，不承载上下文或权限；旧清单升级前可为空。停止、重启、归档不把存量族内分支伪装成另一个 Agent。新创建的独立会话本来就是新的同级 Agent，index 另含只追溯的 `createdFrom`，不把它放入旧 `branches`。客户端选择按 Agent／generation 存在 sessionStorage；iframe 加载与首次状态就绪后应用最新有效选择，首次默认会话通知不得覆盖加载期间的导航意图。旧窗口或失效代际的消息不能改变当前选择。停止的历史分支必须先启动原 worker，再进入原数值会话，不能把根的单文件只读历史冒充为该分支。
 
 ## 不变量
 
@@ -57,7 +57,7 @@ class DeskError extends Error { status }
 - **可选代际路由**：Desktop iframe 的任务请求携带 generation；`openTarget` 校验目录、`target` 再校验实际进程，旧代际返回 409。未带参数的旧 URL 保持兼容，不放宽原 Host 任务管理的必填代际校验。
 - **任务管理不占配置串行队列**：全 Host 等待只观察原生工作，断连不 abort task；实际进程 generation 再次校验，不把旧库同号 task 转发给新库。接口与错误见 [Host 任务契约](host-tasks.md)。
 - **catalog 是只读快照 + revision**：`store.read()` 返回 `{ revision, projects, agents }`；写入走 `mutateDocument` 的锁 + revision 栅栏。
-- **一个 Desktop Agent 一个 writer**：默认 worker 承载该 Agent 的会话族，历史分支是同一 Harness 内独立的 Durable 会话。根保留 `agents/<id>` 下的元数据，分支在该目录的 `branches/<conversationId>` 下各自保存转录元数据；重启后原生身份与路径不变。单进程／注入 workspace 模式仍只绑定最初的会话。
+- **一个 Desktop Agent 一个 writer**：新继承会话与普通新建一样使用独立 worker／SQLite；`createdFrom` 仅追溯，不作为管理边。存量族内分支仍在原 Harness，根保留 `agents/<id>` 元数据、旧分支保留 `branches/<conversationId>` 转录元数据，重启不迁移或更换身份。单进程／注入 workspace 的低层原生分叉能力不变。
 
 ## 顺序约束
 
@@ -90,7 +90,7 @@ class DeskError extends Error { status }
 ## 可执行证据
 
 - `test/desktop-sidebar-navigation-browser-check.mjs`：真实 HTTP 首次回执延迟下的连续分支选择、代际门禁、内外导航同步与重载保留；归档分支不暴露 Agent 命令，根菜单仍可恢复全族。
-- `test/desktop-sidebar-fork.test.mjs`：跨项目同号会话、当前位置继承、忙碌快照、只读／远程／停止／代际门禁、停止和 Host 重启后的导航保留，以及 SIGSTOP worker 的有界超时。
+- `test/desktop-sidebar-fork.test.mjs`、`test/desktop-independent-fork.test.mjs`：独立身份与进程、跨项目同号会话、当前位置继承、忙碌快照及任务隔离、只读／远程／停止／代际门禁、失败初始化恢复、配置和重启，以及 SIGSTOP worker 的有界超时。
 - `test/desktop-control-plane.test.mjs`：目录发现、命令表与目标校验（`npm run test:workspace`）。
 - `test/desktop-process-recovery.test.mjs`：进程重启与恢复意图先于启动完成。
 - `test/desktop-pi-sessions.test.mjs`：Pi 会话扫描与投影。
@@ -100,7 +100,7 @@ class DeskError extends Error { status }
 - 会话树退回与分叉：`test/durable-session-tree.test.mjs`（会话与 JSONL）、`npm run test:durable:browser`（消息右键菜单）。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。
 
-## 会话族的生命周期
+## 存量会话族的生命周期
 
 - `src/control-plane/session-families.mjs` 只消费 worker 的原生清单与文件标记；`mergeNativeSessions(before?, next?)` 合并已验证的归属列表并保持 id／path／nativeSessionId 唯一，HTTP 工作区不额外暴露分支文件路径。发现器不会把同族 JSONL 另列为 Pi 只读 Agent；旧单文件 worker 的清单可以缺省。
 - `GET /api/agent` 的追加字段 `familyIdle` 用于整族配置门禁；所有实时任务结束前，共享人格、Agent 运行配置与权限调整不能误用根会话的空闲状态。未被引用的新提示词追加仍保留原有语义。

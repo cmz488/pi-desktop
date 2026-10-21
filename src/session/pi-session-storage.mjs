@@ -21,9 +21,10 @@ import { DeskError } from "../config/config-store.mjs";
 /**
  * 原生会话存储：Durable 转录的 Pi 互操作导出与原生文件的可恢复归档。
  *
- * 接口：目录／摘要／记录 helper、`openNativeTranscript`、`openSessionArchives`；
- *   句柄的 `rewindContext` 与错误约束见 docs/architecture/interfaces/session-tree.md
- *   及 lifecycle.md；`rewindMessages` 保留仅取消息的兼容入口。
+ * 接口：目录／摘要／记录 helper、`readForkSnapshot`、`openNativeTranscript`、`openSessionArchives`；
+ *   `forkSnapshot` 见 docs/architecture/interfaces/independent-sessions.md；退回与错误
+ *   见 docs/architecture/interfaces/session-tree.md 及 lifecycle.md；
+ *   `rewindMessages` 保留仅取消息的兼容入口。
  * 不变量：Durable 是唯一状态真相；原生消息与导出检查点原子发布；退回的活跃路径、
  *   编辑和压缩由 Pi 投影决定，归档先保全 SQLite 记录，不覆盖冲突文件。
  * 错误：路径越界、占用／摘要冲突、大小／格式无效抛 DeskError；文件系统错误原样抛出。
@@ -31,6 +32,7 @@ import { DeskError } from "../config/config-store.mjs";
 
 /* The transcript and archive paths only need the session-manager submodule.
  * Capture it once so the synchronous archive readers keep their contract. */
+const MAX_NATIVE_RECORD_BYTES = 64 * 1024 * 1024;
 let sessionSdk;
 const sessionModule = async () => (sessionSdk ??= await loadPiSessionManager());
 
@@ -89,7 +91,7 @@ export async function readNativeRecord(path, agentDir) {
   const file = await open(resolved, "r");
   try {
     const before = await file.stat();
-    if (!before.isFile() || before.size > 64 * 1024 * 1024)
+    if (!before.isFile() || before.size > MAX_NATIVE_RECORD_BYTES)
       throw new DeskError(413, "会话记录超过 64 MiB，暂不能打开");
     const raw = await file.readFile("utf8"),
       after = await file.stat();
@@ -103,6 +105,34 @@ export async function readNativeRecord(path, agentDir) {
   } finally {
     await file.close();
   }
+}
+export async function readForkSnapshot(nativeId, cwd, agentDir, source) {
+  const sdk = await sessionModule();
+  const path = sdk.SessionManager.findById(
+    cwd,
+    nativeId,
+    await nativeSessionDirectory(cwd, agentDir),
+  );
+  if (!path)
+    throw new DeskError(409, "尚未找到完整继承记录，请稍后重试或重新创建分支");
+  const record = await readNativeRecord(path, agentDir);
+  const origin = record.entries.findLast(
+    (entry) =>
+      entry.customType === "pi-desktop-origin" &&
+      entry.data?.nativeSessionId === nativeId,
+  )?.data?.createdFrom;
+  if (
+    record.header.id !== nativeId ||
+    !source ||
+    origin?.agentId !== source.agentId ||
+    origin?.generation !== source.generation ||
+    origin?.conversationId !== source.conversationId ||
+    (source.entryId !== undefined && origin?.entryId !== source.entryId) ||
+    (source.expectedEntryId !== undefined &&
+      origin?.entryId !== source.expectedEntryId)
+  )
+    throw new DeskError(409, "继承记录来源不一致，未启动会话");
+  return { path: record.path, nativeSessionId: nativeId, createdFrom: origin };
 }
 // This detects native CLI owners on the supported Linux desktop. It deliberately
 // blocks any Pi CLI in this cwd: the TUI offers no cross-process writer lock.
@@ -267,13 +297,29 @@ export async function openNativeTranscript({
     if (record && !marks.length) {
       const projected = manager.buildSessionProjection();
       const active = await workspace.agent(id);
+      const inherited = record.entries.findLast(
+        (entry) =>
+          entry.customType === "pi-desktop-origin" &&
+          entry.data?.nativeSessionId === record.header.id,
+      )?.data?.configuration;
       await workspace.execute("configure", {
         id,
         revision: active.revision,
         ...(projected.model ? { model: projected.model } : {}),
         thinkingLevel: projected.thinkingLevel,
+        ...(inherited
+          ? {
+              model: inherited.model,
+              thinkingLevel: inherited.thinkingLevel,
+              instructions: inherited.instructions,
+              tools: inherited.tools,
+              nativeDefaults: inherited.nativeDefaults,
+            }
+          : {}),
       });
-      const imported = await workspace.importNative(id, record.entries);
+      const imported = await workspace.importNative(id, record.entries, {
+        digest: record.digest,
+      });
       through = imported.through;
       for (const pair of imported.mapping) mapping.set(...pair);
       manager.appendCustomEntry("pi-desktop-sync", {
@@ -307,7 +353,7 @@ export async function openNativeTranscript({
         [manager.getHeader(), ...manager.getEntries()]
           .map((row) => JSON.stringify(row))
           .join("\n") + "\n";
-      if (Buffer.byteLength(raw) > 64 * 1024 * 1024)
+      if (Buffer.byteLength(raw) > MAX_NATIVE_RECORD_BYTES)
         throw new DeskError(
           413,
           "会话记录超过 64 MiB，请保留 SQLite 并在 Pi 中整理历史",
@@ -341,9 +387,11 @@ export async function openNativeTranscript({
       await rename(metaTemp, metadataPath);
     }
     let dirty = rebuilding || (record && !marks.length);
+    let synchronizedProfile;
     async function synchronize() {
       if (failure) throw failure;
       const { active, entries } = await workspace.transcript(id);
+      synchronizedProfile = active;
       // 发现器只能识别原生文件，必须显式保留所属 Desktop Agent，不能把分支误认成另一个宿主。
       if (
         familyOwner &&
@@ -501,7 +549,9 @@ export async function openNativeTranscript({
       // Setup-only sessions follow Pi's own rule: no JSONL until the first message.
       if (
         dirty &&
-        manager.getEntries().some((entry) => entry.type === "message")
+        // 已发布的空快照也必须记录自己的导入检查点，重启不能再次覆盖本地配置。
+        (record ||
+          manager.getEntries().some((entry) => entry.type === "message"))
       ) {
         await save();
         dirty = false;
@@ -552,6 +602,113 @@ export async function openNativeTranscript({
     await sync();
     return {
       sync,
+      async forkSnapshot({ nativeId, entryId, expectedEntryId }) {
+        try {
+          sdk.assertValidSessionId(nativeId);
+        } catch {
+          throw new DeskError(422, "新会话原生身份无效");
+        }
+        const next = queue.then(async () => {
+          try {
+            await synchronize();
+          } catch (error) {
+            failure = error;
+            throw error;
+          }
+          const reverse = new Map(
+            [...mapping].map(([key, value]) => [value, key]),
+          );
+          const tail = manager
+            .getBranch()
+            .findLast(
+              (entry) =>
+                reverse.has(entry.id) &&
+                sdk.sessionEntryToContextMessages(entry).length,
+            );
+          const currentEntryId = tail ? reverse.get(tail.id) : null;
+          if (
+            expectedEntryId !== undefined &&
+            expectedEntryId !== currentEntryId
+          )
+            throw new DeskError(409, "当前位置已变化，请刷新后创建分支");
+          const native =
+            entryId === undefined ? undefined : mapping.get(entryId);
+          if (entryId !== undefined && native === undefined)
+            throw new DeskError(422, "分支位置不存在或尚未导出");
+          const sessionDir = await nativeSessionDirectory(cwd, agentDir);
+          if (sdk.SessionManager.findById(cwd, nativeId, sessionDir))
+            throw new DeskError(409, "新会话原生身份已存在");
+          const created = sdk.SessionManager.create(cwd, sessionDir, {
+            id: nativeId,
+            parentSession: metadata.path,
+          });
+          // 复制公开的原生 entries，而非重读可变文件；SDK 仍决定 leaf、编辑和压缩语义。
+          const snapshot = sdk.SessionManager.inMemory(cwd, undefined, [
+            created.getHeader(),
+            ...manager.getEntries(),
+          ]);
+          if (native !== undefined) snapshot.branch(native);
+          const [agentId, generation] = owner.split(":");
+          const createdFrom = {
+            agentId,
+            generation: Number(generation),
+            conversationId: id,
+            entryId: entryId ?? currentEntryId,
+            nativeSessionId: metadata.nativeSessionId,
+          };
+          const {
+            name,
+            model,
+            thinkingLevel,
+            instructions,
+            tools,
+            nativeDefaults,
+          } = synchronizedProfile;
+          snapshot.appendCustomEntry("pi-desktop-origin", {
+            version: 1,
+            nativeSessionId: nativeId,
+            createdFrom,
+            configuration: {
+              model,
+              thinkingLevel,
+              instructions,
+              tools,
+              nativeDefaults,
+            },
+          });
+          const raw =
+            [snapshot.getHeader(), ...snapshot.getEntries()]
+              .map((entry) => JSON.stringify(entry))
+              .join("\n") + "\n";
+          if (Buffer.byteLength(raw) > MAX_NATIVE_RECORD_BYTES)
+            throw new DeskError(413, "会话记录超过 64 MiB，暂不能创建分支");
+          const path = created.getSessionFile();
+          const temp = join(sessionDir, `.pi-desktop-fork-${randomUUID()}.tmp`);
+          const file = await open(temp, "wx", 0o600);
+          try {
+            try {
+              await file.writeFile(raw);
+              await file.sync();
+            } finally {
+              await file.close();
+            }
+            // link 不覆盖已存在的目标；初始化完成前，扫描器看不到半份 JSONL。
+            await link(temp, path);
+            const parent = await open(sessionDir, "r");
+            try {
+              await parent.sync();
+            } finally {
+              await parent.close();
+            }
+          } finally {
+            await unlink(temp);
+          }
+          return { path, nativeSessionId: nativeId, createdFrom, name };
+        });
+        // 新目标的写入／参数错误不能毒化来源的同步队列或取消来源工作。
+        queue = next.catch(() => {});
+        return next;
+      },
       /* 退回消息与来源必须来自同一个 Pi 投影，否则再次退回会把被放弃的历史混入原点。 */
       rewindContext,
       rewindMessages(entryId) {
