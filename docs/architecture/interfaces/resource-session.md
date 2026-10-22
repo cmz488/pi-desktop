@@ -107,6 +107,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 
 ## 可执行证据
 
+- `test/standard-extension-baseline.test.mjs`：真实 Pi 安装的两个普通扩展、发现／过滤／重载、工具／命令与原生对照；这是调查基线，不把事件／交互缺口列为已支持，详见[兼容矩阵](../../references/pi-extension-compatibility-baseline.md)。
 - `test/durable-features.test.mjs`：工具可用性、权限门控、ask_user／MCP 交互、启动对话框与 `agent_browser` 注册。
 - `test/subagent-reliability.test.mjs`：审批继承、停机权限变更、owned 交互、终态释放与历史不预热；浏览器工作台回归覆盖父界面批准／拒绝。
 - `test/pi-permissions.test.mjs`：审批模式与权限钩子。

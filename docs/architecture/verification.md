@@ -43,6 +43,12 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 测试使用临时目录和本地模型／Git／HTTPS 夹具，不触碰真实用户配置、会话或远端仓库。Chromium／Electron／PTY 的专项需要对应本机工具，详见 package.json 中各命令。真实 Tailscale 公网、第三方 OAuth 和任意 Pi 自定义 TUI 控件不能由本地夹具保证。
 
+## 标准 Pi 扩展兼容基线
+
+`node --test test/standard-extension-baseline.test.mjs` 已纳入 `npm test`：两个独立标准包经真实 Pi 安装／持久化／发现接入默认 Host，验证工具与参数／结果 hook、命令与普通 custom 消息、多次重载、私有状态、禁用／恢复及两包各自独立运行。相同源码另由内嵌 SDK 原生 runtime 对照输入决策、system override、消息替换、边界 continuation、标准 UI 协议和关闭。当前版本、来源、完整命令与已确认缺口见[扩展兼容基线](../references/pi-extension-compatibility-baseline.md)。
+
+这只是阶段 06 的兼容调查，不把诊断输出缺失的事件当作已支持，也不以原生 UI recorder 代替真实浏览器交互。两个扩展的 TypeScript 源码还需按基线给出的独立 `tsc` 命令检查；它们不使用 Desktop 声明或专用 adapter。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。
