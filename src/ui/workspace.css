@@ -790,9 +790,8 @@ body.sidebar-collapsed:not(.runtime-active) .mobile-header {
     opacity: 0;
     transform: translateX(-16px);
   }
-  /* A conversation switch swaps in a freshly created frame whose document is
-   * still empty; fading it in would dim the workspace over the shell backdrop
-   * and restart on every switch. Only placeholder surfaces animate. */
+  /* 新建会话帧尚未初始化；淡入会把它与外壳底色混合，重现切换时的发灰。
+   * 因此只让有意展示的占位面播放入场动画。 */
   #empty,
   #agent-boot {
     animation: workspace-surface-in 260ms var(--ease-jelly);

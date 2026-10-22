@@ -1145,54 +1145,27 @@ try {
       "Array.from(document.querySelectorAll('.agent')).some(row=>row.textContent.includes('Browser TUI history'))",
       { timeoutMs: 15000 },
     );
-    // 切到未运行的会话会重建整个 Agent iframe：它不能先以半透明绘制，也不能在
-    // 延迟模块运行前露出静态占位（示例会话标题、演示状态、独立的导航栏）。
-    await evaluate(`(() => {
-      const probe = (window.framePaintProbe = {
-        partial: 0, unthemed: 0, placeholder: 0, themed: 0,
-      });
-      const scan = () => {
-        for (const frame of document.querySelectorAll('iframe')) {
-          const opacity = Number(getComputedStyle(frame).opacity);
-          if (opacity < 1) probe.partial++;
-          const doc = frame.contentDocument;
-          const app = doc?.querySelector('.app');
-          if (!doc || !app) continue;
-          if (!doc.documentElement.dataset.theme) probe.unthemed++;
-          else probe.themed++;
-          if (
-            doc.documentElement.hasAttribute('data-booting') &&
-            getComputedStyle(app).visibility !== 'hidden'
-          )
-            probe.placeholder++;
-        }
-        probe.request = requestAnimationFrame(scan);
-      };
-      scan();
-    })()`);
     await evaluate(
       "Array.from(document.querySelectorAll('.agent')).find(row=>row.textContent.includes('Browser TUI history')).click()",
     );
     await until(
       "document.querySelector('#runtime')?.contentDocument?.querySelector('#native-history-toolbar')?.hidden===false",
     );
-    const paint = await evaluate(`(() => {
-      const probe = window.framePaintProbe;
-      cancelAnimationFrame(probe.request);
-      return {
-        partial: probe.partial,
-        unthemed: probe.unthemed,
-        placeholder: probe.placeholder,
-        themed: probe.themed,
-      };
-    })()`);
-    assert.equal(paint.partial, 0, "会话切换不能以半透明状态绘制工作区");
+    // 首帧和慢加载由 chat-first-paint-browser-check 的真实 HTTP 门闩验证；
+    // 这里确认当前目标的实际样式，而不是把任何缓存帧的主题标记当作成功。
     assert(
-      paint.themed > 0,
-      "回归探针必须真正观察到 Agent 画布，否则断言没有意义",
+      await evaluate(`(() => {
+        const frame=document.querySelector('#runtime'),doc=frame.contentDocument;
+        const s=(node,pseudo)=>doc.defaultView.getComputedStyle(node,pseudo);
+        return doc.querySelector('#session-title').textContent==='Browser TUI history'
+          && getComputedStyle(frame).opacity==='1'
+          && s(doc.body).colorScheme===document.documentElement.dataset.theme
+          && s(doc.body).backgroundColor==='rgba(0, 0, 0, 0)'
+          && s(doc.body,'::before').content==='none'
+          && s(doc.body,'::after').content==='none';
+      })()`),
+      "历史会话就绪后必须保持目标身份、主题与透明背景",
     );
-    assert.equal(paint.unthemed, 0, "Agent 画布必须在首次绘制前应用主题");
-    assert.equal(paint.placeholder, 0, "静态占位内容在首次渲染前不得上屏");
     assert(
       await evaluate(
         "document.querySelector('#runtime').contentDocument.querySelector('#composer').hidden",

@@ -6800,6 +6800,11 @@ async function boot() {
   $("#prompt").disabled = true;
   $("#send-button").disabled = true;
   $("#connection-status").textContent = "连接 Pi…";
+  // 首份快照尚未返回时，只展示真实的加载状态，不能沿用 HTML 里的示例身份。
+  $("#session-title").textContent = "正在载入会话…";
+  $("#runtime-label").textContent = "连接 Pi…";
+  $("#workspace-name").textContent = "工作空间";
+  $("#workspace-path").textContent = "正在载入…";
   // 停止会话由 pi-history 提供，不经过 Durable 的切换消息；首次读取同样显示骨架。
   renderConversationLoading("正在载入会话…");
   // 骨架已经是可展示的加载面：此时再显示外壳，避免静态占位内容闪现。

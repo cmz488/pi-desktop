@@ -102,6 +102,7 @@ body.chat-shell {
     inset 0 1px 0 var(--glass-highlight);
 }
 :root[data-theme="dark"],
+:root[data-theme="dark"] body.chat-shell,
 body.chat-shell.dark {
   color-scheme: dark;
   --canvas: #131d20;
@@ -185,19 +186,19 @@ body {
   isolation: isolate;
   background: var(--canvas);
 }
-body:not(.desktop-embedded)::before,
-body:not(.desktop-embedded)::after {
+:root:not([data-embed]) body:not(.desktop-embedded)::before,
+:root:not([data-embed]) body:not(.desktop-embedded)::after {
   content: "";
   position: fixed;
   pointer-events: none;
 }
-body:not(.desktop-embedded)::before {
+:root:not([data-embed]) body:not(.desktop-embedded)::before {
   z-index: -2;
   inset: -64px;
   background: var(--ambient);
   filter: blur(34px) saturate(120%);
 }
-body:not(.desktop-embedded)::after {
+:root:not([data-embed]) body:not(.desktop-embedded)::after {
   z-index: -1;
   inset: 0;
   background: var(--shell-wash);

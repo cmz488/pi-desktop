@@ -25,6 +25,27 @@ body.chat-shell.desktop-embedded {
 :root[data-booting] .app {
   visibility: hidden;
 }
+.chat-boot-status,
+.chat-boot-error {
+  display: none;
+}
+:root[data-booting] .chat-boot-status {
+  display: grid;
+  position: fixed;
+  inset: 0;
+  place-content: center;
+  gap: 12px;
+  text-align: center;
+}
+.chat-boot-status p {
+  margin: 0;
+}
+:root[data-boot-error] .chat-boot-loading {
+  display: none;
+}
+:root[data-boot-error] .chat-boot-error {
+  display: block;
+}
 .chat-shell .app {
   padding: 20px;
   gap: 24px;

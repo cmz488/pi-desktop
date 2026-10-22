@@ -92,13 +92,13 @@ const pages = {
     ["/", ["src/ui/chat/index.html", "text/html"]],
     ["/prototype.html", ["src/ui/chat/index.html", "text/html"]],
     ["/prototype.js", ["src/ui/chat/chat.js", javascript]],
-    ["/boot.js", ["src/ui/chat/boot.js", javascript]],
+    ["/boot.js", ["src/ui/boot.js", javascript]],
     ["/prototype.css", ["src/ui/chat/chat.css", "text/css"]],
   ],
   workspace: [
     ["/", ["src/ui/workspace.html", "text/html"]],
     ["/workspace.js", ["src/ui/workspace.js", javascript]],
-    ["/workspace-boot.js", ["src/ui/workspace-boot.js", javascript]],
+    ["/workspace-boot.js", ["src/ui/boot.js", javascript]],
     ["/workspace.css", ["src/ui/workspace.css", "text/css"]],
   ],
 };

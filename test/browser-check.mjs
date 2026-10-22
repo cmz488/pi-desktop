@@ -267,9 +267,7 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
   };
   const wait = async (predicate, sessionId) => {
     for (let i = 0; i < 100; i++) {
-      // 导航期间文档可能还未解析出目标节点：表达式抛错属于“未就绪”，继续等待。
-      const ready = await evaluate(predicate, sessionId).catch(() => false);
-      if (ready) return;
+      if (await evaluate(predicate, sessionId)) return;
       await pause(50);
     }
     console.error(
@@ -2064,7 +2062,7 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
     const aid = parallel.manager.focusId;
     await call("Page.navigate", { url: parallel.url });
     await wait(
-      `document.querySelector('#connection-status').textContent==='Pi 已连接'`,
+      `document.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
     );
     const type = async (text) =>
       evaluate(
