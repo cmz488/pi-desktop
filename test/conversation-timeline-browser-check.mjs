@@ -24,6 +24,10 @@ const utilities = source.slice(
   source.indexOf("const $ = (selector)"),
   source.indexOf("const live ="),
 );
+const records = source.slice(
+  source.indexOf("function applyRecord(record)"),
+  source.indexOf('$("#messages")?.addEventListener("contextmenu"'),
+);
 const html = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/prototype.css"></head><body><div style="display:flex;gap:12px;align-items:flex-start"><div id="messages" style="width:420px;height:600px;overflow:auto"></div><aside id="extension-rail" hidden><div id="extension-rail-list"></div></aside></div><script type="module">
 import { renderMarkdown } from '/markdown.mjs';
 import { projectConversationTimeline } from '/lazy-data.mjs';
@@ -38,10 +42,14 @@ async function loadMessageDetails(ids) {
   renderMessages(messageRows);
 }
 ${renderer}
+${records}
 window.conversationFixture={
-  render(rows,nextState={},enter=false) {state={sessionId:'fixture',idle:true,...nextState};messageDetails=new Map(nextState.messageDetails??[]);activeInteraction=nextState.interaction;activeCalls.clear();for(const call of nextState.activeCalls??[])activeCalls.set(call.id,call);renderMessages(rows,{enter});},
+  render(rows,nextState={},enter=false) {pendingConversation=undefined;conversationSwitching=false;state={sessionId:'fixture',idle:true,...nextState};messageDetails=new Map(nextState.messageDetails??[]);activeInteraction=nextState.interaction;activeCalls.clear();for(const call of nextState.activeCalls??[])activeCalls.set(call.id,call);renderMessages(rows,{enter});},
+  switching(id) {pendingConversation={sessionId:id};conversationSwitching=true;renderConversationLoading('正在切换会话…');},
+  redraw() {renderMessages(messageRows);},
+  record:applyRecord,
   stream(message) {state.streamingMessage=message;state.phase='thinking';state.idle=false;renderLiveConversation();},
-  loading() {state={sessionId:'fixture',idle:false,initializing:true};renderMessages([]);},
+  loading() {pendingConversation=undefined;conversationSwitching=false;state={sessionId:'fixture',idle:false,initializing:true};renderMessages([]);},
   get loaded(){return loaded;}
 };
 </script></body></html>`;
@@ -440,8 +448,7 @@ try {
     await evaluate("document.querySelectorAll('.context-activity').length"),
     1,
   );
-  // An expanded activity list keeps its reading position across live redraws;
-  // rebuilding the turn must not jump back to the top of that list.
+  // 流式重建当前轮次时，已展开活动列表的阅读位置不能跳回顶部。
   await evaluate(`conversationFixture.render([
     {role:'user',id:'scroll-user',text:'scroll question'},
     {role:'assistant',id:'scroll-a',blocks:${JSON.stringify(
@@ -827,7 +834,43 @@ try {
     1,
   );
   assert(await evaluate("!document.querySelector('#extension-rail').hidden"));
-  // A session switch shows a structural loading state, never the empty hero.
+  // 旧事件和已排队的重绘不能在目标快照到达前覆盖骨架，也不应继续扫描旧历史。
+  const switchRows = Array.from({ length: 50 }, (_, index) => ({
+    id: `switch-${index}`,
+    role: index % 2 ? "assistant" : "user",
+    text: `旧会话 ${index} ` + "内容 ".repeat(30),
+  }));
+  await evaluate(
+    `conversationFixture.render(${JSON.stringify(switchRows)},{idle:false,phase:'output'});conversationFixture.switching('next-session')`,
+  );
+  const switchPerformance = await evaluate(`(async () => {
+    const root=document.querySelector('#messages'),skeleton=root.firstElementChild;
+    const observer=new MutationObserver(()=>{});
+    observer.observe(root,{childList:true,subtree:true,characterData:true});
+    const started=performance.now(),events=100;
+    for(let index=0;index<events;index++)conversationFixture.record({
+      kind:'tool_update',
+      data:{sessionId:'fixture',id:'old-tool',name:'bash',status:'running',arguments:'{}',output:String(index)}
+    });
+    const duration=performance.now()-started;
+    const mutations=observer.takeRecords().length;
+    conversationFixture.record({kind:'assistant_update',data:{sessionId:'fixture',phase:'output',message:{id:'old-stream',role:'assistant',text:'旧会话流式输出'}}});
+    conversationFixture.redraw();
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+    const trailing=observer.takeRecords().length;
+    observer.disconnect();
+    return {events,duration,mutations:mutations+trailing,sameSkeleton:root.firstElementChild===skeleton,oldRows:root.querySelectorAll('.message').length};
+  })()`);
+  console.log("切换等待期旧事件开销:", JSON.stringify(switchPerformance));
+  assert.equal(
+    switchPerformance.mutations,
+    0,
+    "旧事件与迟到重绘不能修改切换骨架",
+  );
+  assert.equal(switchPerformance.sameSkeleton, true);
+  assert.equal(switchPerformance.oldRows, 0, "等待目标快照时不能重绘旧消息");
+
+  // 会话加载应使用骨架，而不是演示或空会话首屏。
   await evaluate("conversationFixture.loading()");
   assert(
     await evaluate(

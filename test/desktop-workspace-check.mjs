@@ -124,6 +124,23 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await call("Page.addScriptToEvaluateOnNewDocument", {
+    source: `(() => {
+      if(window.parent===window)return;
+      const fetcher=window.fetch.bind(window);
+      window.fetch=async(...args)=>{
+        const response=await fetcher(...args),probe=window.parent.historyLoadProbe;
+        if(probe?.hold&&String(args[0]).includes('/api/state')){
+          const snapshot=await response.clone().json();
+          if(snapshot.capabilities?.nativeHistory){
+            probe.host=snapshot.host;
+            await new Promise(resolve=>{probe.release=()=>{probe.hold=false;resolve();};});
+          }
+        }
+        return response;
+      };
+    })()`,
+  });
   if (!electronMode) await call("Page.navigate", { url: f.app.url });
   await until("!!document.querySelector('.project-title')");
   if (electronMode)
@@ -307,6 +324,19 @@ try {
   await until(
     "window.__settingsGroup.isConnected && !window.__settingsGroup.hidden",
   );
+  const categoryPerformance = await evaluate(`(() => {
+    const doc=document.querySelector('#runtime').contentDocument,root=doc.querySelector('#settings-groups');
+    const tabs=[...doc.querySelectorAll('[data-settings-category]')],observer=new MutationObserver(()=>{});
+    observer.observe(root,{childList:true,subtree:true});
+    const started=performance.now(),changes=100;
+    for(let index=0;index<changes;index++)tabs[index%tabs.length].click();
+    const duration=performance.now()-started,replacements=observer.takeRecords().length;
+    observer.disconnect();tabs[0].click();
+    return {changes,duration,replacements,retained:window.__settingsGroup.isConnected};
+  })()`);
+  assert.equal(categoryPerformance.replacements, 0, "设置分类切换不能重建表单");
+  assert.equal(categoryPerformance.retained, true);
+  console.log("设置分类切换开销:", JSON.stringify(categoryPerformance));
   await evaluate(
     "document.querySelector('#runtime').contentDocument.querySelector('[data-view=appearance]').click()",
   );
@@ -902,7 +932,19 @@ try {
     "document.querySelector('#runtime')?.contentDocument?.querySelector('#messages')?.innerText.includes('answer: UI hello')",
     { timeoutMs: 15000 },
   );
+  await evaluate("window.historyLoadProbe={hold:true}");
   await menu("agent.stop");
+  await until(
+    "historyLoadProbe.host==='pi-history' && !!historyLoadProbe.release",
+  );
+  assert.equal(
+    await evaluate(
+      "!!document.querySelector('#runtime')?.contentDocument?.querySelector('#messages .conversation-loading')",
+    ),
+    true,
+    "真实停止会话首次快照到达前必须显示加载骨架",
+  );
+  await evaluate("historyLoadProbe.release()");
   await until(
     "document.querySelector('#runtime')?.contentDocument?.querySelector('#native-history-toolbar')?.hidden===false && document.querySelector('#runtime')?.contentDocument?.querySelector('#composer')?.hidden===true",
   );

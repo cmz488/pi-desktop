@@ -63,11 +63,21 @@ try {
     const fetcher=window.fetch.bind(window);let released=false,release;
     const gate=new Promise(resolve=>release=resolve);
     let releaseSelection;
-    const selectionGate=new Promise(resolve=>releaseSelection=resolve);
-    const probe=window.navigationProbe={held:[],selections:[],switches:[],selectionHeld:[],holdSelection:'',release(){released=true;release();},releaseSelection(){probe.holdSelection='';releaseSelection();}};
+    let selectionGate=new Promise(resolve=>releaseSelection=resolve);
+    const switchGates=new Map();
+    const probe=window.navigationProbe={held:[],selections:[],switches:[],selectionHeld:[],holdSelection:'',failedSwitches:[],
+      holdSwitch(id){const entry={started:false};entry.promise=new Promise((_,reject)=>{entry.reject=reject;});switchGates.set(String(id),entry);},
+      switchStarted(id){return switchGates.get(String(id))?.started===true;},
+      failSwitch(id){switchGates.get(String(id)).reject(new Error('延迟切换失败'));switchGates.delete(String(id));},
+      holdSelectionFor(id){probe.holdSelection=String(id);probe.selectionHeld=[];selectionGate=new Promise(resolve=>releaseSelection=resolve);},
+      release(){released=true;release();},releaseSelection(){probe.holdSelection='';releaseSelection();}};
     window.addEventListener('message',event=>{if(event.data?.type==='pi-desktop:select-conversation')probe.selections.push(event.data);});
     window.fetch=async(...args)=>{
-      if(String(args[0]).includes('/api/switch-session'))probe.switches.push(JSON.parse(args[1].body));
+      if(String(args[0]).includes('/api/switch-session')){
+        const input=JSON.parse(args[1].body);probe.switches.push(input);
+        const entry=switchGates.get(String(input.id));
+        if(entry&&!entry.started){entry.started=true;try{await entry.promise;}catch(error){probe.failedSwitches.push(String(input.id));throw error;}}
+      }
       const response=await fetcher(...args);
       if(String(args[0]).includes('/api/state')&&!released){probe.held.push(String(args[0]));await gate;}
       else if(String(args[0]).includes('/api/state')&&probe.holdSelection&&new URL(String(args[0]),location.href).searchParams.get('sessionId')===probe.holdSelection){probe.selectionHeld.push(String(args[0]));await selectionGate;}
@@ -195,9 +205,135 @@ try {
     repeatedSwitches,
     "已加载的同代际、同会话选择不重复 POST 切换并触发完整投影",
   );
+  // A→B→C→B 时，即使目标字符串又相同，第一次 B 的失败也不能撤掉最新骨架。
+  await evaluate(
+    `(${frame}).defaultView.navigationProbe.holdSwitch(${JSON.stringify(branches[0])})`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[0]))}).click()`,
+  );
+  await ready(
+    `(${frame}).defaultView.navigationProbe.switchStarted(${JSON.stringify(branches[0])})`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[1]))}).click()`,
+  );
+  await ready(
+    `(${frame}).querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(branches[1])}`,
+  );
+  await evaluate(
+    `(${frame}).defaultView.navigationProbe.holdSelectionFor(${JSON.stringify(branches[0])})`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[0]))}).click()`,
+  );
+  await ready(`(${frame}).defaultView.navigationProbe.selectionHeld.length>0`);
+  const inFlight = await evaluate(
+    `({switches:(${frame}).defaultView.navigationProbe.switches.length,intents:(${frame}).defaultView.navigationProbe.selections.length})`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[0]))}).click()`,
+  );
+  await ready(
+    `(${frame}).defaultView.navigationProbe.selections.length>${inFlight.intents}`,
+  );
+  assert.equal(
+    await evaluate(`(${frame}).defaultView.navigationProbe.switches.length`),
+    inFlight.switches,
+    "相同目标在途时，重放导航意图不重复 POST 或完整投影",
+  );
+  await evaluate(
+    `window.pendingSkeleton=(${frame}).querySelector('#messages .conversation-loading');(${frame}).defaultView.navigationProbe.failSwitch(${JSON.stringify(branches[0])})`,
+  );
+  await ready(
+    `(${frame}).defaultView.navigationProbe.failedSwitches.includes(${JSON.stringify(branches[0])})`,
+  );
+  await evaluate(
+    "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+  );
+  assert.equal(
+    await evaluate(
+      `pendingSkeleton.isConnected && (${frame}).querySelectorAll('#messages .message').length===0`,
+    ),
+    true,
+    "过期失败不能移除最新目标的骨架或显示旧会话",
+  );
+  assert.equal(
+    await evaluate(
+      `(${frame}).querySelector('#toast').textContent.includes('延迟切换失败')`,
+    ),
+    false,
+    "过期切换失败不能向新会话提示错误",
+  );
+  await evaluate(`(${frame}).defaultView.navigationProbe.releaseSelection()`);
+  await ready(
+    `(${frame}).querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(branches[0])}`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(rootButton)}).click()`,
+  );
+  await ready(
+    `(${frame}).querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(source)}`,
+  );
+  // 当前切换失败仍需正常报错，并恢复真实可用的旧目标，而非仅显示旧文本。
+  await evaluate(
+    `(${frame}).defaultView.navigationProbe.holdSwitch(${JSON.stringify(branches[1])})`,
+  );
+  await evaluate(
+    `document.querySelector(${JSON.stringify(left(branches[1]))}).click()`,
+  );
+  await ready(
+    `(${frame}).defaultView.navigationProbe.switchStarted(${JSON.stringify(branches[1])})`,
+  );
+  await evaluate(
+    `(${frame}).defaultView.navigationProbe.failSwitch(${JSON.stringify(branches[1])})`,
+  );
+  await ready(
+    `(${frame}).querySelector('#toast').textContent.includes('延迟切换失败')`,
+  );
+  await ready(
+    `document.querySelector(${JSON.stringify(rootButton)}).classList.contains('selected')`,
+  );
+  assert.equal(
+    await evaluate(
+      `(${frame}).querySelector('#sessions .session.active').dataset.sessionId`,
+    ),
+    source,
+    "失败恢复后内外两侧应指向同一原会话",
+  );
+  await evaluate(
+    `(()=>{const doc=${frame},prompt=doc.querySelector('#prompt');prompt.value='失败后的草稿';prompt.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+  );
+  assert.equal(
+    await evaluate(`(${frame}).querySelector('#send-button').disabled`),
+    false,
+    "失败恢复后发送目标与实际会话一致，输入不应被永久禁用",
+  );
+  await evaluate(
+    `(()=>{const doc=${frame},prompt=doc.querySelector('#prompt');prompt.value='';prompt.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+  );
+
+  await evaluate(
+    `(${frame}).defaultView.navigationProbe.holdSelectionFor(${JSON.stringify(branches[0])})`,
+  );
   await evaluate(
     `(()=>{const d=${frame};d.querySelector('#sessions [data-session-id="${branches[0]}"]').click();})()`,
   );
+  await ready(`(${frame}).defaultView.navigationProbe.selectionHeld.length>0`);
+  await evaluate("document.querySelector('#settings').click()");
+  await ready(
+    `(${frame}).querySelector('#page-label').textContent==='Pi 配置'`,
+  );
+  await evaluate(`(${frame}).defaultView.navigationProbe.releaseSelection()`);
+  await ready(
+    `(${frame}).querySelector('#sessions .session.active')?.dataset.sessionId===${JSON.stringify(branches[0])}`,
+  );
+  assert.equal(
+    await evaluate(`(${frame}).querySelector('#page-label').textContent`),
+    "Pi 配置",
+    "迟到的会话切换成功不能抢回后来打开的设置页",
+  );
+  await evaluate(`(${frame}).querySelector('.settings-back').click()`);
   await ready(
     `document.querySelector(${JSON.stringify(left(branches[0]))})?.classList.contains('selected')`,
   );

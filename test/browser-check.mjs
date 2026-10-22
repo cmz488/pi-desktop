@@ -1511,13 +1511,23 @@ createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line)
   );
   await evaluate(`
     window.viewEnterSeen=false;
-    new MutationObserver(()=>{if(document.querySelector('#view-plugins')?.classList.contains('view-enter'))window.viewEnterSeen=true;}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']});
+    window.viewEnterObserver=new MutationObserver(()=>{if(document.querySelector('#view-plugins')?.classList.contains('view-enter'))window.viewEnterSeen=true;});
+    window.viewEnterObserver.observe(document.querySelector('#view-plugins'),{attributes:true,attributeFilter:['class']});
   `);
   await evaluate(`document.querySelector('[data-view="plugins"]').click()`);
-  await wait(`window.viewEnterSeen===true`, undefined);
   await wait(
-    `document.querySelector('[data-config-plugin="file:test-plugin"]')`,
+    `!document.querySelector('#view-plugins').hidden&&document.querySelector('[data-config-plugin="file:test-plugin"]')`,
   );
+  assert.equal(
+    await evaluate("window.viewEnterSeen"),
+    false,
+    "设置子页之间不重放入场动画，避免页面闪烁",
+  );
+  await evaluate(`document.querySelector('[data-view="workspace"]').click()`);
+  await wait("!document.querySelector('#view-workspace').hidden");
+  await evaluate(`document.querySelector('[data-view="plugins"]').click()`);
+  await wait("window.viewEnterSeen===true");
+  await evaluate("window.viewEnterObserver.disconnect()");
   await evaluate(
     `document.querySelector('[data-config-plugin="file:test-plugin"]').click()`,
   );

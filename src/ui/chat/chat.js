@@ -181,6 +181,8 @@ function chooseDurableAgent(id) {
     sessionDrafts.read().owner === String(id)
   )
     return false;
+  pendingConversation = undefined;
+  conversationSwitching = false;
   if (state?.host === "durable") {
     $("#prompt").value = sessionDrafts.select(
       String(id),
@@ -535,20 +537,7 @@ window.addEventListener("message", (event) => {
       id < 0
     )
       return;
-    const changed = chooseDurableAgent(String(id));
-    // 父窗口会重放最新意图；已加载同一目标不需要再触发服务端投影与 state_changed。
-    if (!changed && state.sessionId === String(id)) return;
-    conversationSwitching = true;
-    pendingConversation = String(id);
-    renderConversationLoading("正在切换会话…");
-    void api("/api/switch-session", { id: String(id), sessionId: String(id) })
-      .then(() => refresh())
-      .catch((error) => {
-        pendingConversation = "";
-        conversationSwitching = false;
-        renderMessages(state?.messages ?? []);
-        toast(error.message);
-      });
+    void switchConversation(id).catch((error) => toast(error.message));
     return;
   }
   if (
@@ -953,7 +942,7 @@ async function api(path, input, { signal, selectSession = true } = {}) {
       !signal?.aborted
     ) {
       durableAgentId = "";
-      pendingConversation = "";
+      pendingConversation = undefined;
       conversationSwitching = false;
       sessionStorage.removeItem(selectionKey);
     }
@@ -1723,9 +1712,44 @@ const isExtensionCard = (row) =>
   !!row?.extensionState ||
   (row?.role === "custom" && !!row?.extensionView?.disclosureKey);
 let conversationSwitching = false;
-// 切换中的目标会话：只有它的完整快照（带 messages）到达才能收掉骨架屏，
-// 元数据快照或空列表不能提前退回空白页／空会话首屏。
-let pendingConversation = "";
+// 每次选择有独立身份；A→B→A 时，第一次 A 的迟到失败也不能撤掉最新骨架。
+let pendingConversation;
+async function switchConversation(id) {
+  const sessionId = String(id);
+  // 父窗口会重放导航意图；相同目标在途或已经就绪时，不重复触发完整投影。
+  if (pendingConversation?.sessionId === sessionId) return;
+  if (state?.host === "durable") {
+    const changed = chooseDurableAgent(sessionId);
+    if (!changed && state.sessionId === sessionId) return;
+  }
+  const selection = { sessionId };
+  pendingConversation = selection;
+  conversationSwitching = true;
+  renderConversationLoading("正在切换会话…");
+  try {
+    await api("/api/switch-session", {
+      id: sessionId,
+      ...(state?.host === "durable" ? { sessionId } : {}),
+    });
+    if (pendingConversation !== selection) return;
+    await refresh();
+  } catch (error) {
+    if (pendingConversation !== selection) return;
+    pendingConversation = undefined;
+    conversationSwitching = false;
+    if (state?.host === "durable") {
+      chooseDurableAgent(state.sessionId);
+      // 外壳在点击时已改选目标；当前失败要同时恢复内外两侧，不能只重绘旧消息。
+      if (runtimePrefix)
+        desktopMessage("session-changed", {
+          conversationId: Number(state.sessionId),
+          initial: false,
+        });
+    }
+    renderMessages(state?.messages ?? []);
+    throw error;
+  }
+}
 function renderConversationLoading(label) {
   const node = $("#messages");
   const wrap = document.createElement("div");
@@ -1961,6 +1985,8 @@ function applyKeyedRows(items) {
   return true;
 }
 function renderMessages(rows, { liveOnly = false, enter = false } = {}) {
+  // 旧详情回执和已排队的动画帧仍可能到达；切换期间不扫描历史，也不重建骨架。
+  if (pendingConversation) return;
   const node = $("#messages");
   messageRows = rows ?? [];
   extensionWorkbench?.update(messageRows, readPanelContext());
@@ -3334,13 +3360,14 @@ async function refreshOnce(snapshot) {
     snapshot.sessionId !== durableAgentId
   )
     return;
-  // 只有目标会话的完整快照收掉切换骨架；元数据快照仍保持加载状态。
-  if (
-    pendingConversation &&
-    snapshot.sessionId === pendingConversation &&
-    Array.isArray(snapshot.messages)
-  ) {
-    pendingConversation = "";
+  // 元数据和旧目标快照不能更改加载态，也不能抢先替换当前会话身份。
+  if (pendingConversation) {
+    if (
+      snapshot.sessionId !== pendingConversation.sessionId ||
+      !Array.isArray(snapshot.messages)
+    )
+      return;
+    pendingConversation = undefined;
     conversationSwitching = false;
   }
   if (snapshot.host === "durable" && !durableAgentId) {
@@ -3535,9 +3562,19 @@ function applyRecord(record) {
       void loadConnection().catch((error) => toast(error.message));
     return;
   }
-  // Background slots remain live, but must never write into the focused chat.
-  if (record.data?.sessionId && record.data.sessionId !== state?.sessionId)
+  // 切换未就绪时，state 仍属于旧会话；仅保留不修改会话内容的通知与包进度。
+  if (
+    pendingConversation &&
+    record.kind !== "notification" &&
+    record.kind !== "package_progress"
+  )
     return;
+  const sessionId =
+    pendingConversation?.sessionId ??
+    (state?.host === "durable"
+      ? durableAgentId || state.sessionId
+      : state?.sessionId);
+  if (record.data?.sessionId && record.data.sessionId !== sessionId) return;
   if (record.kind === "interaction_changed") {
     void pollInteractions();
   } else if (record.kind === "assistant_update") {
@@ -4423,25 +4460,12 @@ document.addEventListener("click", async (event) => {
     if (button.dataset.sessionId) {
       $("#dialog").close();
       if (live) {
-        if (state?.host === "durable")
-          chooseDurableAgent(button.dataset.sessionId);
-        conversationSwitching = true;
-        pendingConversation = String(button.dataset.sessionId);
-        renderConversationLoading("正在切换会话…");
-        try {
-          await api("/api/switch-session", {
-            id: button.dataset.sessionId,
-            ...(state?.host === "durable"
-              ? { sessionId: button.dataset.sessionId }
-              : {}),
-          });
-          await refresh();
-        } catch (error) {
-          conversationSwitching = false;
-          renderMessages(state?.messages ?? []);
-          throw error;
-        }
+        // 先同步更换草稿／面板身份，再导航；不能让 await 把新输入记进旧会话。
+        const switching = switchConversation(button.dataset.sessionId);
+        await showView("workspace");
+        await switching;
       } else {
+        await showView("workspace");
         conversationSwitching = true;
         renderConversationLoading("正在切换会话…");
         const chosen = button.dataset.sessionId;
@@ -4451,7 +4475,6 @@ document.addEventListener("click", async (event) => {
           renderMessages(demoMessages);
         }, 260);
       }
-      await showView("workspace");
       return;
     }
     if (button.dataset.preview !== undefined) {
@@ -6669,12 +6692,8 @@ const branchTree = createBranchTreePanel({
     api("/api/command", { command: name, ...input }, { selectSession: false }),
   toast: (message) => toast(message),
   openCreatedSession,
-  switchSession: async (id) => {
-    const value = String(id);
-    chooseDurableAgent(value);
-    if (live) await api("/api/switch-session", { id: value, sessionId: value });
-    await refresh();
-  },
+  switchSession: (id) =>
+    switchConversation(id).catch((error) => toast(error.message)),
 });
 /* 内置「任务与子代理」页：读取 /api/tasks，操作复用同一命令路径（取消需要两步确认）。 */
 const taskPanel = createTaskPanel({
@@ -6776,6 +6795,8 @@ async function boot() {
   $("#prompt").disabled = true;
   $("#send-button").disabled = true;
   $("#connection-status").textContent = "连接 Pi…";
+  // 停止会话由 pi-history 提供，不经过 Durable 的切换消息；首次读取同样显示骨架。
+  renderConversationLoading("正在载入会话…");
   await refresh();
   await showView(
     titles[location.hash.slice(1)] ? location.hash.slice(1) : "workspace",

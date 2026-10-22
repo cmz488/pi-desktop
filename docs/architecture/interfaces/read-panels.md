@@ -53,6 +53,7 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 - 样式只使用现有语义 token；正常动作、选中、失败与终态仍含文字。触屏的动作、表单／披露及 SVG 轮次折叠热区至少 44px；轨道留白须容纳热区，不能以裁掉的透明框冒充触达尺寸。
 - 工作台与 Host 共用原生回执提示：completed／failed／aborted／orphaned／faulted 分开显示，`marked` 只提示已请求中止、尚未确认终态。没有新回执字段的旧宿主保留泛化提示，不补造终态；任何提示仍受同一身份令牌校验。
 - 嵌入聊天的首次状态就绪后，应用父窗口为同一 Agent／generation 保留的最新导航意图；首次默认会话通知不覆盖该意图。只接受同源父窗口，旧 iframe 不能改变当前窗口导航。
+- 会话切换等待目标带 `messages` 的快照；旧事件、旧详情与过期成功／失败不能撤掉加载骨架。相同目标在途时合并重复意图；当前切换失败恢复原会话与外层选择，仍向使用者报错。首次读取同样显示骨架，包括停止会话的只读历史视图。
 - 这是 UI 缓存与 affordance，不代替后端会话归属、权限、目标 409 或远程路径裁剪。
 
 ## 能力与权限
@@ -87,7 +88,9 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 
 - `test/session-panel-loader.test.mjs`：9 条有界时钟／迟到响应回归，覆盖能力、A/B/A、权限、节流／补刷、暂停／销毁和错误。
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁；另验证细指针真实 hover、Tab／Enter、按钮焦点、busy 互斥、390px、触屏、减少动态效果及 SVG 实际底色上的双主题 4.5:1 文本对比度；另覆盖全部活跃态文案与未知态透传，图面 280–760px 裁剪、初始 460px 回退和无新数据时的 resize。
-- `test/desktop-sidebar-navigation-browser-check.mjs`：初始与目标快照分别延迟时保留最后选择，过期代际、非父窗口及旧 Agent 窗口不改变当前导航；内外层选择与重载保持一致，归档分支说明与根整族恢复隔离。
+- `test/desktop-sidebar-navigation-browser-check.mjs`：初始与目标快照分别延迟时保留最后选择，过期代际、非父窗口及旧 Agent 窗口不改变当前导航；A/B/C/B 的迟到失败不覆盖最新骨架，相同目标在途不重复 POST，当前失败恢复内外选择与可用输入；内外层选择与重载保持一致，归档分支说明与根整族恢复隔离。
+- `test/conversation-timeline-browser-check.mjs`：等待目标时，旧工具／流式事件与排队重绘不改动骨架、不重绘旧消息；同时记录 100 条旧工具事件的处理耗时与 DOM 修改次数。
+- `test/desktop-workspace-check.mjs`：真实停止会话的首次历史快照被延迟时仍显示骨架；设置分类连续切换保留表单节点，并记录耗时与子节点替换次数。
 - `test/read-panels-desktop-browser-check.mjs`：真实默认 Host／worker、完整聊天控制器与真实在途任务，覆盖快照返回前立即失效、延迟读模型、过期分叉结果、能力变化与会话栏入口隐藏，且未误取消任何任务。
 - `test/long-task-wait-browser-check.mjs`：默认真实长任务的终态、取消／到期不误中止、续租不重置期限、旧成功不影响另一会话、焦点与定时器回收。
 - `test/host-tasks-browser-check.mjs`：两个 worker 的同号 task 隔离、当前 owner 固定、表单草稿、不确定回执的冻结内容重试与真实去重、迟到发起不抢选中任务、等待／二次中止确认、切 Agent 不误中止、结果与 390px。
