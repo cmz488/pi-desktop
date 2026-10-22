@@ -25,6 +25,8 @@
 
 [src/server/asset-manifest.mjs](../../src/server/asset-manifest.mjs) 是公共 URL 与磁盘位置的唯一映射。聊天、项目工作区和预览共用它；外部地址 `/prototype.js`、`/prototype.css`、`/workspace.js` 等继续兼容，生产聊天源码位于 `src/ui/chat/`。
 
+两个页面的首屏引导是独立脚本 `/boot.js`（聊天，含预览）与 `/workspace-boot.js`（项目工作区）。宿主与 Agent 页面的 CSP 都是 `script-src 'self'`，内联脚本会被直接拦截；而聊天控制器是 body 末尾的延迟模块，静态占位内容会先上屏。因此主题、嵌入布局与占位隐藏只能由同源同步脚本在首次绘制前落到 `<html>` 上。
+
 浏览器源码中的相对 import 按公共 URL 解释。它们不等同于磁盘目录关系；浏览器专用文件不能直接改成相对 `src/shared` 的路径。共享纯逻辑放在同一物理目录，使 Node 与浏览器都能跨相同 seam 使用。
 
 ## 运行边界

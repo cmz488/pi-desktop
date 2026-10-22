@@ -775,10 +775,10 @@ function applyAppearance() {
   const size = String(
     Number.isInteger(savedSize) ? Math.max(12, Math.min(24, savedSize)) : 14,
   );
-  document.body.classList.toggle(
-    "dark",
-    theme === "dark" || (theme === "system" && systemTheme.matches),
-  );
+  const dark = theme === "dark" || (theme === "system" && systemTheme.matches);
+  document.body.classList.toggle("dark", dark);
+  // boot.js 用 <html data-theme> 在首帧前应用主题，这里保持两处一致。
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.documentElement.style.setProperty("--ui-font-size", `${size}px`);
   document.documentElement.style.setProperty(
     "--ui-font-scale",
@@ -6727,6 +6727,10 @@ extensionWorkbench = createExtensionWorkbench({
     );
   },
 });
+/* 静态 HTML 先于延迟模块上屏；首个可展示的界面就绪后再露出外壳。 */
+function revealShell() {
+  delete document.documentElement.dataset.booting;
+}
 async function boot() {
   if (!live) {
     commands = (await import("./pi-commands.mjs")).webCommands;
@@ -6787,6 +6791,7 @@ async function boot() {
     renderPlugins();
     renderProviders();
     syncComposerButton();
+    revealShell();
     await showView(
       titles[location.hash.slice(1)] ? location.hash.slice(1) : "workspace",
     );
@@ -6797,6 +6802,8 @@ async function boot() {
   $("#connection-status").textContent = "连接 Pi…";
   // 停止会话由 pi-history 提供，不经过 Durable 的切换消息；首次读取同样显示骨架。
   renderConversationLoading("正在载入会话…");
+  // 骨架已经是可展示的加载面：此时再显示外壳，避免静态占位内容闪现。
+  revealShell();
   await refresh();
   await showView(
     titles[location.hash.slice(1)] ? location.hash.slice(1) : "workspace",
@@ -6811,6 +6818,7 @@ async function boot() {
   }, 1500);
 }
 boot().catch((error) => {
+  revealShell();
   $("#connection-status").textContent = "未连接";
   $("#prompt").disabled = true;
   $("#send-button").disabled = true;

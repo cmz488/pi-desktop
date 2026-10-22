@@ -7,6 +7,23 @@ import { startDesktopHost } from "../src/control-plane/server.mjs";
 import { launchService } from "../src/control-plane/process.mjs";
 import { readUntil } from "./sse-reader.mjs";
 
+test("workspace page loads its first-paint theme bootstrap as a same-origin script", async (t) => {
+  // CSP 是 script-src 'self'：内联脚本会被拦截，外壳就会先按浅色绘制。
+  const f = await desktopFixture();
+  t.after(() => f.close());
+  const response = await fetch(new URL("/", f.app.url));
+  assert.match(
+    response.headers.get("content-security-policy"),
+    /script-src 'self'/,
+  );
+  const html = await response.text();
+  assert(html.includes('<script src="workspace-boot.js"></script>'));
+  assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "HTML 不能依赖内联脚本");
+  const boot = await fetch(new URL("/workspace-boot.js", f.app.url));
+  assert.equal(boot.status, 200);
+  assert.match(boot.headers.get("content-type"), /javascript/);
+});
+
 test("workspace browser module imports are served without starting an Agent", async (t) => {
   const f = await desktopFixture();
   t.after(() => f.close());

@@ -22,6 +22,8 @@ import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
 let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={},taskStatus='waiting';
+// 真实 chat.js 会在首次渲染后解除首屏隐藏；这个夹具取代了它，所以自己解除。
+delete document.documentElement.dataset.booting;
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
 const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='tasks'?{supported:true,sessionId:id,tasks:[{id:Number(id)*100+1,kind:'fixture.'+id+'.'+version,name:'后台资料整理',conversationId:Number(id),owner:null,background:true,status:taskStatus}],tools:[],conversations:[]}:{supported:true,sessionId:id,name:'Tree '+id,native:{leafId:'n'+id+'39',nodes:Array.from({length:40},(_,i)=>({id:'n'+id+i,parentId:i?'n'+id+(i-1):null,type:'message',role:'user',preview:'tree '+id+' '+i,entryId:Number(id)*100+i,active:true,leaf:i===39,children:i===39?0:1}))},branches:[]};
 const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};

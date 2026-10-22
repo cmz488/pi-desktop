@@ -24,6 +24,8 @@ import DOMPurify from '/vendor/purify.mjs';
 const root=document.querySelector('#view-extensions');
 root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 document.body.classList.add('desktop-embedded');
+// 真实 chat.js 会在首次渲染后解除首屏隐藏；这个夹具取代了它，所以自己解除。
+delete document.documentElement.dataset.booting;
 let rows=[],owner='A',details=new Map(),gate,failNext=false;
 const registry=createExtensionAdapterRegistry();
 const loaded=[],errors=[],panelActions=[];

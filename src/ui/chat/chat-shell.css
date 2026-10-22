@@ -16,6 +16,15 @@ body.chat-shell {
 body.chat-shell.desktop-embedded {
   background: transparent;
 }
+/* boot.js 在 chat.js 之前声明嵌入画布：首帧不能先画出自己的底色。 */
+:root[data-embed] body.chat-shell {
+  background: transparent;
+}
+/* 静态占位内容（示例会话标题、演示状态文字、未启用的输入区）不得上屏：
+ * chat.js 是延迟模块，切换会话时会重新创建整个 iframe。 */
+:root[data-booting] .app {
+  visibility: hidden;
+}
 .chat-shell .app {
   padding: 20px;
   gap: 24px;

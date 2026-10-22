@@ -5,19 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Pi Desktop</title>
-    <script>
-      // Apply the saved theme before the first paint so switching Agents never
-      // flashes a light preview of the shell.
-      try {
-        const preference = localStorage.getItem("pi-web-theme") ?? "light";
-        const dark =
-          preference === "dark" ||
-          (preference === "system" &&
-            matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        if (dark) document.documentElement.classList.add("boot-dark");
-      } catch {}
-    </script>
+    <script src="workspace-boot.js"></script>
     <link rel="stylesheet" href="design-tokens.css" />
     <link rel="stylesheet" href="workspace.css" />
     <link rel="stylesheet" href="task-panel.css" />

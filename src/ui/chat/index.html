@@ -9,6 +9,7 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="pi-desk-mode" content="demo" />
     <title>pi · 工作空间</title>
+    <script src="boot.js"></script>
     <link rel="stylesheet" href="vendor/katex.css" />
     <link rel="stylesheet" href="prototype.css" />
     <link rel="stylesheet" href="task-panel.css" />
@@ -16,19 +17,6 @@
     <link rel="stylesheet" href="chat-shell.css" />
   </head>
   <body class="chat-shell">
-    <script>
-      // The saved theme must be on the body before the first paint; otherwise a
-      // dark-preference user sees a light frame each time an Agent iframe loads.
-      try {
-        const preference = localStorage.getItem("pi-web-theme") || "light";
-        if (
-          preference === "dark" ||
-          (preference === "system" &&
-            matchMedia("(prefers-color-scheme: dark)").matches)
-        )
-          document.body.classList.add("dark");
-      } catch {}
-    </script>
     <div class="app">
       <div
         class="sidebar-resize"

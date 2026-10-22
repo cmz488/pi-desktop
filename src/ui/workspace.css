@@ -790,7 +790,9 @@ body.sidebar-collapsed:not(.runtime-active) .mobile-header {
     opacity: 0;
     transform: translateX(-16px);
   }
-  #runtime,
+  /* A conversation switch swaps in a freshly created frame whose document is
+   * still empty; fading it in would dim the workspace over the shell backdrop
+   * and restart on every switch. Only placeholder surfaces animate. */
   #empty,
   #agent-boot {
     animation: workspace-surface-in 260ms var(--ease-jelly);

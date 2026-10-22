@@ -166,6 +166,20 @@ test("static encoding negotiation respects gzip exclusions and representation va
   assert.equal(wildcard.status, 304);
 });
 
+test("live HTML loads its first-paint bootstrap as a same-origin script", async (t) => {
+  // CSP 是 script-src 'self'：内联脚本会被拦截，主题与嵌入布局就会在延迟模块
+  // 运行前闪一下。首次绘制引导必须由外部脚本承担。
+  const f = await fixture(t);
+  const page = await f.request("/");
+  const html = page.body.toString();
+  assert(html.includes('<script src="boot.js"></script>'));
+  assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "HTML 不能依赖内联脚本");
+  const boot = await f.request("/boot.js");
+  assert.equal(boot.status, 200);
+  assert.equal(boot.headers["content-type"], "text/javascript; charset=utf-8");
+  assert(boot.body.length > 0);
+});
+
 test("live HTML and HEAD use the same static representation; fonts stay binary", async (t) => {
   const f = await fixture(t);
   const page = await f.request("/");
