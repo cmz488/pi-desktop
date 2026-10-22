@@ -144,13 +144,80 @@ try {
   await ready(
     `(()=>{const d=${frame};return d?.querySelector('#connection-status')?.textContent === 'Pi 已连接';})()`,
   );
-  await evaluate("document.querySelector('#extensions-entry').click()");
   await ready(
-    `(()=>{const d=${frame};return [...d.querySelectorAll('.extension-page-choice')].some(row=>row.textContent.includes('任务与子代理'));})()`,
+    `(()=>{const d=${frame};return d?.querySelector('#composer-tools')?.hidden === false;})()`,
   );
-  await chat(
-    "[...d.querySelectorAll('.extension-page-choice')].find(row=>row.textContent.includes('任务与子代理')).click();",
+  const registeredTools = (await f.call(`${prefix}/api/state`)).tools;
+  await chat(`
+    const prompt=d.querySelector('#prompt');prompt.value='工具菜单保留的草稿';
+    prompt.dispatchEvent(new d.defaultView.Event('input',{bubbles:true}));
+    d.querySelector('#composer-tools').click();
+  `);
+  assert.deepEqual(
+    await chat(`return {
+      category:d.querySelector('#composer-tools-menu .action-menu-heading')?.textContent,
+      items:[...d.querySelectorAll('#composer-tools-menu [role=menuitem]')].map(node=>node.textContent),
+      expanded:d.querySelector('#composer-tools').getAttribute('aria-expanded'),
+      focused:d.activeElement?.getAttribute('role')
+    };`),
+    {
+      category: "pi-desktop 侧工具",
+      items: ["子代理"],
+      expanded: "true",
+      focused: "menuitem",
+    },
+    "工具菜单按 Desktop 侧分类，键盘焦点进入现有子代理快捷入口",
   );
+  await call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape" });
+  await call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape" });
+  assert.equal(
+    await chat(
+      "return !d.querySelector('#composer-tools-menu')&&d.activeElement===d.querySelector('#composer-tools')&&d.activeElement.getAttribute('aria-expanded')==='false';",
+    ),
+    true,
+    "Esc 关闭菜单并返回触发按钮",
+  );
+  for (const [selector, expanded] of [
+    ["#composer-tools", "true"],
+    ["#composer-tools", "false"],
+    ["#composer-tools", "true"],
+    ["#prompt", "false"],
+  ]) {
+    const point = await chat(`
+      const box=d.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      const frame=d.defaultView.frameElement.getBoundingClientRect();
+      return {x:frame.left+box.left+box.width/2,y:frame.top+box.top+box.height/2};
+    `);
+    for (const type of ["mousePressed", "mouseReleased"])
+      await call("Input.dispatchMouseEvent", {
+        type,
+        ...point,
+        button: "left",
+        clickCount: 1,
+      });
+    assert.equal(
+      await chat(
+        "return d.querySelector('#composer-tools').getAttribute('aria-expanded');",
+      ),
+      expanded,
+      "真实指针可开关菜单，点击外部也能关闭",
+    );
+  }
+  await chat("d.querySelector('#composer-tools').click();");
+  await call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    text: "\r",
+    unmodifiedText: "\r",
+  });
+  await call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+  });
   await ready(
     `(()=>{const d=${frame};return !!d.querySelector('[data-task-id="${launched.taskId}"] [data-task-inspect]');})()`,
   );
@@ -160,6 +227,25 @@ try {
     ),
     true,
     "实时任务行使用原生 owned 子会话名称，而不只显示种类",
+  );
+  assert.equal(
+    await chat(
+      "return d.body.classList.contains('extensions-open')&&d.querySelectorAll('.task-panel').length===1&&!d.querySelector('#composer-tools-menu')&&d.querySelector('#prompt').value==='工具菜单保留的草稿';",
+    ),
+    true,
+    "快捷入口打开同一任务面板并保留聊天草稿，不另建任务窗口",
+  );
+  assert.equal(
+    (await f.call(`${prefix}/api/tasks?sessionId=${parent}`)).tasks.filter(
+      (row) => row.kind === "desk.subagent-run",
+    ).length,
+    1,
+    "打开快捷入口不自动发起子代理",
+  );
+  assert.deepEqual(
+    (await f.call(`${prefix}/api/state`)).tools,
+    registeredTools,
+    "导航不改变当前会话的模型工具配置",
   );
   const inspectObject = await call("Runtime.evaluate", {
     expression: `(${frame}).querySelector('[data-task-inspect="${launched.taskId}"]')`,
@@ -559,6 +645,37 @@ try {
     deviceScaleFactor: 1,
     mobile: true,
   });
+  await chat("d.querySelector('[data-workspace-view=workspace]').click();");
+  await chat("d.querySelector('#composer-tools').click();");
+  const toolMenuLayout = await chat(`
+    const trigger=d.querySelector('#composer-tools').getBoundingClientRect();
+    const menu=d.querySelector('#composer-tools-menu').getBoundingClientRect();
+    const item=d.querySelector('#composer-tools-menu [role=menuitem]').getBoundingClientRect();
+    const toolbar=d.querySelector('.composer-toolbar').getBoundingClientRect();
+    return {
+      triggerWidth:trigger.width,triggerHeight:trigger.height,itemHeight:item.height,
+      above:menu.bottom<=trigger.top,
+      contained:menu.left>=0&&menu.right<=d.defaultView.innerWidth&&menu.top>=0&&menu.bottom<=d.defaultView.innerHeight,
+      toolbarContained:[...d.querySelector('.composer-toolbar').children].every(node=>{
+        const box=node.getBoundingClientRect();return !box.height||(box.left>=toolbar.left-1&&box.right<=toolbar.right+1);
+      })
+    };
+  `);
+  assert.ok(
+    toolMenuLayout.triggerWidth >= 44 &&
+      toolMenuLayout.triggerHeight >= 44 &&
+      toolMenuLayout.itemHeight >= 44,
+    `触屏工具入口与菜单项保持 44px 热区：${JSON.stringify(toolMenuLayout)}`,
+  );
+  assert.ok(
+    toolMenuLayout.above &&
+      toolMenuLayout.contained &&
+      toolMenuLayout.toolbarContained,
+    `窄屏工具菜单向上展开且不挤出输入工具栏：${JSON.stringify(toolMenuLayout)}`,
+  );
+  await chat(
+    "d.querySelector('#composer-tools-menu [role=menuitem]').click();",
+  );
   await ready(
     `(()=>{const d=${frame};return !!d.querySelector('[data-task-inspect="${launched.taskId}"]');})()`,
   );

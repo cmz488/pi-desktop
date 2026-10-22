@@ -686,6 +686,19 @@ pre {
   background: var(--accent-surface);
   border-color: var(--text);
 }
+.composer-tools {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(12px * var(--ui-font-scale));
+}
+@container composer (max-width: 480px) {
+  .composer-tools-label,
+  .composer-tools > [data-dsh-icon="chevron"] {
+    display: none;
+  }
+}
 .context-add {
   width: 32px;
   height: 32px;
@@ -4950,7 +4963,7 @@ body.dark {
   }
 }
 
-/* 动作菜单：消息右键（退回／分叉）与会话栏右键（创建分支／退回分支／打开分支树）共用。 */
+/* 动作菜单共用语义色，工具栏分类不另建浮层样式。 */
 .action-menu {
   position: fixed;
   z-index: 60;
@@ -4964,6 +4977,18 @@ body.dark {
   border-radius: 12px;
   box-shadow: var(--shadow);
   font-size: calc(12px * var(--ui-font-scale));
+}
+.action-menu-heading {
+  padding: 6px 9px;
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-font-scale));
+}
+@media (pointer: coarse) {
+  #composer-tools,
+  #composer-tools-menu > button {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
 .action-menu > button {
   text-align: left;

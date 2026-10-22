@@ -971,6 +971,7 @@ async function showView(next) {
   closeUsageDetails();
   closeCommands();
   closeModelControls();
+  closeActionMenu();
   const workbench = next === "workspace" || next === "extensions";
   // 设置子页之间的切换是同一块面板的换页，不需要整体入场动画；
   // 只有跨过工作台／设置边界时才播放，避免每次打开设置都闪一下。
@@ -1312,19 +1313,24 @@ function activityProgress(value, key) {
 }
 /* 历史消息只提供退回，当前位置才提供分支入口；实际上下文与分支仍由原生 API 处理。
  * 当前位置意图附带检查点，防止菜单打开后新消息使它悄悄变成历史分叉。 */
-/* 通用动作菜单：消息菜单与会话栏菜单共用同一套打开/定位/关闭逻辑，避免第二套实现。
- * 键盘可达：触发元素（消息右键、会话行 Shift+F10／菜单键）打开后焦点落到第一项，
- * ArrowUp／ArrowDown 在项间移动，Esc 或点击外部关闭。 */
+/* 消息、会话栏与输入框共用菜单生命周期；工具栏触发器额外拥有锚点与返回焦点。 */
 let actionMenu;
-function closeActionMenu() {
+let actionMenuTrigger;
+function closeActionMenu(restoreFocus = false) {
+  const trigger = actionMenuTrigger;
   actionMenu?.remove();
   actionMenu = undefined;
+  actionMenuTrigger = undefined;
+  trigger?.setAttribute("aria-expanded", "false");
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
 }
 function openActionMenu({
   x,
   y,
   className = "action-menu",
   dataset = {},
+  trigger,
+  heading,
   items,
 }) {
   closeActionMenu();
@@ -1332,6 +1338,15 @@ function openActionMenu({
   menu.className = className;
   menu.setAttribute("role", "menu");
   Object.assign(menu.dataset, dataset);
+  if (trigger) menu.id = trigger.getAttribute("aria-controls");
+  if (heading) {
+    const label = document.createElement("div");
+    label.className = "action-menu-heading";
+    label.setAttribute("role", "presentation");
+    label.textContent = heading;
+    menu.setAttribute("aria-label", heading);
+    menu.append(label);
+  }
   const buttons = [];
   for (const item of items) {
     const button = document.createElement("button");
@@ -1351,9 +1366,25 @@ function openActionMenu({
   }
   document.body.append(menu);
   const box = menu.getBoundingClientRect();
+  if (trigger) {
+    const anchor = trigger.getBoundingClientRect();
+    x = anchor.left;
+    y = anchor.top - box.height - 8;
+    trigger.setAttribute("aria-expanded", "true");
+  }
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
   menu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeActionMenu(true);
+      return;
+    }
+    if (event.key === "Tab" && trigger) {
+      closeActionMenu(true);
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     const step = event.key === "ArrowDown" ? 1 : -1;
@@ -1361,7 +1392,48 @@ function openActionMenu({
     buttons[(index + step + buttons.length) % buttons.length]?.focus();
   });
   actionMenu = menu;
+  actionMenuTrigger = trigger;
   (buttons.find((button) => !button.disabled) ?? buttons[0])?.focus();
+}
+function canOpenComposerTools() {
+  const context = readPanelContext();
+  return (
+    live &&
+    context.capabilities.remote !== true &&
+    context.capabilities.tasks === true &&
+    taskPanel.available
+  );
+}
+function syncComposerTools() {
+  const trigger = $("#composer-tools");
+  trigger.hidden = !canOpenComposerTools();
+  if (trigger.hidden && actionMenuTrigger === trigger) closeActionMenu();
+}
+function openComposerTools() {
+  const trigger = $("#composer-tools");
+  if (actionMenuTrigger === trigger) {
+    closeActionMenu(true);
+    return;
+  }
+  if (!canOpenComposerTools()) return;
+  closeModelControls();
+  closeCommands();
+  const epoch = actionEpoch;
+  openActionMenu({
+    trigger,
+    heading: "pi-desktop 侧工具",
+    items: [
+      {
+        label: "子代理",
+        title: "打开任务与子代理工作台（desk_subagent）",
+        run: () => {
+          if (epoch !== actionEpoch || !canOpenComposerTools()) return;
+          extensionWorkbench.select(taskPanel.key);
+          void showView("extensions").catch((error) => toast(error.message));
+        },
+      },
+    ],
+  });
 }
 /* 命令统一带上目标 id 与可选 sessionId：Host 用严格相等校验目标，数字不能是字符串。 */
 async function runAgentCommand(command, input, message) {
@@ -3636,8 +3708,13 @@ $("#sessions")?.addEventListener("keydown", (event) => {
   openSessionMenu(row, box.left + 12, box.bottom - 4);
 });
 document.addEventListener("pointerdown", (event) => {
-  if (!event.target.closest(".action-menu")) closeActionMenu();
+  if (
+    !event.target.closest(".action-menu") &&
+    !actionMenuTrigger?.contains(event.target)
+  )
+    closeActionMenu();
 });
+window.addEventListener("resize", () => closeActionMenu());
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeActionMenu();
 });
@@ -4663,6 +4740,9 @@ document.addEventListener("click", async (event) => {
       case "retry-market":
         await loadMarket({ refresh: true });
         break;
+      case "composer-tools":
+        openComposerTools();
+        break;
       case "model":
         composerModelPicker.open();
         break;
@@ -4732,6 +4812,7 @@ function closeCommands() {
   $("#prompt").removeAttribute("aria-activedescendant");
 }
 function syncComposerButton() {
+  syncComposerTools();
   $("#send-button").disabled =
     choosingContext ||
     !!state?.capabilities?.nativeHistory ||
@@ -6718,6 +6799,7 @@ extensionWorkbench = createExtensionWorkbench({
   onError: toast,
   onPanelAction: handleGoalPanelAction,
   onCount(count) {
+    syncComposerTools();
     const badge = $("#extension-page-count");
     badge.hidden = !count;
     badge.textContent = count;

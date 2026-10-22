@@ -225,6 +225,11 @@ window.fetch=async(input,options={})=>{
     "只读状态不能发起子代理",
   );
   assert.equal(
+    await chat("return d.querySelector('#composer-tools').hidden;"),
+    false,
+    "只读状态保留声明支持的导航入口，不授予发起权限",
+  );
+  assert.equal(
     await chat("return d.querySelector('[data-task-inspect]')?.disabled;"),
     false,
     "已声明的只读详情不是写管理操作",
@@ -266,6 +271,11 @@ window.fetch=async(input,options={})=>{
     false,
     "远程不提供本地详情或发起 affordance",
   );
+  assert.equal(
+    await chat("return d.querySelector('#composer-tools').hidden;"),
+    true,
+    "远程不提供被网关裁剪的本地工作台快捷入口",
+  );
   await chat(
     "w.panelProbe.caps={readOnly:false,remote:false,tasks:false,sessionTree:false}",
   );
@@ -273,12 +283,22 @@ window.fetch=async(input,options={})=>{
   await ready(
     "!d.querySelector('[data-extension-key=\"desktop:task-panel\"]')&&!d.querySelector('[data-extension-key=\"desktop:branch-tree\"]')",
   );
+  assert.equal(
+    await chat("return d.querySelector('#composer-tools').hidden;"),
+    true,
+    "未声明任务能力时工具栏不提供入口",
+  );
   await chat(
     "w.panelProbe.caps={readOnly:false,tasks:true,sessionTree:true};w.panelProbe.unsupportedTasks=true",
   );
   await pulse();
   await ready(
     "!!d.querySelector('[data-extension-key=\"desktop:branch-tree\"]')&&!d.querySelector('[data-extension-key=\"desktop:task-panel\"]')",
+  );
+  assert.equal(
+    await chat("return d.querySelector('#composer-tools').hidden;"),
+    true,
+    "原生读模型返回 unsupported 后工具栏同步隐藏入口",
   );
   await chat(
     "w.panelProbe.unsupportedTree=true;d.querySelector('[data-extension-key=\"desktop:branch-tree\"]').click();d.querySelector('[data-branch-refresh]').click()",

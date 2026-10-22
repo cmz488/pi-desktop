@@ -452,11 +452,11 @@ try {
     `document.querySelector('[data-agent-id="${home.id}"]').click()`,
   );
   await until(
-    `document.querySelector('#runtime').dataset.owner===${JSON.stringify(home.id)} && ${doc}?.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
+    `document.querySelector('#runtime')?.dataset.owner===${JSON.stringify(home.id)} && ${doc}?.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
   );
   await call("Page.reload");
   await until(
-    `document.querySelector('#runtime').dataset.owner===${JSON.stringify(home.id)} && ${doc}?.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
+    `document.querySelector('#runtime')?.dataset.owner===${JSON.stringify(home.id)} && ${doc}?.querySelector('#connection-status')?.textContent==='Pi 已连接'`,
   );
   for (const path of ["/api/remote", `/agents/${home.id}/api/remote`])
     assert.equal(
@@ -478,6 +478,12 @@ try {
       await evaluate(
         `${doc}.documentElement.scrollWidth<=${doc}.defaultView.innerWidth`,
       ),
+    );
+    assert(
+      await evaluate(
+        `(()=>{const button=${doc}.querySelector('#composer-tools');return button.hidden&&!button.getClientRects().length;})()`,
+      ),
+      `远程输入框不显示本地工具入口 ${width}px`,
     );
     assert(
       await evaluate(
