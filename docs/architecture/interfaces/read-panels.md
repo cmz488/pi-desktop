@@ -2,6 +2,7 @@
 
 ## 位置与职责
 
+- `src/ui/shared/task-vocabulary.js`：任务标签、种类、投递失败与回执提示的纯展示规则，不拥有任务状态或 worker 生命周期。
 - `src/ui/shared/session-panel-loader.js`：两面板共用的会话身份、只读加载与资源生命周期，不拥有 Durable 状态。
 - `src/ui/shared/branch-tree-panel.js`、`task-panel.js`：分别展示分支树与任务读模型，业务动作沿用既有命令路径。
 - `src/ui/shared/extension-workbench.js`：为所有内置页更新上下文，包括当前未选中的页；只列可用入口。
@@ -25,7 +26,14 @@ loader.isCurrent(token);
 loader.setActive(boolean);
 loader.dispose();
 
-taskStatusLabel(status); // 共用原生活跃态中文文案；未知值原样返回，不推断终态。
+taskStatusLabel(status); // 活跃态／终态行标签；未知值原样返回，不推断终态。
+taskOutcomeLabel(status); // 仅解释任务终态。
+taskDeliveryLabel(status); // 投递 pending 为“等待投递”，不同于任务 pending 的“排队”。
+taskKindLabel(kind);
+isMessageFailure(status);
+hasMessageFailure(task); // 首次成功后的预算错误或未完成的后续消息。
+taskReceiptLabel(task); // 默认标签不再依赖外部回调。
+taskReceiptNotice(result, fallback); // 原生终态、marked、旧空回执分别提示。
 createBranchTreePanel({ fetchTree, fetchHistory?, fetchDetail?, command, toast, switchSession, openCreatedSession? });
 createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 // 任务 command(input, { signal }?)：wait 必须遵守 signal；非 wait 不增加生命周期选项。
@@ -33,6 +41,8 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 // 返回 key/view/available、builtin.update/render/setVisible、refresh、setActive、dispose；
 // 分支树另有 setSession(id)，空字符串表示跟随当前会话。
 ```
+
+词汇函数可直接在 Node 中调用。`task-panel.js` 的 `taskStatusLabel` 与 `task-detail-view.js` 的旧词汇导出保留为同一 implementation 的再导出；`taskReceiptLabel`、详情及管理区仍接受旧的可选标签回调，但生产调用方无需注入。任务词汇不解释 worker 的启动／停止状态，标签不从消息状态猜测任务是否完成，后续失败也不修改首次结果。
 
 同 owner、同内置页的更新复用已挂载容器，其他扩展卡片变化不重挂当前输入节点；身份变化仍先清空旧展示并使旧回调失效。内置页可为可重建控件声明稳定的 `data-workbench-focus` 键；工作台仅在同页、同 owner 的同步重绘后恢复该控件，不覆盖 renderer 已明确设置的新焦点。分支图临时重挂历史区时，历史 controller 在同一挂载身份恢复后补回焦点；离开或换目标使该恢复失效。
 
@@ -94,6 +104,8 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 每个 loader 的每代身份最多一个在途读取、一个补刷定时器；普通刷新按 1500 ms 节流，密集通知合并为一次补刷，空闲时 force 跳过节流，在途时只合并一次补刷。unsupported 不形成轮询。关闭后迟到回调不能重启补刷。加载器只管理读模型；命令等待的生命周期见任务契约。可见的实时详情每 2 秒补刷，历史折叠时不读取，展开后按每页 20 条按需读取；不把历史拉回实时图。
 
 ## 可执行证据
+
+- `test/task-vocabulary.test.mjs`：任务／终态／投递的不同词域、种类、未知值、首次结果与后续失败、预算、marked／旧回执及旧导出的兼容；面板与真实 Host 浏览器回归继续验证调用路径。
 
 - `test/session-panel-loader.test.mjs`：9 条有界时钟／迟到响应回归，覆盖能力、A/B/A、权限、节流／补刷、暂停／销毁和错误。
 - `test/read-panels-browser-check.mjs`：真实工作台和面板，覆盖背景取消确认跨会话失效、旧 DOM、晚到响应、A/B/A、同会话权限变化、折叠／滚动、unsupported／只读／可用远程回调和销毁；另验证细指针真实 hover、Tab／Enter、按钮焦点、busy 互斥、390px、触屏、减少动态效果及 SVG 实际底色上的双主题 4.5:1 文本对比度；另覆盖全部活跃态文案与未知态透传、其他扩展卡片更新期间的真实中文组合／提交与切页后的组合状态释放，图面 280–760px 裁剪、初始 460px 回退和无新数据时的 resize。

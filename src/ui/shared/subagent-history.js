@@ -1,9 +1,6 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
-import {
-  renderTaskDetail,
-  taskReceiptLabel,
-  hasMessageFailure,
-} from "./task-detail-view.js";
+import { renderTaskDetail } from "./task-detail-view.js";
+import { taskReceiptLabel, hasMessageFailure } from "./task-vocabulary.js";
 import { dshIcon } from "./dsh-icons.mjs";
 
 /**

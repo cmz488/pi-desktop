@@ -32,6 +32,7 @@ export const sharedAssets = new Map([
     ["src/ui/shared/task-panel-management.js", javascript],
   ],
   ["/task-detail-view.js", ["src/ui/shared/task-detail-view.js", javascript]],
+  ["/task-vocabulary.js", ["src/ui/shared/task-vocabulary.js", javascript]],
   ["/task-panel.css", ["src/ui/shared/task-panel.css", "text/css"]],
   ["/host-task-panel.js", ["src/ui/shared/host-task-panel.js", javascript]],
   [

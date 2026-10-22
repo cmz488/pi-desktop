@@ -1,13 +1,19 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createTaskPanelManagement } from "./task-panel-management.js";
-import { hasMessageFailure, taskReceiptLabel } from "./task-detail-view.js";
+import {
+  taskKindLabel,
+  taskReceiptNotice,
+  taskStatusLabel,
+} from "./task-vocabulary.js";
+
+export { taskStatusLabel } from "./task-vocabulary.js";
 
 /**
  * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
  *
  * 接口：`createTaskPanel` 的 builtin.update/render 接收工作台上下文，refresh、
- *   setActive／dispose 管理读取；taskStatusLabel 共享原生活跃态文案，未知值原样返回。
+ *   setActive／dispose 管理读取；taskStatusLabel 保留兼容导出，词汇由 task-vocabulary 拥有。
  *   命令与权限见 docs/architecture/interfaces/read-panels.md。
  * 不变量：来源、确认与命令目标绑定同一代不可变身份；切会话立即清数据和确认；
  *   只读管理禁用，远程本会话操作不额外禁用；等待只拥有一个可取消观察，不拥有任务。
@@ -15,44 +21,6 @@ import { hasMessageFailure, taskReceiptLabel } from "./task-detail-view.js";
  */
 
 const WAIT_TOTAL_MS = 5 * 60 * 1000;
-const STATUS_LABELS = {
-  pending: "排队",
-  running: "运行中",
-  waiting: "等待",
-  completing: "收尾",
-};
-const OUTCOME_NOTICES = {
-  completed: "任务已完成",
-  failed: "任务失败",
-  aborted: "任务已中止",
-  orphaned: "任务无法恢复",
-  faulted: "任务执行故障",
-};
-const receiptNotice = (result, fallback) => {
-  if (result?.task && hasMessageFailure(result.task))
-    return `${taskReceiptLabel(result.task)}，请查看子代理记录`;
-  const outcome =
-    result?.task?.status === "terminal" ? result.task.outcome?.status : null;
-  return (
-    OUTCOME_NOTICES[outcome] ??
-    (result?.abortStatus === "marked"
-      ? "已提交任务中止请求，尚未确认终态"
-      : result?.abortStatus === "terminal"
-        ? "任务此前已结束，请查看原生结果"
-        : fallback)
-  );
-};
-const KIND_LABELS = {
-  "pi.generation": "模型回合",
-  "pi.tool": "工具调用",
-  "desk.subagent-run": "子代理",
-  "desk.subagent-message": "子代理消息",
-};
-
-export function taskStatusLabel(status) {
-  return STATUS_LABELS[status] ?? status;
-}
-
 export function createTaskPanel({
   fetchTasks,
   fetchDetail,
@@ -75,7 +43,6 @@ export function createTaskPanel({
   const management = createTaskPanelManagement({
     fetchDetail,
     refresh: (options) => loader.refresh(options),
-    statusLabel: taskStatusLabel,
     command,
     toast,
     capture: () => loader.capture(),
@@ -118,7 +85,6 @@ export function createTaskPanel({
     management.update(context, loader.data);
     return changed;
   }
-  const kindLabel = (kind) => KIND_LABELS[kind] ?? kind;
 
   function arm(key, identity) {
     armed = Object.freeze({ key, identity });
@@ -226,7 +192,7 @@ export function createTaskPanel({
       waiting = undefined;
       clearTimeout(entry.timer);
       render();
-      toast(receiptNotice(result, "任务已结束"));
+      toast(taskReceiptNotice(result, "任务已结束"));
       await loader.refresh({ force: true });
       return result;
     } catch (failure) {
@@ -247,7 +213,7 @@ export function createTaskPanel({
     try {
       const result = await command(Object.freeze(input));
       if (!loader.isCurrent(identity)) return result;
-      toast(receiptNotice(result, message));
+      toast(taskReceiptNotice(result, message));
       await loader.refresh({ force: true });
       return result;
     } catch (failure) {
@@ -461,7 +427,7 @@ export function createTaskPanel({
           task.id,
           `#${task.id}`,
           task.name,
-          kindLabel(task.kind),
+          taskKindLabel(task.kind),
           taskStatusLabel(task.status),
           children.find(
             (child) =>
@@ -495,7 +461,7 @@ export function createTaskPanel({
             "task-panel-label",
             task.name ??
               children.find((child) => child.owner?.taskId === taskId)?.name ??
-              kindLabel(task.kind),
+              taskKindLabel(task.kind),
           ),
           element("span", "task-panel-state", taskStatusLabel(task.status)),
         );

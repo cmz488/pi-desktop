@@ -1,19 +1,27 @@
+import {
+  hasMessageFailure,
+  isMessageFailure,
+  taskDeliveryLabel,
+  taskOutcomeLabel,
+  taskReceiptLabel,
+  taskStatusLabel,
+} from "./task-vocabulary.js";
+
+export {
+  taskOutcomeLabel,
+  taskReceiptLabel,
+  hasMessageFailure,
+} from "./task-vocabulary.js";
+
 /**
  * 原生任务详情展示：以纯文本呈现安全回执和子会话，不持有执行生命周期。
  *
- * 接口：renderTaskDetail／taskOutcomeLabel／taskReceiptLabel／hasMessageFailure；见
+ * 接口：renderTaskDetail，词汇函数保留兼容导出；默认标签无需调用方注入，见
  *   docs/architecture/interfaces/read-panels.md。
  * 不变量：相同内容不重建 DOM；更新保留滚动；回答编号只取原生回执。
  * 错误：数据由已校验的详情 interface 提供；读取失败由调用方展示。
  */
 const signatures = new WeakMap();
-const OUTCOMES = {
-  completed: "已完成",
-  failed: "失败",
-  aborted: "已中止",
-  orphaned: "无法恢复",
-  faulted: "执行故障",
-};
 const MESSAGE_ROLES = {
   user: "用户",
   assistant: "助手",
@@ -26,33 +34,10 @@ const element = (tag, className, text) => {
   if (text !== undefined) node.textContent = text;
   return node;
 };
-export function taskOutcomeLabel(status) {
-  return OUTCOMES[status] ?? status;
-}
-
-export function hasMessageFailure(task) {
-  return (
-    !!(task.outcome?.status === "completed" && task.budgetError) ||
-    (task.messageResults ?? []).some((row) =>
-      ["unanswered", "failed", "aborted", "faulted", "orphaned"].includes(
-        row.status,
-      ),
-    )
-  );
-}
-export function taskReceiptLabel(task, statusLabel = (value) => value) {
-  const label = task.outcome
-    ? taskOutcomeLabel(task.outcome.status)
-    : statusLabel(task.status);
-  return hasMessageFailure(task)
-    ? `${label}（首次委托） · 后续消息未完成`
-    : label;
-}
-
 export function renderTaskDetail(
   detail,
   data,
-  { label = "", statusLabel = (value) => value } = {},
+  { label = "", statusLabel = taskStatusLabel } = {},
 ) {
   const signature = JSON.stringify({
     label,
@@ -186,8 +171,9 @@ export function renderTaskDetail(
       }
       for (const tool of child.tools) {
         const block = message("toolResult", tool.output);
+        const outcome = taskOutcomeLabel(tool.status);
         block.querySelector("small").textContent =
-          `${tool.name} · ${OUTCOMES[tool.status] ?? statusLabel(tool.status)}`;
+          `${tool.name} · ${outcome !== tool.status ? outcome : statusLabel(tool.status)}`;
         entries.append(block);
       }
       activity.append(entries);
@@ -206,9 +192,7 @@ export function renderTaskDetail(
 
   if (data.task.messageResults?.length) {
     const failed = data.task.messageResults.filter((row) =>
-      ["unanswered", "failed", "aborted", "faulted", "orphaned"].includes(
-        row.status,
-      ),
+      isMessageFailure(row.status),
     ).length;
     const results = disclosure(
       "messages",
@@ -216,13 +200,6 @@ export function renderTaskDetail(
       failed > 0,
     );
     const rows = element("div", "host-task-records");
-    const labels = {
-      pending: "等待投递",
-      queued: "已排队",
-      placed: "处理中",
-      done: "已回答",
-      unanswered: "未完成",
-    };
     for (const row of data.task.messageResults) {
       const item = element("section", "host-task-delivery");
       item.dataset.messageSubmission = String(
@@ -232,11 +209,7 @@ export function renderTaskDetail(
       item.append(
         element("span", "", row.mode === "followUp" ? "后续消息" : "引导消息"),
         element("small", "", `#${row.submissionId ?? row.deliveryTaskId}`),
-        element(
-          "strong",
-          "",
-          labels[row.status] ?? OUTCOMES[row.status] ?? row.status,
-        ),
+        element("strong", "", taskDeliveryLabel(row.status)),
       );
       if (row.error)
         item.append(element("p", "host-task-error", row.error.message));

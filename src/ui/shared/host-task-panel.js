@@ -1,5 +1,5 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
-import { createTaskPanel, taskStatusLabel } from "./task-panel.js";
+import { createTaskPanel } from "./task-panel.js";
 import { renderTaskDetail } from "./task-detail-view.js";
 
 /**
@@ -431,7 +431,6 @@ export function createHostTaskPanel({ root, request }) {
   function renderDetail(data, label) {
     renderTaskDetail($("[data-host-detail]"), data, {
       label,
-      statusLabel: taskStatusLabel,
     });
   }
   async function inspect() {
