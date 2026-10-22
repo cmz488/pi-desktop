@@ -3,7 +3,7 @@ import { createTaskPanel } from "./task-panel.js";
 import { renderTaskDetail } from "./task-detail-view.js";
 
 /**
- * 全 Host 任务窗口：适配聚合 API，复用会话任务面板的确认、等待租约与权限生命周期。
+ * 全 Host 任务窗口：适配聚合读取，复用任务面板的确认／等待与只读 loader 的详情生命周期。
  *
  * 接口：createHostTaskPanel({ root, request }) 返回 open／dispose；request 与
  *   workspace api(path, input, signal) 相同，协议见 docs/architecture/interfaces/host-tasks.md。
@@ -38,13 +38,7 @@ export function createHostTaskPanel({ root, request }) {
   const field = (name) => form.elements.namedItem(name);
   const panels = new Map();
   const inspectionTargets = new Map();
-  let timer,
-    published,
-    inspection,
-    detailRequest,
-    launchRequest,
-    attempt,
-    detailSignature;
+  let timer, published, inspection, launchRequest, attempt;
   let alive = true,
     initialized = false,
     launching = false,
@@ -75,11 +69,43 @@ export function createHostTaskPanel({ root, request }) {
       clearTimeout(timeout);
     }
   }
-  function cancelDetail() {
-    detailSignature = undefined;
-    detailRequest?.abort();
-    detailRequest = undefined;
-    $("[data-host-detail]").setAttribute("aria-busy", "false");
+  const inspector = createSessionPanelLoader({
+    read: (_id, { signal }) => {
+      const { label, ...identity } = inspection;
+      return fetchHost(
+        `/api/host/tasks/detail?${new URLSearchParams(identity)}`,
+        undefined,
+        signal,
+      );
+    },
+    onChange: paintDetail,
+  });
+  function paintDetail() {
+    const detail = $("[data-host-detail]");
+    detail.setAttribute("aria-busy", String(inspector.loading));
+    if (!visible()) return;
+    if (inspector.error) detail.textContent = inspector.error;
+    else if (inspector.data?.supported === false)
+      detail.textContent = "此 worker 未声明原生任务详情能力";
+    else if (inspector.data)
+      renderTaskDetail(detail, inspector.data, { label: inspection.label });
+    else
+      detail.textContent = inspection
+        ? "读取原生回执…"
+        : "选择任务查看结果与子会话。";
+  }
+  function inspect() {
+    inspector.setActive(visible());
+    inspector.setContext({
+      owner: inspection
+        ? `${workerKey(inspection)}:${inspection.conversationId}`
+        : "host",
+      sessionId: inspection ? String(inspection.taskId) : "",
+      enabled: visible() && !!inspection,
+      canManage: false,
+    });
+    paintDetail();
+    return inspector.refresh({ force: true });
   }
   function showComposer(open) {
     form.hidden = !open;
@@ -91,7 +117,8 @@ export function createHostTaskPanel({ root, request }) {
     for (const entry of panels.values()) entry.panel.dispose();
     panels.clear();
     published = undefined;
-    cancelDetail();
+    inspector.setActive(false);
+    paintDetail();
     $("[data-host-workers]").replaceChildren();
     $("[data-host-spawn]").disabled = true;
     showComposer(false);
@@ -398,12 +425,6 @@ export function createHostTaskPanel({ root, request }) {
     if (inspectionTargets.size && !$("[data-host-inspect]").value)
       $("[data-host-inspect]").selectedIndex = 1;
     inspection = inspectionTargets.get($("[data-host-inspect]").value);
-    if ((inspection && taskKey(inspection)) !== previousKey) {
-      cancelDetail();
-      $("[data-host-detail]").textContent = inspection
-        ? "读取原生回执…"
-        : "选择任务查看结果与子会话。";
-    }
     void inspect();
   }
   function render() {
@@ -427,39 +448,6 @@ export function createHostTaskPanel({ root, request }) {
     updateForm(data.workers);
     renderWorkers(data.workers);
     updateInspection(data.workers);
-  }
-  function renderDetail(data, label) {
-    renderTaskDetail($("[data-host-detail]"), data, {
-      label,
-    });
-  }
-  async function inspect() {
-    if (!visible() || !inspection || detailRequest) return;
-    const target = inspection;
-    const controller = new AbortController();
-    detailRequest = controller;
-    $("[data-host-detail]").setAttribute("aria-busy", "true");
-    try {
-      const { label, ...identity } = target;
-      const data = await fetchHost(
-        `/api/host/tasks/detail?${new URLSearchParams(identity)}`,
-        undefined,
-        controller.signal,
-      );
-      if (!visible() || inspection !== target || controller.signal.aborted)
-        return;
-      renderDetail(data, label);
-    } catch (error) {
-      if (visible() && inspection === target && !controller.signal.aborted) {
-        detailSignature = undefined;
-        $("[data-host-detail]").textContent = error.message;
-      }
-    } finally {
-      if (detailRequest === controller) {
-        detailRequest = undefined;
-        $("[data-host-detail]").setAttribute("aria-busy", "false");
-      }
-    }
   }
   async function launch(event) {
     event.preventDefault();
@@ -522,8 +510,7 @@ export function createHostTaskPanel({ root, request }) {
           taskId: result.taskId,
           label: `${worker.name} / ${payload.name || "子代理"} · #${result.taskId}`,
         });
-        cancelDetail();
-        $("[data-host-detail]").textContent = "读取原生回执…";
+        void inspect();
       }
       await monitor.refresh({ force: true });
     } catch (error) {
@@ -556,9 +543,7 @@ export function createHostTaskPanel({ root, request }) {
   field("conversation").onchange = updateParents;
   $("[data-host-inspect]").onchange = () => {
     inspectionEpoch++;
-    cancelDetail();
     inspection = inspectionTargets.get($("[data-host-inspect]").value);
-    $("[data-host-detail]").textContent = "读取原生回执…";
     void inspect();
   };
   form.onsubmit = launch;
@@ -598,6 +583,7 @@ export function createHostTaskPanel({ root, request }) {
       if (!alive) return;
       alive = false;
       monitor.dispose();
+      inspector.dispose();
       clearTimeout(timer);
       launchRequest?.abort();
       root.removeEventListener("cancel", pause);

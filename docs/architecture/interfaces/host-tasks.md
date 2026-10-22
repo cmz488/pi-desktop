@@ -58,6 +58,12 @@ GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=
 - worker 未运行或读取失败时 `data:null`；这不表示“无任务”或“任务已结束”。单个读取失败产生局部 error 与 `partial:true`，不吞掉其他 worker 的结果。
 - 能力必须由 workspace 显式声明；worker 再受其只读策略收窄。不从方法存在、读模型自填字段或 UI 推断权限。
 
+### 浏览器兼容入口
+
+公开 `/host-task-panel.js` 仍导出 `createHostTaskPanel({root, request}) -> {open, dispose}`。`root` 是调用方提供的原生 dialog，保留旧表单、选择器与 `data-host-*` 控件约定；`request(path, input, signal)` 使用既有 Host HTTP。生产 Desktop 不挂载该窗口，但无内部导入方不代表撤销该 interface。
+
+兼容 adapter 的每个会话清单直接使用 `createTaskPanel`，不另实现中止确认或等待租约；详情通过共用只读 loader 管理请求与身份，并使用 `renderTaskDetail`。详情身份包含 Agent、generation、父会话和 task，A/B/A 切换、关闭后重开、销毁都使旧观察失效；即使提供方忽略取消，迟到结果也不能覆盖新选择。关闭只撤观察，原生任务仍运行。
+
 ### 子代理发起
 
 ```js
@@ -158,6 +164,7 @@ Desktop 整合面板的 `/agents/<agentId>/api/tasks`、`task-detail`、`subagen
 ## 可执行证据
 
 - `test/host-task-management.test.mjs`：真实 Host／worker HTTP 聚合、幂等、owned 关系／单 writer、失败与终态回执、等待断连、非串行观察、权限／非法与越界目标、重启与原生工具 scope、单 worker 暂停的局部超时。
+- `test/host-task-panel-compat-check.mjs`：由 `host-tasks-browser-check.mjs` 调用，在真实 Host 页面导入公共 module 并挂载旧 dialog，验证旧表单草稿与真实发起、跨 worker 同号详情、迟到读取隔离、关闭／销毁撤观察及原生任务不被中止。
 - `test/host-tasks-browser-check.mjs`：两个 SQLite 的同号 task 隔离、当前会话与 generation 固定发起、草稿／冻结请求重试、原生去重与迟到回执不改选、等待／中止、切 Agent 不误中止及 390px。
 - `test/subagent-reliability.test.mjs`：审批继承与停机权限变更、交互范围、终态资源回收与预算限制。
 - `test/subagent-history.test.mjs`：21 个真实终态委托的 20＋1 分页、fork 不继承 owned 权限、remote／非法界限拒绝、旧 generation 读取／管理拒绝、无效 generation 为 422，且不重放模型。

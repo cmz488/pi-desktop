@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { desktopFixture, until as untilValue } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
+import { checkHostTaskPanelCompatibility } from "./host-task-panel-compat-check.mjs";
 
 // 同号 task 必须经过真实两套 worker；工作台不再有跨 Agent 的发起表单。
 const gates = { A: Promise.withResolvers(), B: Promise.withResolvers() };
@@ -71,6 +72,11 @@ try {
   const url = new URL(f.app.url);
   url.searchParams.set("agent", a.id);
   await call("Page.navigate", { url: url.href });
+  await until("!!document.querySelector('#projects [data-agent-id]')");
+  await checkHostTaskPanelCompatibility({ driver, fixture: f, workers });
+  console.log(
+    "Host 兼容面板通过：公开导出、旧表单发起、同号任务、迟到详情和观察清理。",
+  );
   const frame = "document.querySelector('#runtime')?.contentDocument";
   const chat = (source) => evaluate(`(()=>{const d=${frame};${source}})()`);
   async function showTasks() {

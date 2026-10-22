@@ -8,7 +8,7 @@
 - `src/ui/shared/extension-workbench.js`：为所有内置页更新上下文，包括当前未选中的页；只列可用入口。
 - `src/ui/chat/chat.js`：传入选中会话与权限，在切换开始时立即使旧面板失效，在页面暂停／恢复时管理读取。
 - `task-panel-management.js`：现有任务页内的当前会话发起草稿与实时详情；`task-detail-view.js` 提供纯文本结果／过程展示；`subagent-history.js` 为分支页提供独立只读终态记录。
-- `src/ui/shared/host-task-panel.js`：保留的全 Host controller／module 兼容入口；Desktop 不再挂载独立任务弹窗，公开协议仍见 [Host 任务契约](host-tasks.md)。
+- `src/ui/shared/host-task-panel.js`：保留的全 Host controller／module 兼容入口；清单复用任务面板，详情与会话内管理区共用只读 loader，不维护第二套请求身份状态机。Desktop 不再挂载独立任务弹窗，公开协议仍见 [Host 任务契约](host-tasks.md)。
 
 ## 签名
 
