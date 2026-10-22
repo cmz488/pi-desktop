@@ -173,7 +173,12 @@ export function createExtensionWorkbench({
     while (disclosures.size > MAX_RETAINED_ENTRIES)
       disclosures.delete(disclosures.keys().next().value);
     const changed = detail.dataset.page !== page?.key;
-    detail.replaceChildren();
+    // 同一内置页由其 controller 更新内容；父级重挂会终止浏览器正在进行的输入法组合。
+    const retained =
+      page?.builtin && !changed
+        ? detail.querySelector(":scope > .extension-page-content")
+        : null;
+    if (!retained) detail.replaceChildren();
     detail.dataset.page = page?.key ?? "";
     detail.classList.toggle("is-builtin", !!page?.builtin);
     if (!page) return;
@@ -196,11 +201,10 @@ export function createExtensionWorkbench({
     );
     if (!page.builtin) detail.append(meta);
     if (page.builtin) {
-      const content = element(
-        "div",
-        "extension-page-content branch-tree-content",
-      );
-      detail.append(content);
+      const content =
+        retained ??
+        element("div", "extension-page-content branch-tree-content");
+      if (!retained) detail.append(content);
       page.builtin.render(content, {
         ...latestContext,
         sessionId: owner,

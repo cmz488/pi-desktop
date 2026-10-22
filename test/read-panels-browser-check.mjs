@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { publicAssets, assetFile } from "../src/server/asset-manifest.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
 import { measureSurfaceContrast } from "./surface-contrast.mjs";
+import { projectMessage } from "../src/shared/conversation.mjs";
 
 // 真实面板与工作台，只有读模型和命令受控；故意忽略 abort，才能验证晚到结果的身份检查。
 const source = await readFile(
@@ -21,7 +22,7 @@ import {createExtensionWorkbench} from '/extension-workbench.js';
 import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
-let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={},taskStatus='waiting';
+let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={},taskStatus='waiting',rows=[];
 // 真实 chat.js 会在首次渲染后解除首屏隐藏；这个夹具取代了它，所以自己解除。
 delete document.documentElement.dataset.booting;
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
@@ -32,8 +33,9 @@ const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,optio
 const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),command:async input=>{commands.push(input);return taskReply;},toast:text=>notices.push(text),currentSession:()=>owner});
 const pages=[branch,task];
 const controller=createExtensionWorkbench({root,registry:createExtensionAdapterRegistry(),builtinPages:pages,sanitize:text=>text,onCount:count=>root.dataset.count=count,onError:text=>notices.push(text)});
-const update=()=>controller.update([],{sessionId:owner,capabilities,sessionCommands:true});
+const update=()=>controller.update(rows,{sessionId:owner,capabilities,sessionCommands:true});
 window.panelFixture={requests,commands,notices,pages,
+render(next){rows=next;update();},
 reply(value){taskReply=value;},
 status(value){taskStatus=value;return task.refresh({force:true});},
 update(id,caps=capabilities){owner=String(id);capabilities=caps;update();for(const page of pages)void page.refresh();},
@@ -114,6 +116,70 @@ try {
     );
   }
   await evaluate("panelFixture.status('waiting')");
+  await evaluate(
+    `(()=>{const input=document.querySelector('.task-panel-search input');window.imeProbe={input,ends:0};input.addEventListener('compositionend',()=>imeProbe.ends++);input.focus();})()`,
+  );
+  await call("Input.imeSetComposition", {
+    text: "整",
+    selectionStart: 1,
+    selectionEnd: 1,
+  });
+  const progress = projectMessage(
+    {
+      role: "custom",
+      customType: "fixture",
+      content: "后台进度",
+      details: {
+        piDesktop: {
+          version: 1,
+          label: "进度",
+          title: "报告进度",
+          body: "阶段更新",
+          presentation: { mode: "state", key: "fixture/ime-progress" },
+        },
+      },
+    },
+    "ime-progress",
+  );
+  await evaluate(`panelFixture.render(${JSON.stringify([progress])})`);
+  assert.equal(
+    await evaluate(
+      "imeProbe.input===document.querySelector('.task-panel-search input')&&document.activeElement===imeProbe.input&&imeProbe.ends===0",
+    ),
+    true,
+    "其他扩展状态更新不能替换正在组合的搜索框",
+  );
+  await evaluate("panelFixture.status('running')");
+  await call("Input.insertText", { text: "整理" });
+  await until(
+    "document.querySelector('.task-panel-search input').value==='整理'&&document.querySelector('[data-task-id=\"101\"] .task-panel-state').textContent==='运行中'",
+  );
+  assert.equal(
+    await evaluate("imeProbe.ends"),
+    1,
+    "真实输入法提交后完成组合，并补画最新任务状态",
+  );
+  await evaluate("document.querySelector('.task-panel-search input').focus()");
+  await call("Input.imeSetComposition", {
+    text: "资",
+    selectionStart: 1,
+    selectionEnd: 1,
+  });
+  await evaluate(
+    "panelFixture.select('tree');panelFixture.select('tasks');document.querySelector('.task-panel-search input').focus()",
+  );
+  await call("Input.insertText", { text: "料" });
+  await evaluate("panelFixture.status('waiting')");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-task-id=\"101\"] .task-panel-state').textContent",
+    ),
+    "等待",
+    "组合宿主离开页面后，旧组合状态不能冻结新搜索框的刷新",
+  );
+  await evaluate(
+    "(()=>{panelFixture.render([]);const input=document.querySelector('.task-panel-search input');input.value='';input.dispatchEvent(new Event('input'));input.blur();delete window.imeProbe;})()",
+  );
   for (const [status, label] of [
     ["completed", "任务已完成"],
     ["failed", "任务失败"],

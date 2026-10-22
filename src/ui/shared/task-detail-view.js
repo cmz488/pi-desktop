@@ -154,7 +154,13 @@ export function renderTaskDetail(
       block.querySelector("small").textContent = "委托内容";
       conversation.append(
         block,
-        element("p", "host-task-note", "等待输出，执行状态会自动更新。"),
+        element(
+          "p",
+          "host-task-note",
+          data.task.status === "terminal"
+            ? "任务已结束，暂无可展示的输出。"
+            : "等待输出，执行状态会自动更新。",
+        ),
       );
     }
     if (child.messagesTruncated || child.toolsTruncated)

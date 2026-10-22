@@ -69,7 +69,7 @@ export function createTaskPanel({
   let panelContext = {};
   let filter = "all",
     query = "",
-    composing = false;
+    composingInput;
   let active = true,
     visible = true;
   const management = createTaskPanelManagement({
@@ -94,7 +94,7 @@ export function createTaskPanel({
     read: fetchTasks,
     onChange: render,
     onReset: (reason) => {
-      composing = false;
+      composingInput = undefined;
       if (reason === "identity") {
         filter = "all";
         query = "";
@@ -266,12 +266,13 @@ export function createTaskPanel({
       ? document.activeElement
       : undefined;
     // 输入法组合期间不替换搜索框；后台读模型仍更新，结束组合后再呈现最新快照。
-    if (composing && focusedElement?.type === "search") {
+    if (composingInput?.isConnected && focusedElement === composingInput) {
       container
         .querySelector(".task-panel")
         ?.setAttribute("aria-busy", String(loader.loading));
       return;
     }
+    composingInput = undefined;
     const focused = focusedElement?.dataset.taskAction;
     const focusedBuiltin = focusedElement?.dataset.workbenchFocus;
     const selection =
@@ -410,11 +411,12 @@ export function createTaskPanel({
         applyFilter();
       };
       input.addEventListener("compositionstart", () => {
-        if (input.isConnected && loader.isCurrent(identity)) composing = true;
+        if (input.isConnected && loader.isCurrent(identity))
+          composingInput = input;
       });
       input.addEventListener("compositionend", () => {
+        if (composingInput === input) composingInput = undefined;
         if (!input.isConnected || !loader.isCurrent(identity)) return;
-        composing = false;
         query = input.value;
         render();
       });
@@ -481,7 +483,6 @@ export function createTaskPanel({
           copy.classList.add("task-panel-select");
           copy.dataset.taskInspect = String(task.id);
           copy.dataset.taskAction = `inspect:${task.id}`;
-          copy.setAttribute("aria-label", `查看任务 #${task.id} 的实时详情`);
           copy.onclick = () => {
             if (copy.isConnected && loader.isCurrent(identity))
               management.select(task.id);
@@ -705,6 +706,7 @@ export function createTaskPanel({
     },
     refresh: loader.refresh,
     setActive(value) {
+      if (!value) composingInput = undefined;
       loader.setActive(value);
       active = value;
       management.setActive(active && visible);
@@ -717,6 +719,7 @@ export function createTaskPanel({
       setVisible(value) {
         visible = value;
         if (!value) {
+          composingInput = undefined;
           cancelWaiting();
           disarm();
         }

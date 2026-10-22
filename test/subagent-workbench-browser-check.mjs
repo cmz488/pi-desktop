@@ -9,6 +9,7 @@ import { measureSurfaceContrast } from "./surface-contrast.mjs";
 
 const gate = Promise.withResolvers();
 const budgetGate = Promise.withResolvers();
+const abortGate = Promise.withResolvers();
 let budgetTaskId;
 const f = await desktopFixture({
   noExtensions: true,
@@ -74,6 +75,8 @@ const f = await desktopFixture({
       await gate.promise;
     if (input.messages.at(-1)?.content === "BROWSER_BUDGET_FIRST")
       await budgetGate.promise;
+    if (input.messages.at(-1)?.content === "BROWSER_ABORT_EMPTY")
+      await abortGate.promise;
   },
 });
 let browser, driver;
@@ -158,6 +161,24 @@ try {
     true,
     "实时任务行使用原生 owned 子会话名称，而不只显示种类",
   );
+  const inspectObject = await call("Runtime.evaluate", {
+    expression: `(${frame}).querySelector('[data-task-inspect="${launched.taskId}"]')`,
+  });
+  const accessible = await call("Accessibility.getPartialAXTree", {
+    objectId: inspectObject.result.objectId,
+    fetchRelatives: false,
+  });
+  const accessibleName = accessible.nodes.find(
+    (node) => node.role?.value === "button",
+  )?.name?.value;
+  assert.ok(
+    accessibleName?.includes("工作台子代理") &&
+      accessibleName.includes(`#${launched.taskId}`),
+    "任务名按钮的可访问名称应包含可见名称与任务编号",
+  );
+  await call("Runtime.releaseObject", {
+    objectId: inspectObject.result.objectId,
+  });
   await chat("d.querySelector('[data-task-filter=agents]').click();");
   assert.deepEqual(
     await chat(
@@ -657,6 +678,68 @@ try {
     "浏览器已批准",
   );
   await f.command("agent.policy", { id: actor.id, mode: "yolo" });
+  const unanswered = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+    command: "subagent.spawn",
+    id: Number(parent),
+    sessionId: parent,
+    requestId: "browser-abort-before-answer",
+    name: "尚未回答的子代理",
+    prompt: "BROWSER_ABORT_EMPTY",
+  });
+  await until(
+    () => f.requests,
+    (rows) =>
+      rows.some(
+        (row) => row.messages.at(-1)?.content === "BROWSER_ABORT_EMPTY",
+      ),
+  );
+  await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+    command: "cancel",
+    id: Number(parent),
+    sessionId: parent,
+    taskId: unanswered.taskId,
+  });
+  const stopped = await until(
+    () =>
+      f.call(
+        `${prefix}/api/task-detail?sessionId=${parent}&taskId=${unanswered.taskId}`,
+      ),
+    (value) => value.task.status === "terminal",
+  );
+  assert.equal(stopped.task.outcome.status, "aborted");
+  await chat(
+    "[...d.querySelectorAll('.extension-page-choice')].find(row=>row.textContent.includes('对话分支')).click();",
+  );
+  await ready(`!!(${frame}).querySelector('[data-subagent-history]')`);
+  await chat(
+    "d.querySelector('[data-subagent-history]').open=true;d.querySelector('.subagent-history-list > button').click();",
+  );
+  await ready(
+    `!!(${frame}).querySelector('[data-subagent-record="${unanswered.taskId}"]')`,
+  );
+  await chat(
+    `d.querySelector('[data-subagent-record="${unanswered.taskId}"]').click();`,
+  );
+  await ready(
+    `(${frame}).querySelector('.subagent-history-detail [data-host-outcome=aborted]')`,
+  );
+  assert.equal(
+    await chat(
+      "return d.querySelector('.subagent-history-detail').textContent.includes('等待输出，执行状态会自动更新');",
+    ),
+    false,
+    "终态历史不能承诺继续等待输出",
+  );
+  assert.ok(
+    await chat(
+      "return d.querySelector('.subagent-history-detail').textContent.includes('任务已结束，暂无可展示的输出');",
+    ),
+    "无回答的中止任务仍可查看委托，并明确说明已结束",
+  );
+  abortGate.resolve();
+  await chat(
+    "[...d.querySelectorAll('.extension-page-choice')].find(row=>row.textContent.includes('任务与子代理')).click();",
+  );
   const budgeted = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
     command: "subagent.spawn",
     id: Number(parent),
@@ -744,6 +827,7 @@ try {
 } finally {
   gate.resolve();
   budgetGate.resolve();
+  abortGate.resolve();
   driver?.close();
   if (browser && browser.exitCode === null) {
     const ended = once(browser, "close");
