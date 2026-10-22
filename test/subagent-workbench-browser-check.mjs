@@ -8,29 +8,72 @@ import { browserDriver } from "./durable-browser-driver.mjs";
 import { measureSurfaceContrast } from "./surface-contrast.mjs";
 
 const gate = Promise.withResolvers();
+const budgetGate = Promise.withResolvers();
+let budgetTaskId;
 const f = await desktopFixture({
   noExtensions: true,
   modelReply: async (input) =>
-    input.messages.at(-1)?.content === "WORKBENCH_APPROVAL"
+    input.messages.at(-1)?.content === "BROWSER_QUEUE_FOLLOWUP"
       ? {
           toolCalls: [
             {
-              id: "approval-write",
+              id: "browser-budget-message",
               type: "function",
               function: {
-                name: "write",
+                name: "desk_subagent",
                 arguments: JSON.stringify({
-                  path: "browser-approval.txt",
-                  content: "浏览器已批准",
+                  action: "message",
+                  taskId: budgetTaskId,
+                  message: "BROWSER_BUDGET_FOLLOWUP",
+                  mode: "followUp",
                 }),
               },
             },
           ],
         }
-      : undefined,
+      : input.messages.at(-1)?.content === "BROWSER_BUDGET_FIRST"
+        ? { text: "BROWSER_FIRST_ANSWER" }
+        : input.messages.some(
+              (row) =>
+                row.role === "user" &&
+                row.content === "BROWSER_BUDGET_FOLLOWUP",
+            )
+          ? {
+              toolCalls: [
+                {
+                  id: "browser-budget-read",
+                  type: "function",
+                  function: {
+                    name: "read",
+                    arguments: JSON.stringify({
+                      path: "skills/fixture-skill/SKILL.md",
+                    }),
+                  },
+                },
+              ],
+            }
+          : input.messages.at(-1)?.content === "WORKBENCH_APPROVAL"
+            ? {
+                toolCalls: [
+                  {
+                    id: "approval-write",
+                    type: "function",
+                    function: {
+                      name: "write",
+                      arguments: JSON.stringify({
+                        path: "browser-approval.txt",
+                        content: "浏览器已批准",
+                      }),
+                    },
+                  },
+                ],
+              }
+            : undefined,
   beforeModelResponse: async (input) => {
     if (input.messages.at(-1)?.content === "WORKBENCH_CHILD_HELD")
       await gate.promise;
+    if (input.messages.at(-1)?.content === "BROWSER_BUDGET_FIRST")
+      await budgetGate.promise;
   },
 });
 let browser, driver;
@@ -497,12 +540,81 @@ try {
     await readFile(join(f.cwd, "browser-approval.txt"), "utf8"),
     "浏览器已批准",
   );
+  await f.command("agent.policy", { id: actor.id, mode: "yolo" });
+  const budgeted = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+    command: "subagent.spawn",
+    id: Number(parent),
+    sessionId: parent,
+    requestId: "browser-followup-budget",
+    name: "消息预算回归",
+    prompt: "BROWSER_BUDGET_FIRST",
+    config: { tools: ["read"], maxTurns: 2 },
+  });
+  budgetTaskId = budgeted.taskId;
+  await until(
+    () => f.requests,
+    (rows) =>
+      rows.some(
+        (row) => row.messages.at(-1)?.content === "BROWSER_BUDGET_FIRST",
+      ),
+  );
+  await f.call(`${prefix}/api/prompt?sessionId=${parent}`, {
+    sessionId: parent,
+    message: "BROWSER_QUEUE_FOLLOWUP",
+  });
+  await until(
+    () => f.call(`${prefix}/api/state?sessionId=${parent}`),
+    (value) =>
+      value.idle &&
+      value.messages.some((row) => row.toolCallId === "browser-budget-message"),
+  );
+  budgetGate.resolve();
+  await until(
+    () =>
+      f.call(
+        `${prefix}/api/task-detail?sessionId=${parent}&taskId=${budgetTaskId}`,
+      ),
+    (value) => value.task.status === "terminal",
+  );
+  await chat(
+    "[...d.querySelectorAll('.extension-page-choice')].find(row=>row.textContent.includes('对话分支')).click();",
+  );
+  await ready(`!!(${frame}).querySelector('[data-subagent-history]')`);
+  await chat("d.querySelector('[data-subagent-history]').open=true;");
+  await ready(
+    `(${frame}).querySelector('[data-subagent-record="${budgetTaskId}"]')?.textContent.includes('后续消息未完成')`,
+  );
+  await chat(
+    `d.querySelector('[data-subagent-record="${budgetTaskId}"]').click();`,
+  );
+  await ready(
+    `(${frame}).querySelector('.subagent-history-detail')?.textContent.includes('回合预算')`,
+  );
+  assert.ok(
+    await chat(
+      "return d.querySelector('.subagent-history-detail').textContent.includes('BROWSER_FIRST_ANSWER');",
+    ),
+    "首次不可变答案与后续失败应同时可读",
+  );
+  assert.ok(
+    await chat(
+      "return d.querySelector('.subagent-history-detail [data-message-submission]').textContent.includes('未完成');",
+    ),
+    "详情必须标明原生消息未回答，不能只显示任务已完成",
+  );
+  assert.equal(
+    await chat(
+      "return d.documentElement.scrollWidth<=d.defaultView.innerWidth;",
+    ),
+    true,
+  );
   assert.deepEqual(driver.errors, []);
   console.log(
     "Subagent workbench passed: one embedded panel, owned live/history split, visibility cleanup, accessible composer, two themes and narrow touch layout.",
   );
 } finally {
   gate.resolve();
+  budgetGate.resolve();
   driver?.close();
   if (browser && browser.exitCode === null) {
     const ended = once(browser, "close");

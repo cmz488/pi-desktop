@@ -75,6 +75,7 @@ const MAX_DETAIL_TEXT_UNITS = 12000;
 const MAX_MODEL_READ_ENTRIES = 40;
 const MAX_MODEL_MESSAGE_UNITS = 2000;
 const MAX_MODEL_READ_UNITS = 32000;
+const MAX_MESSAGE_RESULTS = 20;
 const AgentProfile = defineDoc({
   kind: "desk.agent",
   version: 1,
@@ -89,6 +90,16 @@ const WorkerApproval = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+});
+// 原生 submission 离开 inbox 后不再保存投递模式；这里只保留已验证的身份信息，
+// 不复制队列、执行状态或回答，也不把后来重试的参数当作历史事实。
+const LegacyMessageIdentities = defineDoc({
+  kind: "desk.legacy-message-identities",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ submissions: {} }),
 });
 const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const text = (value, limit, label) => {
@@ -280,14 +291,16 @@ export async function openAgentWorkspace(options) {
       const abortStatus = await harness.abortTask(task.id, ctx);
       return {
         abortStatus,
-        task: taskReceipt(await api.getTask(task.id, ctx)),
+        task: await receipt(await api.getTask(task.id, ctx), api, ctx),
       };
     },
     wait: async (input, api, ctx) => {
       const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
       if (task.kind !== MANAGED_SUBAGENT_KIND)
         throw new DeskError(404, "子代理任务不存在");
-      return { task: taskReceipt(await api.waitForTask(task.id, ctx)) };
+      return {
+        task: await receipt(await api.waitForTask(task.id, ctx), api, ctx),
+      };
     },
     list: async (input, api, ctx) => {
       const { page, nextBefore } = await subagentPage(
@@ -298,7 +311,7 @@ export async function openAgentWorkspace(options) {
       );
       return {
         parentConversationId: api.conversationId,
-        tasks: page.map(taskReceipt),
+        tasks: await taskReceipts(page, api, ctx),
         truncated: nextBefore !== null,
         nextBefore,
       };
@@ -394,12 +407,12 @@ export async function openAgentWorkspace(options) {
         const legacy = await tx.submissionByRequest(child.id, requestId);
         if (legacy)
           return {
-            result: {
+            result: await legacyMessageReceipt(tx, legacy, {
               taskId: task.id,
               conversationId: child.id,
-              submissionId: legacy.id,
+              content,
               mode,
-            },
+            }),
           };
         const current = await tx.task(task.id);
         if (current.state.status === "terminal")
@@ -504,7 +517,7 @@ export async function openAgentWorkspace(options) {
         });
       }
       return {
-        task: taskReceipt(task),
+        task: await receipt(task, api, ctx),
         children,
         hasMoreChildren: records.length > children.length,
       };
@@ -707,6 +720,139 @@ export async function openAgentWorkspace(options) {
     if (!task || !scope.has(task.conversationId))
       throw new DeskError(404, "任务不存在");
     return task;
+  }
+  async function legacyMessageReceipt(tx, submission, input) {
+    if (submission.type !== "input")
+      throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+    const inbox = await tx.doc(InboxDoc, input.conversationId);
+    const queued = inbox.items.find((row) => row.id === submission.id);
+    const entry =
+      submission.entry === undefined
+        ? undefined
+        : await tx.entry(submission.entry);
+    const original =
+      queued?.content ??
+      entry?.model?.find((row) => row.role === "user")?.content;
+    const identities = await tx.doc(
+      LegacyMessageIdentities,
+      input.conversationId,
+    );
+    const saved = identities.submissions[submission.id];
+    const originalText =
+      typeof original === "string"
+        ? original
+        : Array.isArray(original) &&
+            original.every((block) => block.type === "text")
+          ? contentText(original)
+          : undefined;
+    const digest =
+      originalText === undefined
+        ? saved?.digest
+        : createHash("sha256").update(originalText).digest("hex");
+    if (!digest)
+      throw new DeskError(409, "旧消息原文无法确认，请在子会话查看记录");
+    const candidate = createHash("sha256").update(input.content).digest("hex");
+    const mode = saved?.mode ?? queued?.mode ?? null;
+    if (digest !== candidate || (mode !== null && mode !== input.mode))
+      throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+    identities.submissions[submission.id] = { digest, mode };
+    return {
+      taskId: input.taskId,
+      conversationId: input.conversationId,
+      submissionId: submission.id,
+      mode,
+      modeKnown: mode !== null,
+    };
+  }
+  async function taskReceipts(tasks, api = harness, ctx = context) {
+    const receipts = tasks.map(taskReceipt);
+    const managed = new Set(
+      tasks
+        .filter((task) => task.kind === MANAGED_SUBAGENT_KIND)
+        .map((task) => task.id),
+    );
+    if (!managed.size) return receipts;
+    const additions = await api.commit(async (tx) => {
+      const groups = new Map();
+      let cursor;
+      do {
+        const page = await tx.scanTasks(
+          { kind: SUBAGENT_MESSAGE_KIND },
+          TASK_SCAN_PAGE_SIZE,
+          cursor,
+        );
+        for (const delivery of page.items) {
+          if (!managed.has(delivery.input.taskId)) continue;
+          const group = groups.get(delivery.input.taskId) ?? {
+            items: [],
+            truncated: false,
+          };
+          group.items.push(delivery);
+          group.items.sort((a, b) => b.id - a.id);
+          if (group.items.length > MAX_MESSAGE_RESULTS) {
+            group.items.pop();
+            group.truncated = true;
+          }
+          groups.set(delivery.input.taskId, group);
+        }
+        cursor = page.next;
+      } while (cursor !== undefined);
+      const projected = new Map();
+      for (const taskId of managed) {
+        const child = (await tx.scanConversations({ ownerTaskId: taskId }, 1))
+          .items[0];
+        const budgetError =
+          child && (await tx.doc(AgentProfile, child.id)).limitError;
+        const group = groups.get(taskId);
+        const messageResults = [];
+        for (const delivery of [...(group?.items ?? [])].reverse()) {
+          const submission = await tx.submissionByRequest(
+            delivery.input.conversationId,
+            delivery.input.requestId,
+          );
+          const outcome = delivery.state.outcome;
+          const error =
+            submission?.status === "unanswered"
+              ? (submission.reason === "aborted" && budgetError) ||
+                (typeof submission.detail === "string"
+                  ? submission.detail
+                  : `子代理消息未完成：${submission.reason}`)
+              : !submission && outcome?.status !== "completed"
+                ? (outcome?.error?.message ?? outcome?.reason)
+                : undefined;
+          messageResults.push({
+            deliveryTaskId: delivery.id,
+            submissionId: submission?.id ?? null,
+            mode: delivery.input.mode,
+            status:
+              submission?.status ??
+              (delivery.state.status === "terminal"
+                ? outcome.status
+                : "pending"),
+            ...(submission?.reason ? { reason: submission.reason } : {}),
+            ...(submission?.answer !== undefined
+              ? { answerEntryId: submission.answer }
+              : {}),
+            ...(error
+              ? { error: { message: error.slice(0, MAX_MODEL_MESSAGE_UNITS) } }
+              : {}),
+          });
+        }
+        projected.set(taskId, {
+          messageResults,
+          messageResultsTruncated: group?.truncated ?? false,
+          ...(budgetError ? { budgetError: { message: budgetError } } : {}),
+        });
+      }
+      return projected;
+    }, ctx);
+    return receipts.map((receipt) => ({
+      ...receipt,
+      ...additions.get(receipt.id),
+    }));
+  }
+  async function receipt(task, api = harness, ctx = context) {
+    return (await taskReceipts([task], api, ctx))[0];
   }
   async function subagentPage(
     id,
@@ -1407,7 +1553,7 @@ export async function openAgentWorkspace(options) {
           id: selected.id,
           taskId: input.taskId,
           idle: !foreground(selected.id),
-          task: taskReceipt(settled),
+          task: await receipt(settled),
         };
       }
       await selected.waitForIdle(waitContext);
@@ -1423,7 +1569,7 @@ export async function openAgentWorkspace(options) {
           taskId: input.taskId,
           cancelled: true,
           abortStatus,
-          task: taskReceipt(await harness.getTask(input.taskId, context)),
+          task: await receipt(await harness.getTask(input.taskId, context)),
         };
       }
       if (input.background === true) {
@@ -1573,9 +1719,9 @@ export async function openAgentWorkspace(options) {
       });
       return {
         sessionId: String(id),
-        records: page.map((row) => ({
-          ...taskReceipt(row),
-          name: row.input.name,
+        records: (await taskReceipts(page)).map((row, index) => ({
+          ...row,
+          name: page[index].input.name,
         })),
         nextBefore,
       };
@@ -1627,7 +1773,7 @@ export async function openAgentWorkspace(options) {
       }
       return {
         supported: true,
-        task: taskReceipt(task),
+        task: await receipt(task),
         children,
         hasMoreChildren: records.length > children.length,
         previewLimits: {

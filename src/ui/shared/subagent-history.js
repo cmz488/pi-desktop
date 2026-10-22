@@ -1,5 +1,5 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
-import { renderTaskDetail, taskOutcomeLabel } from "./task-detail-view.js";
+import { renderTaskDetail, taskReceiptLabel } from "./task-detail-view.js";
 
 /**
  * 对话分支中的子代理历史：只读查看原生终态委托，不把 owned 会话冒充历史 fork。
@@ -98,7 +98,7 @@ export function createSubagentHistory({ fetchHistory, fetchDetail }) {
       const button = element(
         "button",
         "subagent-history-record",
-        `${record.name} · #${record.id} · ${taskOutcomeLabel(record.outcome?.status)}`,
+        `${record.name} · #${record.id} · ${taskReceiptLabel(record)}`,
       );
       button.type = "button";
       button.dataset.subagentRecord = String(record.id);

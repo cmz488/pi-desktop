@@ -598,7 +598,7 @@ test(
             row.messages.at(-1).content.startsWith("BUDGET_FIRST"),
         ),
     );
-    for (let index = 0; index < 20; index++)
+    for (let index = 0; index < 21; index++)
       await invoke({
         action: "message",
         taskId: spawned.taskId,
@@ -614,11 +614,17 @@ test(
       (value) =>
         value.children[0].idle &&
         value.children[0].messages.some(
-          (row) => row.role === "user" && row.text.startsWith("BUDGET_NEXT_19"),
+          (row) => row.role === "user" && row.text.startsWith("BUDGET_NEXT_20"),
         ) &&
         value.children[0].messages.at(-1)?.role === "assistant",
     );
     const result = await invoke({ action: "read", taskId: spawned.taskId });
+    assert.equal(result.task.messageResults.length, 20);
+    assert.equal(
+      result.task.messageResultsTruncated,
+      true,
+      "处理状态同样有界，不能把省略的旧状态冒充全量",
+    );
     const messages = result.children.flatMap((row) => row.messages);
     assert.equal(
       messages.reduce((sum, row) => sum + row.text.length, 0),
@@ -868,5 +874,213 @@ test(
     });
     assert.equal(next.tasks[0].id, spawned.taskId);
     assert.equal(next.nextBefore, null);
+  },
+);
+
+test(
+  "followUp 预算失败单列原生 submission 状态，首次答案保持不变并可跨重启读取",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "BUDGET_PRIMARY")
+          await gate.promise;
+      },
+      modelReply: async (input) =>
+        input.messages.at(-1)?.content === "BUDGET_PRIMARY"
+          ? { text: "FIRST_IMMUTABLE_ANSWER" }
+          : input.messages.some(
+                (row) =>
+                  row.role === "user" && row.content === "BUDGET_FOLLOWUP",
+              )
+            ? {
+                toolCalls: [
+                  {
+                    id: "followup-read",
+                    type: "function",
+                    function: {
+                      name: "read",
+                      arguments: JSON.stringify({
+                        path: "skills/fixture-skill/SKILL.md",
+                      }),
+                    },
+                  },
+                ],
+              }
+            : { text: "PARENT_DONE" },
+    });
+    const created = await invoke({
+      action: "spawn",
+      prompt: "BUDGET_PRIMARY",
+      config: { tools: ["read"], maxTurns: 2 },
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some((row) => row.messages.at(-1)?.content === "BUDGET_PRIMARY"),
+    );
+    const sent = await invoke({
+      action: "message",
+      taskId: created.taskId,
+      message: "BUDGET_FOLLOWUP",
+      mode: "followUp",
+    });
+    gate.resolve();
+    const detail = await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${created.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    function check(task) {
+      assert.equal(
+        task.outcome.status,
+        "completed",
+        "不能改写首次回答的原生终态",
+      );
+      assert.equal(task.outcome.result.answer, "FIRST_IMMUTABLE_ANSWER");
+      assert.match(task.budgetError?.message ?? "", /回合预算/);
+      const followup = task.messageResults.find(
+        (row) => row.submissionId === sent.submissionId,
+      );
+      assert.equal(followup.status, "unanswered");
+      assert.equal(followup.mode, "followUp");
+      assert.match(followup.error.message, /回合预算/);
+    }
+    check(detail.task);
+    check((await invoke({ action: "wait", taskId: created.taskId })).task);
+    check((await invoke({ action: "read", taskId: created.taskId })).task);
+    check(
+      (await invoke({ action: "list", includeTerminal: true })).tasks.find(
+        (row) => row.id === created.taskId,
+      ),
+    );
+    check(
+      (
+        await f.call(`${prefix}/api/subagent-history?sessionId=${parent}`)
+      ).records.find((row) => row.id === created.taskId),
+    );
+    await f.reopen();
+    await until(
+      () => f.call("/api/workspace"),
+      (value) =>
+        value.agents.some(
+          (row) => row.id === actor.id && row.status === "running",
+        ),
+    );
+    check((await invoke({ action: "read", taskId: created.taskId })).task);
+  },
+);
+
+test(
+  "兼容 submission 核对原文及已知模式；已丢失的模式明确标为未知且不重投",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "LEGACY_IDENTITY_PRIMARY")
+          await gate.promise;
+      },
+    });
+    const created = await invoke({
+      action: "spawn",
+      prompt: "LEGACY_IDENTITY_PRIMARY",
+    });
+    const detail = await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${created.taskId}`,
+        ),
+      (value) => value.children.length > 0,
+    );
+    const child = String(detail.children[0].id);
+    for (const [requestId, message] of [
+      ["legacy-known", "LEGACY_KNOWN"],
+      ["legacy-unknown", "LEGACY_UNKNOWN"],
+    ])
+      await f.call(`${prefix}/api/prompt?sessionId=${child}`, {
+        sessionId: child,
+        requestId,
+        message,
+        mode: "follow_up",
+      });
+    const args = {
+      action: "message",
+      taskId: created.taskId,
+      requestId: "legacy-known",
+      message: "LEGACY_KNOWN",
+      mode: "followUp",
+    };
+    assert.match(
+      await invoke({ ...args, message: "其他正文" }, { error: true }),
+      /请求 ID 已用于其他内容/,
+    );
+    assert.match(
+      await invoke({ ...args, mode: "steer" }, { error: true }),
+      /请求 ID 已用于其他内容/,
+    );
+    const known = await invoke(args);
+    assert.equal(known.mode, "followUp");
+    assert.equal(known.modeKnown, true);
+    gate.resolve();
+    await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${created.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    assert.deepEqual(
+      await invoke(args),
+      known,
+      "模式证明在消息离开原生队列后仍有效",
+    );
+    const unknownArgs = {
+      ...args,
+      requestId: "legacy-unknown",
+      message: "LEGACY_UNKNOWN",
+      mode: "steer",
+    };
+    const unknown = await invoke(unknownArgs);
+    assert.equal(
+      unknown.mode,
+      null,
+      "不能将本次要求的 steer 冒充已经发生的模式",
+    );
+    assert.equal(unknown.modeKnown, false);
+    assert.match(
+      await invoke(
+        { ...unknownArgs, message: "未知模式也不能换正文" },
+        { error: true },
+      ),
+      /请求 ID 已用于其他内容/,
+    );
+    await f.reopen();
+    await until(
+      () => f.call("/api/workspace"),
+      (value) =>
+        value.agents.some(
+          (row) => row.id === actor.id && row.status === "running",
+        ),
+    );
+    assert.deepEqual(await invoke(args), known);
+    assert.deepEqual(await invoke(unknownArgs), unknown);
+    assert.equal(
+      f.requests.filter(
+        (row) => row.messages.at(-1)?.content === "LEGACY_KNOWN",
+      ).length,
+      1,
+    );
+    assert.equal(
+      f.requests.filter(
+        (row) => row.messages.at(-1)?.content === "LEGACY_UNKNOWN",
+      ).length,
+      1,
+    );
   },
 );

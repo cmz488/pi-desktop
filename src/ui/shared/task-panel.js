@@ -1,6 +1,7 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createTaskPanelManagement } from "./task-panel-management.js";
+import { hasMessageFailure, taskReceiptLabel } from "./task-detail-view.js";
 
 /**
  * 任务面板：展示 Host 的会话范围读模型，不另持有任务状态。
@@ -28,6 +29,8 @@ const OUTCOME_NOTICES = {
   faulted: "任务执行故障",
 };
 const receiptNotice = (result, fallback) => {
+  if (result?.task && hasMessageFailure(result.task))
+    return `${taskReceiptLabel(result.task)}，请查看子代理记录`;
   const outcome =
     result?.task?.status === "terminal" ? result.task.outcome?.status : null;
   return (

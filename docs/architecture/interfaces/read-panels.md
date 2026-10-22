@@ -97,3 +97,5 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 - `test/subagent-workbench-browser-check.mjs`：无独立侧栏入口／弹窗、现有唯一任务面板内发起和详情、原生 owned 名称、终态实时／历史分流，以及切页撤详情和等待观察、创建折叠／焦点、实际透明表面的双主题 4.5:1 文本对比度、390px 详情／表单占满栏宽、44px 触达目标、只读历史选中后焦点保持，以及详情仅溢出标记变化的更新；新增 Enter 打开详情、选中控制关系、真实 HTTP 读取后注入延迟／503 的加载、错误与恢复，以及真实任务终态后的空态和表单触达验证。`test/subagent-history.test.mjs` 验证分页与权限。
 - `test/bridge.test.mjs`：完整／chat 快照都只按 Host 声明返回读能力。
 - `npm run test:extensions:browser`、`test:workspace:browser` 纳入上述浏览器证据；静态 module 统一经资产清单发布并由 `package:check` 验证。
+
+子代理回执区分首次委托与后续消息：任务历史标签、详情和管理回执提示不能仅以首次 completed 表示全部成功；消息原生状态、预算错误与裁剪标记沿用 [Host 任务契约](host-tasks.md)。`test/subagent-workbench-browser-check.mjs` 实际查看 followUp 耗尽预算后的历史标签、消息未回答原因和仍保留的首次答案。

@@ -182,7 +182,7 @@ export function createManagedSubagents({
         defineTool({
           name: "desk_subagent",
           description:
-            "管理当前会话拥有的子代理：spawn 后台创建并立即返回 taskId；message 用 steer 或 followUp 投递指令；read 读取过程预览；result 用 offset/length 分段读取完整原生回答；list 默认只列非终态，includeTerminal/before 可分页查历史；wait 等原生终态；abort 请求原生中止。仅在用户要求委派时创建，共享目录的并行写入须隔离。taskId 不是历史分支 id；终态消息不能复活任务。取消等待不拥有工作，marked 不等于已中止。",
+            "管理当前会话拥有的子代理：spawn 后台创建并立即返回 taskId；message 用 steer 或 followUp 投递指令；read 读取过程预览；result 用 offset/length 分段读取完整原生回答；list 默认只列非终态，includeTerminal/before 可分页查历史；wait 等原生终态；abort 请求原生中止。仅在用户要求委派时创建，共享目录的并行写入须隔离。taskId 不是历史分支 id；终态消息不能复活任务。取消等待不拥有工作，marked 不等于已中止。messageResults 与 budgetError 单列后续消息状态，首次 completed 不等于全部成功；旧回执 modeKnown=false 表示历史投递模式未知。",
           replay: "safe",
           // 通用文本裁剪会破坏 JSON；结构化回执只允许完整返回或明确超限。
           outputLimits: { maxBytes: MAX_TOOL_JSON_BYTES },

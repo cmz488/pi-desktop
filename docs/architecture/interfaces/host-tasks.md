@@ -79,13 +79,15 @@ GET /api/host/tasks/detail?agentId=...&generation=...&conversationId=...&taskId=
 
 配置经既有 Pi 模型／工具／指令校验；省略时使用原生配置继承。不能覆盖 cwd、shellEnv、shellPath 或 extensions。原生配置继承不等同于复制父会话历史，不自行推导父上下文。POST 仍受 worker 现有 768 KiB JSON 传输上限约束。
 
-准入校验成功后，同一父会话、requestId 和规范化内容复用持久 task 回执，包括终态；同一 requestId 换内容为 409。新的明确发起应使用新 requestId。同一顶层会话的整棵 owned 委托树最多 16 个未终结的适配子代理 task，最多嵌套 3 层；达到上限拒绝，不创建自有排队系统。`config.maxTurns` 默认 64，可设为 1–256，限制子会话累计模型回合，压缩与重启不重置；耗尽时原生停止后返回 failed，不伪装完成。
+准入校验成功后，同一父会话、requestId 和规范化内容复用持久 task 回执，包括终态；同一 requestId 换内容为 409。新的明确发起应使用新 requestId。同一顶层会话的整棵 owned 委托树最多 16 个未终结的适配子代理 task，最多嵌套 3 层；达到上限拒绝，不创建自有排队系统。`config.maxTurns` 默认 64，可设为 1–256，限制子会话累计模型回合，压缩与重启不重置；耗尽时原生停止；首次尚未回答则 failed，首次已回答则保留其原生结果，后续失败与预算原因单列，不能以首次完成代替后续消息完成。
 
 `subagent.spawn` 是本应用通过公开 `defineTask`／`tx.createConversation`／`submit` 组合的最薄业务适配，不是上游现成的同名方法；不自建执行器或调度状态。发起回执只表示持久任务已创建，不表示执行成功。任务为 background，不阻塞父会话前台空闲；结果和过程在 owned 子会话与 task 原生回执中读取，不自动再调用父模型。
 
 ### 详情与 workspace
 
 `task` 包含 `{id,conversationId,kind,status,outcome}`；`outcome` 未决定时为 null，否则为原生 `status`、可选 `error.message`、`reason`，以及本适配的 `result`。本适配完成结果含子会话 ID、submission ID、准入终态、`answerEntryId` 和最多 12000 个 UTF-16 code unit 的 answer 预览；新结果的 `answerUnits` 与 `answerTruncated` 明示完整长度与裁剪，模型工具 result 支持按该原生回答分段读取全文。答案与原生 submission 已决定的不可变 `answer` 条目绑定，`answerEntryId` 标识该回答；不会以当前上下文的最后一条助手消息替代，完整已提交记录保留在 Durable 子会话。旧版已持久化结果可以没有 `answerEntryId`，读取不能为补字段重放工作。
+
+本适配的安全回执另含 `messageResults`（最近 20 条投递的原生 submission 状态）、`messageResultsTruncated`，并可有 `budgetError:{message}`。各消息包含投递 task ID、submission ID、模式、状态、可选回答编号与失败原因；不返回正文、原始输入或检查点。没有 submission 时不伪造执行成功；只有投递任务本身的 pending／失败等状态。主 outcome 与 answer 仍只代表首次委托，后续状态是只读投影，终态／重启后的所有读取与管理入口一致。完整规则见[子代理工具契约](subagent-tools.md)。
 
 `children` 只含该 task 拥有的子会话：`{id,name,idle,model,usage,messages,partial,tools,messagesTruncated,toolsTruncated}`。这是展示预览：最多 20 个子会话、每会话最近 80 条消息与最近 40 个工具记录；每条消息文本保留前 12000 个 UTF-16 code unit，流式片段与工具输出保留尾 12000。`previewLimits` 明示这些上限，`hasMoreChildren`／truncated 字段报告裁剪。它不修改原生转录或模型上下文。
 
@@ -108,7 +110,7 @@ worker 内部提供 `GET /api/task-monitor` 与 `GET /api/task-detail?sessionId=
 
 Desktop 整合面板的 `/agents/<agentId>/api/tasks`、`task-detail`、`subagent-history` 和任务命令请求均带 iframe 固定的 `generation` 查询值；Host 转发前同时校验目录和实际 worker 代际，过期为 409，无效值为 422，不会读取或中止新库同号 task。未提供该参数的原公开 worker URL 保持兼容；原 Host 管理 API 的必填 generation 门禁不变。
 
-界面默认先显示任务清单，发起表单按需展开并保留草稿；展开／收起不开始或中止任务。桌面清单与详情并列，窄屏纵向阅读。结果按原生 outcome、子会话、消息角色与实时片段分区，以纯文本写入 DOM；终态、工具名及预览裁剪标记仍可见。图不变也读取新片段；相同详情不重建 DOM，更新保留阅读位置，失败后同内容的成功读取可恢复显示。有 `answerEntryId` 的回执在详情显示原生回答编号；旧结果没有该字段时仍正常展示，不重放补齐。发起成功默认选择对应原生任务，但若用户在等待发起回执时已显式改选查看目标，晚到回执不得抢回选择或取消新详情读取。
+界面默认先显示任务清单，发起表单按需展开并保留草稿；展开／收起不开始或中止任务。桌面清单与详情并列，窄屏纵向阅读。结果按原生 outcome、子会话、消息角色与实时片段分区，以纯文本写入 DOM；终态、工具名及预览裁剪标记仍可见。历史标签、详情和等待提示会注明后续消息未完成；详情单列消息处理状态与预算原因，同时保留首次不可变答案。图不变也读取新片段；相同详情不重建 DOM，更新保留阅读位置，失败后同内容的成功读取可恢复显示。有 `answerEntryId` 的回执在详情显示原生回答编号；旧结果没有该字段时仍正常展示，不重放补齐。发起成功默认选择对应原生任务，但若用户在等待发起回执时已显式改选查看目标，晚到回执不得抢回选择或取消新详情读取。
 
 ## 不变量
 
