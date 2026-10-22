@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { rm, mkdir, writeFile } from "node:fs/promises";
+import { rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopFixture, until } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
@@ -10,6 +10,24 @@ import { measureSurfaceContrast } from "./surface-contrast.mjs";
 const gate = Promise.withResolvers();
 const f = await desktopFixture({
   noExtensions: true,
+  modelReply: async (input) =>
+    input.messages.at(-1)?.content === "WORKBENCH_APPROVAL"
+      ? {
+          toolCalls: [
+            {
+              id: "approval-write",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({
+                  path: "browser-approval.txt",
+                  content: "浏览器已批准",
+                }),
+              },
+            },
+          ],
+        }
+      : undefined,
   beforeModelResponse: async (input) => {
     if (input.messages.at(-1)?.content === "WORKBENCH_CHILD_HELD")
       await gate.promise;
@@ -302,7 +320,10 @@ try {
   );
   await chat("d.querySelector('[data-task-compose-toggle]').click();");
   await chat(
-    "const form=d.querySelector('[data-task-compose]');form.elements.name.value='工作台新委托';form.elements.prompt.value='CREATED_IN_WORKBENCH';form.requestSubmit();",
+    `const form=d.querySelector('[data-task-compose]');
+    const original=d.defaultView.fetch.bind(d.defaultView);
+    d.defaultView.fetch=(...args)=>{if(args[1]?.body){const body=JSON.parse(args[1].body);if(body.command==='subagent.spawn')d.defaultView.launchBudget=body.config?.maxTurns;}return original(...args);};
+    form.elements.name.value='工作台新委托';form.elements.prompt.value='CREATED_IN_WORKBENCH';form.elements.maxTurns.value='5';form.requestSubmit();`,
   );
   const created = await until(
     () => f.call(`${prefix}/api/task-monitor?sessionId=${parent}`),
@@ -315,6 +336,11 @@ try {
     "发起目标固定为当前会话，不提供其他 Agent 选择器",
   );
   assert.equal((await f.call("/api/workspace")).agents.length, 1);
+  assert.equal(
+    await chat("return d.defaultView.launchBudget;"),
+    5,
+    "高级配置的数值回合预算必须传入真实准入请求",
+  );
   const createdChild = created.conversations.find(
     (row) => row.name === "工作台新委托",
   );
@@ -437,6 +463,39 @@ try {
     ),
     "false",
     "原生工作真正结束后才展示稳定空态",
+  );
+  // 后台确认必须走现有父会话交互 UI，不能要求用户猜测子会话 URL。
+  await f.command("agent.policy", { id: actor.id, mode: "ask-all" });
+  for (const allow of [false, true]) {
+    const approval = await f.call(`${prefix}/api/command?sessionId=${parent}`, {
+      command: "subagent.spawn",
+      id: Number(parent),
+      sessionId: parent,
+      requestId: `browser-approval-${allow}`,
+      name: "浏览器审批子代理",
+      prompt: "WORKBENCH_APPROVAL",
+      config: { tools: ["write"] },
+    });
+    await ready(
+      `(()=>{const d=${frame};return d.querySelector('#interaction-dialog').open&&d.querySelector('#interaction-title').textContent.includes('浏览器审批子代理');})()`,
+    );
+    await assert.rejects(readFile(join(f.cwd, "browser-approval.txt")), {
+      code: "ENOENT",
+    });
+    await chat(`const form=d.querySelector('#interaction-form'),select=form.elements.value;
+      select.value=[...select.options].find(row=>row.textContent===${JSON.stringify(allow ? "确认" : "取消")}).value;form.requestSubmit();`);
+    await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${approval.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    await ready(`!(${frame}).querySelector('#interaction-dialog').open`);
+  }
+  assert.equal(
+    await readFile(join(f.cwd, "browser-approval.txt"), "utf8"),
+    "浏览器已批准",
   );
   assert.deepEqual(driver.errors, []);
   console.log(

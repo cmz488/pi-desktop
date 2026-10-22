@@ -20,6 +20,7 @@ export async function openAgentWorkspace(options); // -> workspace
   storage,           // 可选；测试用内存 storage
   storagePath,       // 可选；SQLite 路径（默认在 agent 目录下）
   settings,          // 可选；Harness 设置
+  approvalMode,      // 可选；Host 显式启动审批策略，在恢复前应用到受管会话
   env,               // 可选；NodeExecutionEnv 或只读环境
   extensions,        // 可选；预装扩展名
   initialize,        // 可选；async (workspace) => void，在返回前调用
@@ -42,6 +43,7 @@ workspace.transcript(id)   // async -> { entries, presentations, ... }：Pi 消�
 workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生回合；可预置初始化资源状态
 workspace.importNative(id, entries, {digest} = {})                   // 导入原生树并核对初始化摘要
 workspace.install(extension)                         // 运行期装入 Durable 扩展
+workspace.uninstall(extension)                       // 释放资源宿主后移除对应 scope
 workspace.subscribe(listener)                        // -> unsubscribe；变更通知
 workspace.close()                                    // 释放 Harness、锁与资源
 workspace.capabilities;                              // 显式 taskInspection/manageTasks/spawnSubagent
@@ -96,7 +98,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - **`rewind` 只改上下文起点，不删历史**：`desk.rewind` 是头部标记（`head: "self"`），Durable 内核因此把模型上下文重建为该标记携带的消息（退回点之前的前缀），其后的条目不再进入上下文；原生日志的 leaf 移动由会话模块用 Pi 的 `branch()` 在同一文件里完成。前缀消息由 Host 用 Pi 自己的推导从原生日志取得，命令本身不自行推导上下文。
 - **退回来源必须可对齐**：Host 从同一个 Pi 投影同时取得消息与 `origins: number[]`，按可见 `user`／`assistant`／`toolResult`／`custom` 顺序排列，不包含 UI 摘要和 system。来源必须是该会话的已知 entry；原点与标记原子提交，不能因数量不符就省略映射。直接调用方的简单旧调用仍兼容，不能对齐的复杂历史返回 409，不再伪装成标记来源。
 - **模型与 UI 角色分离**：退回消息通过 Pi `convertToLlm` 写入 model；有摘要／custom 等原生角色时，原始贡献保存在同一标记的只读 UI 数据里，卡片与消息原点不会因规范化而丢失。
-- **内置模型管理工具**：`desk-subagents` 注册 `desk_subagent`，通过原生 invocation 固定调用会话；spawn／message／read／list／wait／abort 只操作其 owned 范围。配置准入与 HTTP 共用，原生工具不能交给资源 Session 开启另一执行循环；完整契约见 [子代理工具](subagent-tools.md)。
+- **内置模型管理工具**：`desk-subagents` 注册 `desk_subagent`，通过原生 invocation 固定调用会话；spawn／message／read／result／list／wait／abort 只操作其 owned 范围。配置准入与 HTTP 共用，原生工具不能交给资源 Session 开启另一执行循环；完整契约见 [子代理工具](subagent-tools.md)。
 - **原生子代理不产生新 writer**：原生 task 检查点、owned 会话与 submission 复用当前 Harness；模型与工具循环、取消与恢复仍由 Durable 承担。子资源绑定在恢复前完成，不借用父会话工具闭包。
 - **等待不拥有执行生命周期**：`execute("wait", input, { signal })` 把 signal 仅用于 Durable 的等待 Context；其他命令沿用原有上下文。取消观察不会 abort 任务，指定任务的所有权校验不变。HTTP 额外的租约／配额、前端续租与总预算见 [任务契约](task-graph.md)。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。
@@ -142,6 +144,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - `npm run test:durable`、`npm run test:durable:recovery`（`test/durable-recovery-check.mjs`）。
 - `test/durable-delta.test.mjs`：`read`／`live` 在流式期间的调用比例。
 - 新独立会话：`test/desktop-independent-fork.test.mjs` 覆盖资源状态、单次启动钩子、有效上下文、空初始化与恢复。
+- 子代理可靠性：`test/subagent-reliability.test.mjs` 验证权限、交互、资源回收、整树配额和跨重启回合预算。
 - 模型工具与终态历史：`test/subagent-tools.test.mjs`、`test/subagent-history.test.mjs`，从真实模型工具调用和公开 HTTP 验证。
 - 全 Host 与子代理：`test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`，覆盖同 writer、重启幂等、原生工具 scope 与管理身份。
 - 接口形状断言：`test/boundary-contracts.test.mjs` —— 重命名或删除本页列出的键、命令或深路径时该测试失败。

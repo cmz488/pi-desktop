@@ -43,6 +43,7 @@ const KIND_LABELS = {
   "pi.generation": "模型回合",
   "pi.tool": "工具调用",
   "desk.subagent-run": "子代理",
+  "desk.subagent-message": "子代理消息",
 };
 
 export function taskStatusLabel(status) {

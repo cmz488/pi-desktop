@@ -739,3 +739,134 @@ test(
     assert.equal(completed.task.outcome.status, "completed");
   },
 );
+
+test(
+  "消息回执在终态与重启后仍可幂等读取，新消息及同 ID 换内容被拒绝",
+  { timeout: 60000 },
+  async (t) => {
+    const gate = Promise.withResolvers();
+    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t, {
+      release: () => gate.resolve(),
+      beforeModelResponse: async (input) => {
+        if (input.messages.at(-1)?.content === "IDEMPOTENT_MESSAGE_CHILD")
+          await gate.promise;
+      },
+    });
+    const spawned = await invoke({
+      action: "spawn",
+      prompt: "IDEMPOTENT_MESSAGE_CHILD",
+    });
+    await until(
+      () => f.requests,
+      (rows) =>
+        rows.some(
+          (row) => row.messages.at(-1)?.content === "IDEMPOTENT_MESSAGE_CHILD",
+        ),
+    );
+    const args = {
+      action: "message",
+      taskId: spawned.taskId,
+      message: "同一消息",
+      mode: "followUp",
+      requestId: "message-receipt",
+    };
+    const first = await invoke(args);
+    assert.deepEqual(await invoke(args), first);
+    gate.resolve();
+    await until(
+      () =>
+        f.call(
+          `${prefix}/api/task-detail?sessionId=${parent}&taskId=${spawned.taskId}`,
+        ),
+      (value) => value.task.status === "terminal",
+    );
+    assert.deepEqual(
+      await invoke(args),
+      first,
+      "重复请求只取原回执，不复活终态委托",
+    );
+    await f.reopen();
+    await until(
+      () => f.call("/api/workspace"),
+      (value) =>
+        value.agents.some(
+          (row) => row.id === actor.id && row.status === "running",
+        ),
+    );
+    assert.deepEqual(await invoke(args), first);
+    assert.match(
+      await invoke({ ...args, message: "换内容" }, { error: true }),
+      /请求 ID 已用于其他内容/,
+    );
+    assert.match(
+      await invoke({ ...args, requestId: "new-message" }, { error: true }),
+      /子代理任务已结束/,
+    );
+    assert.equal(
+      f.requests.filter((row) => row.messages.at(-1)?.content === "同一消息")
+        .length,
+      1,
+    );
+  },
+);
+
+test(
+  "长回答可按原生回答编号分段读全，历史清单可分页且不越过 owned 范围",
+  { timeout: 60000 },
+  async (t) => {
+    const answer = "答".repeat(13000) + "最终结论_END";
+    const { f, actor, prefix, parent, invoke } = await subagentToolFixture(t, {
+      modelReply: async (input) => ({
+        text:
+          input.messages.at(-1)?.content === "PAGED_ANSWER" ? answer : "DONE",
+      }),
+    });
+    const spawned = await invoke({ action: "spawn", prompt: "PAGED_ANSWER" });
+    const waited = await invoke({ action: "wait", taskId: spawned.taskId });
+    assert.equal(waited.task.outcome.result.answerTruncated, true);
+    assert.equal(waited.task.outcome.result.answerUnits, answer.length);
+    let full = "",
+      offset = 0;
+    do {
+      const page = await invoke({
+        action: "result",
+        taskId: spawned.taskId,
+        offset,
+        length: 5000,
+      });
+      assert.equal(
+        page.answerEntryId,
+        waited.task.outcome.result.answerEntryId,
+      );
+      assert.equal(page.totalUnits, answer.length);
+      full += page.text;
+      offset = page.nextOffset;
+    } while (offset !== null);
+    assert.equal(full, answer);
+    const branch = await f.legacyFork(actor.id, parent, { mode: "tail" });
+    assert.match(
+      await invoke(
+        { action: "result", taskId: spawned.taskId },
+        { sessionId: branch.sessionId, error: true },
+      ),
+      /任务不存在/,
+    );
+    const second = await invoke({ action: "spawn", prompt: "SHORT_ANSWER" });
+    await invoke({ action: "wait", taskId: second.taskId });
+    const page = await invoke({
+      action: "list",
+      includeTerminal: true,
+      limit: 1,
+    });
+    assert.equal(page.tasks[0].id, second.taskId);
+    assert.equal(page.nextBefore, second.taskId);
+    const next = await invoke({
+      action: "list",
+      includeTerminal: true,
+      limit: 1,
+      before: page.nextBefore,
+    });
+    assert.equal(next.tasks[0].id, spawned.taskId);
+    assert.equal(next.nextBefore, null);
+  },
+);

@@ -25,7 +25,7 @@ import { createNativeRuntime } from "./native-runtime.mjs";
  * 投影成 facade（边界文档的 seam B）。
  *
  * 接口：`createDurableResources(options)` 返回
- *   `{ attach, ensure, normalizeExtensions, selectTools, reload, close, cancelInteractions, canWrite }`，
+ *   `{ attach, ensure, normalizeExtensions, selectTools, reload, close, cancelInteractions, canWrite, interactions }`，
  *   其 facade 为 `{ read, describe, execute }`；完整 action 表、顺序与错误见
  *   docs/architecture/interfaces/resource-session.md。
  * 不变量：资源会话不跑模型循环；`ensure(active)` 幂等并按会话缓存；`desk-native:*`
@@ -46,11 +46,72 @@ export function createDurableResources({
   browser,
 }) {
   const hosts = new Map(),
-    readyHosts = new Map();
+    readyHosts = new Map(),
+    retiring = new Map();
   let workspace,
+    unsubscribe,
+    cleanup,
+    cleanupAgain = false,
     closing = false;
+  const report = (id, error) =>
+    onEvent("notification", {
+      sessionId: String(id),
+      type: "error",
+      message: `Pi 资源维护失败：${error.message}`,
+    });
+  async function reapOwned() {
+    if (closing || ![...readyHosts.values()].some((host) => host.owned)) return;
+    const state = await workspace.read();
+    for (const row of state.children) {
+      const host = readyHosts.get(row.id);
+      if (
+        !host?.owned ||
+        state.tasks.some(
+          (task) =>
+            task.id === row.owner?.taskId || task.conversationId === row.id,
+        )
+      )
+        continue;
+      const release = (async () => {
+        // 先完成原生结束事件及其持久化；扩展可能在结束边界提交下一轮工作。
+        await host.nativeRuntime.flush();
+        if (!(await workspace.agent(row.id)).idle) return;
+        await host.nativeRuntime.dispose();
+        await host.app.stop();
+        workspace.uninstall(host.extension);
+        hosts.delete(row.id);
+        readyHosts.delete(row.id);
+      })();
+      retiring.set(row.id, release);
+      try {
+        await release;
+      } finally {
+        retiring.delete(row.id);
+      }
+    }
+  }
+  function scheduleCleanup() {
+    if (closing) return;
+    cleanupAgain = true;
+    if (cleanup) return;
+    cleanup = Promise.resolve()
+      .then(async () => {
+        while (cleanupAgain && !closing) {
+          cleanupAgain = false;
+          await reapOwned();
+        }
+      })
+      .catch((error) => {
+        if (!closing) report("", error);
+      })
+      .finally(() => {
+        cleanup = undefined;
+      });
+  }
   async function ensureHost(active) {
     if (!active) return undefined;
+    await retiring.get(active.id);
+    if (closing) throw new DeskError(409, "Pi 资源宿主已关闭");
     const piSdk = await loadEmbeddedPiSdk();
     let pending = hosts.get(active.id);
     if (pending) {
@@ -70,7 +131,9 @@ export function createDurableResources({
       const manager = piSdk.SessionManager.inMemory(active.cwd);
       for (const entry of active.resourceState?.entries ?? [])
         manager.appendCustomEntry(entry.customType, entry.data);
-      const approvalPolicy = { mode: validateApprovalMode(approvalMode) };
+      const approvalPolicy = {
+        mode: validateApprovalMode(active.approvalMode ?? approvalMode),
+      };
       let capabilities;
       let invocation, lastAssistant;
       let installed;
@@ -206,6 +269,8 @@ export function createDurableResources({
       };
       const host = {
         id: active.id,
+        name: active.name,
+        owned: active.subagent === true,
         cwd: active.cwd,
         app,
         capabilities,
@@ -223,6 +288,7 @@ export function createDurableResources({
       };
       host.refresh = (selected) =>
         host.update(async () => {
+          host.name = selected.name;
           const loaded = app.runtime.session.getAllTools();
           const added = loaded.filter((tool) => !installedNames.has(tool.name));
           if (added.length || loaded.length !== installedNames.size)
@@ -236,6 +302,9 @@ export function createDurableResources({
             )
               pendingDefaults.add(tool.name);
           const latest = await workspace.agent(selected.id);
+          approvalPolicy.mode = validateApprovalMode(
+            latest.approvalMode ?? approvalMode,
+          );
           if (latest.idle && host.capabilities.canWrite()) {
             const modelProvider =
               latest.model &&
@@ -426,6 +495,7 @@ export function createDurableResources({
             }),
           ),
         });
+        host.extension = extension;
         host.registered = new Map(
           [...CodingTools.tools, ...extension.tools].map((tool) => [
             tool.name,
@@ -441,7 +511,9 @@ export function createDurableResources({
         .then(async () => {
           if (!closing) await host.refresh(await workspace.agent(active.id));
         })
-        .catch(() => {});
+        .catch((error) => {
+          if (!closing) report(active.id, error);
+        });
       return host;
     })();
     hosts.set(active.id, pending);
@@ -564,9 +636,19 @@ export function createDurableResources({
     // owned 子代理拥有独立资源 scope；恢复前注册它的原生扩展，不能借用父会话的工具闭包。
     for (const agent of [
       ...state.agents,
-      ...state.children.filter((row) => row.managed),
+      ...state.children.filter(
+        (row) =>
+          row.managed &&
+          state.tasks.some(
+            (task) =>
+              task.id === row.owner?.taskId || task.conversationId === row.id,
+          ),
+      ),
     ])
       await ensureHost(await workspace.agent(agent.id));
+    unsubscribe = workspace.subscribe((event) => {
+      if (event?.type === "task-terminal") scheduleCleanup();
+    });
   }
   async function selectTools(
     active,
@@ -636,6 +718,8 @@ export function createDurableResources({
   async function close() {
     if (closing) return;
     closing = true;
+    unsubscribe?.();
+    await cleanup;
     for (const pending of hosts.values()) {
       const host = await pending.catch(() => undefined);
       await host?.nativeRuntime.dispose();
@@ -658,5 +742,39 @@ export function createDurableResources({
     },
     canWrite: () =>
       [...readyHosts.values()].every((host) => host.capabilities.canWrite()),
+    // 只枚举已就绪的 owned 宿主；查看交互不能唤醒历史子会话。
+    interactions: {
+      list(scope, owner) {
+        return [...readyHosts.values()]
+          .filter((host) => scope.has(host.id))
+          .flatMap((host) =>
+            host.capabilities.interactions.list().map((row) => ({
+              ...row,
+              sourceConversationId: host.id,
+              label:
+                host.id === owner ? row.label : `${host.name} · ${row.label}`,
+            })),
+          );
+      },
+      version(scope) {
+        return [...readyHosts.values()]
+          .filter((host) => scope.has(host.id))
+          .map(
+            (host) => `${host.id}:${host.capabilities.interactions.version()}`,
+          )
+          .join(",");
+      },
+      reply(scope, input) {
+        const host = [...readyHosts.values()].find(
+          (host) =>
+            scope.has(host.id) &&
+            host.capabilities.interactions
+              .list()
+              .some((row) => row.id === input.id),
+        );
+        if (!host) throw new DeskError(404, "交互不存在");
+        return host.capabilities.interactions.reply(input);
+      },
+    },
   };
 }

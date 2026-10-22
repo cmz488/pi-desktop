@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/chord/context";
 import {
   Harness,
+  AssistantEntry,
   createRegistry,
   defineDoc,
   defineExtension,
@@ -34,10 +35,12 @@ import {
 import { ownedConversationIds } from "../shared/conversation-scope.mjs";
 import { DeskError } from "../config/config-store.mjs";
 import { DesktopResources } from "./desktop-documents.mjs";
+import { validateApprovalMode } from "./pi-permissions.mjs";
 import { createInputPresentation } from "./input-presentation.mjs";
 import {
   createManagedSubagents,
   MANAGED_SUBAGENT_KIND,
+  SUBAGENT_MESSAGE_KIND,
 } from "./managed-subagents.mjs";
 import { loadPiMessages, loadPiSessionManager } from "./pi-sdk.mjs";
 
@@ -47,7 +50,7 @@ import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
  * Durable workspace：把 Durable Harness 的会话、任务、文档与用量包成一个深 module。
  *
  * 接口：`openAgentWorkspace(options)` 返回 `{ read, live, agent, execute, transcript,
- *   persistNative, importNative, install, subscribe, close, capabilities, monitor,
+ *   persistNative, importNative, install, uninstall, subscribe, close, capabilities, monitor,
  *   taskDetail, subagentHistory, setOwnedPreparer }`；options、命令表、
  *   不变量与错误表见 docs/architecture/interfaces/durable-workspace.md。
  * `read()` 额外返回 `recovery`（本次打开时接管的待恢复任务及实时状态，无则 null）。
@@ -58,6 +61,9 @@ import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
 
 const context = BACKGROUND_CONTEXT;
 const MAX_ACTIVE_SUBAGENTS = 16;
+const MAX_SUBAGENT_DEPTH = 3;
+const DEFAULT_SUBAGENT_TURNS = 64;
+const MAX_SUBAGENT_TURNS = 256;
 const MAX_SUBAGENT_PROMPT_UNITS = 512000;
 const MAX_SUBAGENT_NAME_UNITS = 120;
 const MAX_SUBAGENT_REQUEST_UNITS = 200;
@@ -104,6 +110,16 @@ function taskReceipt(task) {
         }
       : null,
   };
+}
+async function scanTasks(tx, query) {
+  const tasks = [];
+  let cursor;
+  do {
+    const page = await tx.scanTasks(query, TASK_SCAN_PAGE_SIZE, cursor);
+    tasks.push(...page.items);
+    cursor = page.next;
+  } while (cursor !== undefined);
+  return tasks;
 }
 async function projectDirectory(input) {
   text(input, 4096, "项目目录");
@@ -200,6 +216,39 @@ export async function openAgentWorkspace(options) {
   );
   let ownedPreparer;
   const subagents = createManagedSubagents({
+    beforeRequest: async (_request, api, ctx) => {
+      const profile = await api.snapshot(AgentProfile, api.conversationId, ctx);
+      if (!profile?.subagent) return;
+      const limit = profile.maxTurns ?? DEFAULT_SUBAGENT_TURNS;
+      // 数原生不可变记录，而不是进程计数器；压缩与重启不能补回已花掉的回合。
+      const turns = await harness.commit(async (tx) => {
+        let count = 0,
+          cursor;
+        do {
+          const page = await tx.scanEntries(
+            { conversationId: api.conversationId },
+            TASK_SCAN_PAGE_SIZE,
+            cursor,
+          );
+          count += page.items.filter(
+            (entry) => entry.kind === AssistantEntry.kind,
+          ).length;
+          cursor = page.next;
+        } while (cursor !== undefined && count < limit);
+        return count;
+      }, ctx);
+      if (turns < limit) return;
+      await harness.commit(async (tx) => {
+        (await tx.doc(AgentProfile, api.conversationId)).limitError =
+          `子代理已达到 ${limit} 个回合预算，请检查已完成内容后创建新的委托`;
+      }, ctx);
+      // Durable 的通知钩子会报告并吞掉普通异常；必须走原生中止，并使用当前 invocation
+      // 的取消上下文撤销自等待，才能真正阻止下一次模型请求。
+      await harness.abortTask(api.taskId, ctx);
+      ctx.abortSignal?.throwIfAborted();
+    },
+    failureReason: async (id, ctx) =>
+      (await harness.snapshot(AgentProfile, id, ctx))?.limitError,
     spawn: async (input, api, ctx) => {
       const current = await api.agent(ctx);
       const request = await subagentRequest(
@@ -234,48 +283,70 @@ export async function openAgentWorkspace(options) {
       return { task: taskReceipt(await api.waitForTask(task.id, ctx)) };
     },
     list: async (input, api, ctx) => {
-      const scope = ownedConversationIds(
+      const { page, nextBefore } = await subagentPage(
         api.conversationId,
-        await scanAll(api, ctx),
+        input,
+        api,
+        ctx,
       );
-      const tasks = [];
-      let cursor;
-      do {
-        const page = await api.commit(
-          (tx) =>
-            tx.scanTasks(
-              { kind: MANAGED_SUBAGENT_KIND },
-              TASK_SCAN_PAGE_SIZE,
-              cursor,
-            ),
-          ctx,
-        );
-        tasks.push(
-          ...page.items.filter(
-            (task) =>
-              scope.has(task.conversationId) &&
-              (input.includeTerminal === true ||
-                task.state.status !== "terminal"),
-          ),
-        );
-        cursor = page.next;
-      } while (cursor !== undefined);
-      const limit = input.limit ?? 20;
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)
-        throw new DeskError(422, "子代理清单上限无效");
-      tasks.sort((a, b) => b.id - a.id);
       return {
         parentConversationId: api.conversationId,
-        tasks: tasks.slice(0, limit).map(taskReceipt),
-        truncated: tasks.length > limit,
+        tasks: page.map(taskReceipt),
+        truncated: nextBefore !== null,
+        nextBefore,
+      };
+    },
+    result: async (input, api, ctx) => {
+      const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
+      if (task.kind !== MANAGED_SUBAGENT_KIND)
+        throw new DeskError(404, "子代理任务不存在");
+      const result = task.state.outcome?.result;
+      if (!result)
+        throw new DeskError(409, "完整回答尚不可用；请先等待任务完成");
+      const entry = await api.commit(async (tx) => {
+        // 旧回执没有回答编号时，只沿原始 submission 查找，不猜当前最后一条回复。
+        const answerId =
+          result.answerEntryId ??
+          (
+            await tx.submissionByRequest(
+              result.conversationId,
+              `desktop-subagent:${task.id}`,
+            )
+          )?.answer;
+        return answerId === undefined
+          ? undefined
+          : tx.entry(AssistantEntry, answerId);
+      }, ctx);
+      if (entry?.conversationId !== result.conversationId)
+        throw new DeskError(409, "子代理原生回答不存在");
+      const answer = entry.model?.find((row) => row.role === "assistant");
+      if (!answer) throw new DeskError(409, "子代理原生回答不存在");
+      const full = contentText(answer.content);
+      const offset = input.offset ?? 0,
+        length = input.length ?? MAX_DETAIL_TEXT_UNITS;
+      if (
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        offset > full.length ||
+        !Number.isSafeInteger(length) ||
+        length < 1 ||
+        length > MAX_MODEL_READ_UNITS
+      )
+        throw new DeskError(422, "回答读取范围无效");
+      const end = Math.min(full.length, offset + length);
+      return {
+        taskId: task.id,
+        answerEntryId: entry.id,
+        offset,
+        text: full.slice(offset, end),
+        totalUnits: full.length,
+        nextOffset: end < full.length ? end : null,
       };
     },
     message: async (input, api, ctx) => {
       const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
       if (task.kind !== MANAGED_SUBAGENT_KIND)
         throw new DeskError(404, "子代理任务不存在");
-      if (task.state.status === "terminal")
-        throw new DeskError(409, "子代理任务已结束，请创建新的委托");
       const child = (await scanAll(api, ctx)).find(
         (row) => row.owner?.taskId === task.id,
       );
@@ -289,22 +360,69 @@ export async function openAgentWorkspace(options) {
       const mode = input.mode ?? "steer";
       if (!["steer", "followUp"].includes(mode))
         throw new DeskError(422, "消息模式无效");
-      const selected = await api.conversation(child.id, ctx);
-      const submission = await selected.submit(
-        {
-          type: "input",
-          content,
-          whenBusy: mode,
-          requestId: input.requestId ?? `tool-message:${api.taskId}`,
-        },
-        ctx,
+      const requestId = text(
+        input.requestId ?? `tool-message:${api.taskId}`,
+        MAX_SUBAGENT_REQUEST_UNITS,
+        "请求 ID",
       );
-      return {
-        taskId: task.id,
-        conversationId: child.id,
-        submissionId: submission.id,
-        mode,
-      };
+      if (!requestId) throw new DeskError(422, "缺少请求 ID");
+      const signature = createHash("sha256")
+        .update(JSON.stringify({ content, mode }))
+        .digest("hex");
+      const admitted = await api.commit(async (tx) => {
+        const prior = await scanTasks(tx, {
+          conversationId: task.conversationId,
+          kind: SUBAGENT_MESSAGE_KIND,
+        });
+        const existing = prior.find(
+          (row) =>
+            row.input.taskId === task.id && row.input.requestId === requestId,
+        );
+        if (existing) {
+          if (existing.input.signature !== signature)
+            throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+          return { id: existing.id };
+        }
+        // 兼容升级前已持久化的投递；原生 requestId 仍是唯一准入身份。
+        const legacy = await tx.submissionByRequest(child.id, requestId);
+        if (legacy)
+          return {
+            result: {
+              taskId: task.id,
+              conversationId: child.id,
+              submissionId: legacy.id,
+              mode,
+            },
+          };
+        const current = await tx.task(task.id);
+        if (current.state.status === "terminal")
+          throw new DeskError(409, "子代理任务已结束，请创建新的委托");
+        const id = await tx.createTask(
+          subagents.messageTask,
+          {
+            taskId: task.id,
+            conversationId: child.id,
+            content,
+            mode,
+            requestId,
+            signature,
+          },
+          {
+            conversationId: task.conversationId,
+            ownership: { kind: "task", taskId: task.id },
+          },
+        );
+        return { id };
+      }, ctx);
+      if (admitted.result) return admitted.result;
+      const settled = await api.waitForTask(admitted.id, ctx);
+      if (settled.state.outcome.status !== "completed")
+        throw new DeskError(
+          409,
+          settled.state.outcome.error?.message ??
+            "子代理消息未投递，请读取任务状态",
+        );
+      return settled.state.outcome.result;
     },
     read: async (input, api, ctx) => {
       const task = await scopedTask(api.conversationId, input.taskId, api, ctx);
@@ -392,6 +510,8 @@ export async function openAgentWorkspace(options) {
         shellEnv: { ...parent.shellEnv },
         nativeDefaults: parent.nativeDefaults !== false,
         nativeInitialized: false,
+        approvalMode: parent.approvalMode ?? options.approvalMode ?? "yolo",
+        maxTurns: task.input.config.maxTurns ?? DEFAULT_SUBAGENT_TURNS,
         subagent: true,
       };
       const child = await tx.createConversation({
@@ -405,8 +525,9 @@ export async function openAgentWorkspace(options) {
       const active = await agent(id);
       await ownedPreparer?.(active);
       ctx.abortSignal?.throwIfAborted();
-      if (Object.keys(config).length)
-        await execute("configure", { id, ...config });
+      const { maxTurns, ...agentConfig } = config;
+      if (Object.keys(agentConfig).length)
+        await execute("configure", { id, ...agentConfig });
     },
   });
   if (!options.readOnly) {
@@ -521,6 +642,8 @@ export async function openAgentWorkspace(options) {
   let contextRevision = 0;
   const unsubscribe = harness.subscribeCommits((publication) => {
     for (const change of publication.changes) {
+      if (change.type === "task" && change.value.state.status === "terminal")
+        queueMicrotask(() => notify({ type: "task-terminal" }));
       if (change.type !== "entry") continue;
       contextRevision++;
       contextSummaries.delete(change.value.conversationId);
@@ -571,6 +694,36 @@ export async function openAgentWorkspace(options) {
     if (!task || !scope.has(task.conversationId))
       throw new DeskError(404, "任务不存在");
     return task;
+  }
+  async function subagentPage(
+    id,
+    { before, limit = 20, includeTerminal = false, terminalOnly = false } = {},
+    api = harness,
+    ctx = context,
+  ) {
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 50 ||
+      (before !== undefined && (!Number.isSafeInteger(before) || before < 0))
+    )
+      throw new DeskError(422, "子代理历史范围无效");
+    const scope = ownedConversationIds(id, await scanAll(api, ctx));
+    const records = await api.commit(
+      (tx) => scanTasks(tx, { kind: MANAGED_SUBAGENT_KIND }),
+      ctx,
+    );
+    const found = records
+      .filter(
+        (task) =>
+          scope.has(task.conversationId) &&
+          (!terminalOnly || task.state.status === "terminal") &&
+          (includeTerminal || task.state.status !== "terminal") &&
+          (before === undefined || task.id < before),
+      )
+      .sort((a, b) => b.id - a.id);
+    const page = found.slice(0, limit);
+    return { page, nextBefore: found.length > limit ? page.at(-1).id : null };
   }
   async function repairNativeContext(selected) {
     // 旧版导入把原生 UI 角色写进了模型历史。用 Durable 的编辑修复生效贡献；
@@ -652,8 +805,10 @@ export async function openAgentWorkspace(options) {
       instructions: agent.instructions ?? "",
       shellPath: profile?.shellPath ?? "",
       environmentKeys: Object.keys(profile?.shellEnv ?? {}),
+      subagent: profile?.subagent === true,
       nativeInitialized: !!profile?.nativeInitialized,
       nativeDefaults: profile?.nativeDefaults !== false,
+      approvalMode: profile?.approvalMode ?? options.approvalMode ?? "yolo",
       idle: !foreground(conversation.id),
     };
   }
@@ -854,6 +1009,8 @@ export async function openAgentWorkspace(options) {
         basename(patch.cwd ?? prior?.cwd ?? "Agent");
     if (input.instructions !== undefined)
       patch.instructions = text(input.instructions, 64000, "额外指令");
+    if (input.approvalMode !== undefined)
+      profile.approvalMode = validateApprovalMode(input.approvalMode);
     if (input.thinkingLevel !== undefined) {
       if (!levels.includes(input.thinkingLevel))
         throw new DeskError(422, "思考等级无效");
@@ -955,12 +1112,27 @@ export async function openAgentWorkspace(options) {
       Array.isArray(supplied) ||
       Object.keys(supplied).some(
         (key) =>
-          !["model", "thinkingLevel", "instructions", "tools"].includes(key),
+          ![
+            "model",
+            "thinkingLevel",
+            "instructions",
+            "tools",
+            "maxTurns",
+          ].includes(key),
       )
     )
       throw new DeskError(422, "子代理配置无效");
     const { patch } = await changes(supplied, prior);
     const config = {};
+    if (supplied.maxTurns !== undefined) {
+      if (
+        !Number.isSafeInteger(supplied.maxTurns) ||
+        supplied.maxTurns < 1 ||
+        supplied.maxTurns > MAX_SUBAGENT_TURNS
+      )
+        throw new DeskError(422, "子代理回合预算无效");
+      config.maxTurns = supplied.maxTurns;
+    }
     for (const key of ["model", "thinkingLevel", "instructions"])
       if (patch[key] !== undefined) config[key] = patch[key];
     if (patch.tools) config.tools = patch.tools.map((tool) => tool.name);
@@ -975,26 +1147,39 @@ export async function openAgentWorkspace(options) {
     return { name, prompt, config, requestId, signature };
   }
   async function admitSubagent(tx, id, input) {
-    let cursor,
-      active = 0;
+    const tasks = await scanTasks(tx, { kind: MANAGED_SUBAGENT_KIND });
+    const existing = tasks.find(
+      (task) =>
+        task.conversationId === id && task.input.requestId === input.requestId,
+    );
+    if (existing) {
+      if (existing.input.signature !== input.signature)
+        throw new DeskError(409, "子代理请求 ID 已用于其他内容");
+      return existing.id;
+    }
+    const records = [];
+    let cursor;
     do {
-      const page = await tx.scanTasks(
-        { conversationId: id, kind: MANAGED_SUBAGENT_KIND },
-        TASK_SCAN_PAGE_SIZE,
-        cursor,
-      );
-      for (const task of page.items) {
-        if (task.input.requestId === input.requestId) {
-          if (task.input.signature !== input.signature)
-            throw new DeskError(409, "子代理请求 ID 已用于其他内容");
-          return task.id;
-        }
-        if (task.state.status !== "terminal") active++;
-      }
+      const page = await tx.scanConversations({}, TASK_SCAN_PAGE_SIZE, cursor);
+      records.push(...page.items);
       cursor = page.next;
     } while (cursor !== undefined);
+    const byId = new Map(records.map((row) => [row.id, row]));
+    let rootId = id,
+      depth = 0;
+    while (byId.get(rootId)?.owner) {
+      rootId = byId.get(rootId).owner.conversationId;
+      depth++;
+    }
+    if (depth >= MAX_SUBAGENT_DEPTH)
+      throw new DeskError(429, "子代理嵌套深度已达到上限");
+    const scope = ownedConversationIds(rootId, records);
+    const active = tasks.filter(
+      (task) =>
+        scope.has(task.conversationId) && task.state.status !== "terminal",
+    ).length;
     if (active >= MAX_ACTIVE_SUBAGENTS)
-      throw new DeskError(429, "该会话的子代理任务过多，请先等待或取消");
+      throw new DeskError(429, "该委托树的子代理任务过多，请先等待或取消");
     return tx.createTask(subagents.task, input, {
       conversationId: id,
       ownership: { kind: "conversation" },
@@ -1348,43 +1533,19 @@ export async function openAgentWorkspace(options) {
     async subagentHistory(id, { before, limit = 20 } = {}) {
       guard();
       await conversation(id);
-      if (
-        !Number.isSafeInteger(limit) ||
-        limit < 1 ||
-        limit > 50 ||
-        (before !== undefined && (!Number.isSafeInteger(before) || before < 0))
-      )
-        throw new DeskError(422, "子代理历史范围无效");
-      const scope = ownedConversationIds(id, await scanAll());
-      const records = await harness.commit(async (tx) => {
-        const found = [];
-        let cursor;
-        do {
-          const page = await tx.scanTasks(
-            { kind: MANAGED_SUBAGENT_KIND },
-            TASK_SCAN_PAGE_SIZE,
-            cursor,
-          );
-          found.push(
-            ...page.items.filter(
-              (row) =>
-                scope.has(row.conversationId) &&
-                row.state.status === "terminal" &&
-                (before === undefined || row.id < before),
-            ),
-          );
-          cursor = page.next;
-        } while (cursor !== undefined);
-        return found.sort((a, b) => b.id - a.id);
-      }, context);
-      const page = records.slice(0, limit);
+      const { page, nextBefore } = await subagentPage(id, {
+        before,
+        limit,
+        includeTerminal: true,
+        terminalOnly: true,
+      });
       return {
         sessionId: String(id),
         records: page.map((row) => ({
           ...taskReceipt(row),
           name: row.input.name,
         })),
-        nextBefore: records.length > limit ? page.at(-1).id : null,
+        nextBefore,
       };
     },
     async taskDetail(id, taskId) {
@@ -1639,6 +1800,10 @@ export async function openAgentWorkspace(options) {
       guard();
       registry.install(extension);
     },
+    uninstall(extension) {
+      guard();
+      registry.uninstall(extension);
+    },
     subscribe(listener) {
       guard();
       listeners.add(listener);
@@ -1650,6 +1815,19 @@ export async function openAgentWorkspace(options) {
     for (const record of await conversations())
       if (await harness.snapshot(AgentProfile, record.id, context))
         await repairNativeContext(await conversation(record.id));
+    // Host 的显式启动策略是本 worker 的权限上界；停机时修改过权限后，恢复中的
+    // owned 会话也必须使用新策略，不能让存量文档覆盖 Host 配置。
+    if (options.approvalMode !== undefined) {
+      const mode = validateApprovalMode(options.approvalMode);
+      const managed = [];
+      for (const row of await scanAll())
+        if (await harness.snapshot(AgentProfile, row.id, context))
+          managed.push(row.id);
+      await harness.commit(async (tx) => {
+        for (const id of managed)
+          (await tx.doc(AgentProfile, id)).approvalMode = mode;
+      }, context);
+    }
     await options.initialize?.(workspace);
   } catch (error) {
     await close();

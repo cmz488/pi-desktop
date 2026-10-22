@@ -180,6 +180,7 @@ export async function startDurableDesk(options = {}) {
         settings,
         ...options.workspaceOptions,
         readOnly: options.readOnly,
+        approvalMode: options.approvalMode,
         initialize: (target) => resources?.attach(target),
       }));
     if (options.workspace) await resources?.attach(workspace);
@@ -305,6 +306,12 @@ export async function startDurableDesk(options = {}) {
       return ctx;
     };
     const native = () => target().native;
+    const interactionOwner = () =>
+      requestState.getStore()?.active?.id ??
+      requestState.getStore()?.interactionOwner ??
+      root.agents[0]?.id;
+    const interactionScope = () =>
+      ownedConversationIds(interactionOwner(), root.children);
     const current = () =>
       requestState.getStore()?.snapshot ?? {
         ...root,
@@ -555,7 +562,13 @@ export async function startDurableDesk(options = {}) {
           /* A polling probe answers from the state the host already holds: no
            * transcript sync, no workspace read and no resource host wake-up. */
           return requestState.run(
-            { active: undefined, native: undefined },
+            {
+              active: undefined,
+              native: undefined,
+              interactionOwner: Number(
+                url.searchParams.get("sessionId") ?? root.agents[0]?.id,
+              ),
+            },
             run,
           );
         }
@@ -788,6 +801,7 @@ export async function startDurableDesk(options = {}) {
             throw new DeskError(409, "请等待当前任务结束再调整权限");
           const input = await body(request);
           if (!ctx.native) throw new DeskError(409, "Pi 权限宿主未就绪");
+          await configure({ approvalMode: input.mode });
           ctx.native.execute("approvalMode", input.mode);
           json(response, { mode: input.mode });
           return true;
@@ -961,7 +975,7 @@ export async function startDurableDesk(options = {}) {
                 `${agent.id}:${agent.revision}:${agent.idle ? 1 : 0}:${agent.pendingConfiguration ? 1 : 0}`,
             )
             .join(","),
-          interactions: `${auth.version()}:${host?.execute("interactions.version") ?? 0}`,
+          interactions: `${auth.version()}:${resources?.interactions.version(interactionScope()) ?? 0}`,
           resources: (host?.execute("mcpRegistered") ?? [])
             .map((row) => row.name)
             .sort()
@@ -1206,11 +1220,14 @@ export async function startDurableDesk(options = {}) {
       interactions: {
         list: () => [
           ...auth.list(),
-          ...(native()?.execute("interactions.list") ?? []),
+          ...(resources?.interactions.list(
+            interactionScope(),
+            interactionOwner(),
+          ) ?? []),
         ],
         reply(input) {
           if (auth.list().some((job) => job.id === input.id)) auth.reply(input);
-          else native()?.execute("interactions.reply", input);
+          else resources?.interactions.reply(interactionScope(), input);
         },
       },
     });

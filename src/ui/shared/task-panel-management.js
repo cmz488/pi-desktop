@@ -96,6 +96,7 @@ export function createTaskPanelManagement({
             "thinkingLevel",
             "instructions",
             "tools",
+            "maxTurns",
           ].map((key) => [key, form.elements.namedItem(key).value]),
         )
       : {};
@@ -156,6 +157,11 @@ export function createTaskPanelManagement({
     instructions.maxLength = 64000;
     instructions.rows = 2;
     field(advanced, "tools", "工具名称（逗号分隔；留空继承）");
+    const turns = field(advanced, "maxTurns", "最大模型回合（留空为 64）");
+    turns.type = "number";
+    turns.min = "1";
+    turns.max = "256";
+    turns.step = "1";
     fields.append(advanced);
     const actions = element("div", "task-panel-actions");
     const submit = element("button", "outline-button", "创建子代理");
@@ -190,6 +196,7 @@ export function createTaskPanelManagement({
       const value = values();
       const config = {};
       if (value.model) config.model = JSON.parse(value.model);
+      if (value.maxTurns) config.maxTurns = Number(value.maxTurns);
       for (const key of ["thinkingLevel", "instructions"])
         if (value[key]) config[key] = value[key];
       if (value.tools.trim())

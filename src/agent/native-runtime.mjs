@@ -197,6 +197,8 @@ export function createNativeRuntime({
         });
     },
     async flush() {
+      if (observing) await observing;
+      await settle();
       await flush();
       await save();
     },
