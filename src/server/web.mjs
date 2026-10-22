@@ -467,8 +467,7 @@ export async function startWebSlot(options = {}) {
     getToolsExpanded: () => false,
     setToolsExpanded: noop,
   };
-  async function bind(current) {
-    unsubscribe?.();
+  function resetSessionPresentation() {
     extensionStatuses.clear();
     for (const widget of extensionWidgets.values()) widget?.dispose?.();
     extensionWidgets.clear();
@@ -478,6 +477,10 @@ export async function startWebSlot(options = {}) {
     streamingMessage = null;
     streamingPhase = "";
     activeCalls.clear();
+  }
+  async function bind(current) {
+    unsubscribe?.();
+    resetSessionPresentation();
     unsubscribe = current.subscribe((event) => {
       if (
         event.type === "message_start" &&
@@ -546,7 +549,7 @@ export async function startWebSlot(options = {}) {
             : runtime.switchSession(path, settings),
         fork: (id, options) => runtime.fork(id, options),
         navigateTree: (id, options) => current.navigateTree(id, options),
-        reload: () => current.reload(),
+        reload: () => reload(),
       },
       abortHandler: () => current.abort(),
       onError: () =>
@@ -743,8 +746,14 @@ export async function startWebSlot(options = {}) {
     inventoryManager = undefined;
     skillsCache = undefined;
     mcpApi = undefined;
-    await session().reload();
-    streamingText = "";
+    const current = session();
+    await current.reload({
+      // SDK 先结束并失效旧 runner；新 session_start 必须已经使用同一 Durable 资源 seam。
+      beforeSessionStart: () => {
+        resetSessionPresentation();
+        return options.bindResourceSession?.(current);
+      },
+    });
     changed();
   }
   bridge = (options.bridgeFactory ?? createDeskBridge)({

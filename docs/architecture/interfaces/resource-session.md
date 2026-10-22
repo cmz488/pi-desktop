@@ -86,7 +86,8 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 2. 新建或切换会话后调用 `selectTools(active, { defaults: true })`；只在需要补齐新工具时用 `newOnly: true`（它会在扩展缺失时提前返回）。
 3. `reload(active)` 之后必须重新 `selectTools(..., { defaults: true, newOnly: true })`，否则新加载的工具不会进入会话 agent 文档。
 4. `close()` 在 worker 停止路径上调用；之后任何 `ensure` 调用都不再返回宿主。
-5. `nativeRuntime.bind(session)` 必须在 Pi 会话创建之后、首次 `beforeRequest` 之前调用（`bind` 会接管 `sendUserMessage`／`sendCustomMessage` 并包装 `createContext`）。
+5. `nativeRuntime.bind(session)` 必须在 Pi 会话创建之后、首次 `beforeRequest` 之前调用（`bind` 会接管 `sendUserMessage`／`sendCustomMessage` 并包装 `createContext`）。重载使用 SDK 的 `beforeSessionStart` seam，先失效旧 runner，再清理旧展示并给 fresh runner 绑定，最后才让新的 `session_start` handler 运行；不额外调用一次 `bindExtensions()` 来制造重复启动事件。标准 command context 的 `reload()` 与宿主重载共用该路径。
+6. 桥接的 `isIdle`、`hasPendingMessages`、`signal`、`abort` 保留 Pi 的 context 失效错误；旧 context 不能读取新回合 signal，或中止重载后的会话。重载／换会话清除旧状态、working／streaming 展示并释放旧 widget。
 
 ## 错误模式
 
@@ -107,6 +108,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 
 ## 可执行证据
 
+- `test/native-runtime-lifecycle.test.mjs`：真实 SDK context 的 stale guard；原生安装包在新 `session_start` 前获得正确 signal／idle、标准命令重载路径、唯一命令和卸载状态清理。
 - `test/standard-extension-baseline.test.mjs`：真实 Pi 安装的两个普通扩展、发现／过滤／重载、工具／命令与原生对照；这是调查基线，不把事件／交互缺口列为已支持，详见[兼容矩阵](../../references/pi-extension-compatibility-baseline.md)。
 - `test/durable-features.test.mjs`：工具可用性、权限门控、ask_user／MCP 交互、启动对话框与 `agent_browser` 注册。
 - `test/subagent-reliability.test.mjs`：审批继承、停机权限变更、owned 交互、终态释放与历史不预热；浏览器工作台回归覆盖父界面批准／拒绝。

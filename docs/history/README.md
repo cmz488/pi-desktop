@@ -14,6 +14,7 @@
 - [interaction-context-review.md](interaction-context-review.md)
 - [independent-session-redesign.md](independent-session-redesign.md)
 - [native-custom-context-review.md](native-custom-context-review.md)
+- [native-extension-lifecycle.md](native-extension-lifecycle.md)
 - [package-sidebar-review.md](package-sidebar-review.md)
 - [performance-check.md](performance-check.md)
 - [pi-audit-remediation.md](pi-audit-remediation.md)

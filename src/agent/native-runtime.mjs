@@ -10,7 +10,7 @@ import { loadPiMessages } from "./pi-sdk.mjs";
  *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
  * 不变量：Pi 拥有扩展状态与调度，Durable 拥有每一个被接受的模型回合；资源会话不跑
  *   第二个模型循环；消息与事件方向单向（Durable 提交 → Pi 生命周期）。
- * 错误：初始化与工具同步的失败经 `onError` 上报，不静默丢弃。
+ * 错误：初始化与工具同步的失败经 `onError` 上报；过期 context 保留 SDK 原生同步错误。
  */
 
 const signature = (message) =>
@@ -184,17 +184,37 @@ export function createNativeRuntime({
       if (boundRunners.has(runner())) return;
       boundRunners.add(runner());
       const createContext = runner().createContext.bind(runner());
-      runner().createContext = () =>
-        Object.defineProperties(createContext(), {
-          isIdle: { value: () => idle && !queue.length },
-          hasPendingMessages: { value: () => !!queue.length },
-          signal: { get: () => controller.signal },
+      runner().createContext = () => {
+        const context = createContext();
+        // 替换能力值但保留原生失效检查，不能让旧 runner 的 context 读到新回合或执行 abort。
+        const assertActive = () => void context.mode;
+        return Object.defineProperties(context, {
+          isIdle: {
+            value: () => {
+              assertActive();
+              return idle && !queue.length;
+            },
+          },
+          hasPendingMessages: {
+            value: () => {
+              assertActive();
+              return !!queue.length;
+            },
+          },
+          signal: {
+            get: () => {
+              assertActive();
+              return controller.signal;
+            },
+          },
           abort: {
             value: () => {
+              assertActive();
               void workspace.execute("abort", { id }).catch(report);
             },
           },
         });
+      };
     },
     async flush() {
       if (observing) await observing;

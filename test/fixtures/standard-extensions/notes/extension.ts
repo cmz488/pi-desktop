@@ -205,8 +205,12 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_settled", async (event, ctx) => trace(ctx, event.type));
   pi.registerCommand("notes-status", {
     description: "查看会话笔记状态",
-    handler: async (_args, ctx) => {
-      await trace(ctx, "command", { calls });
+    handler: async (args, ctx) => {
+      await trace(ctx, "command", { calls, args });
+      if (args === "reload") {
+        await ctx.reload();
+        return;
+      }
       ctx.ui.notify("NOTES_COMMAND_NOTICE", "info");
       pi.sendMessage({
         customType: "notes-status",

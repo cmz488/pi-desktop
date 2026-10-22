@@ -49,6 +49,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 这只是阶段 06 的兼容调查，不把诊断输出缺失的事件当作已支持，也不以原生 UI recorder 代替真实浏览器交互。两个扩展的 TypeScript 源码还需按基线给出的独立 `tsc` 命令检查；它们不使用 Desktop 声明或专用 adapter。
 
+`test/native-runtime-lifecycle.test.mjs` 继续用真实 SDK 的旧 context 验证失效错误不会被桥绕过，并在真实安装包中验证 fresh runner 的启动前绑定、标准命令 reload、signal／idle、无重复命令和卸载状态清理。阶段 07 的分项进展与原始红／绿证据见[生命周期记录](../history/native-extension-lifecycle.md)。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。
