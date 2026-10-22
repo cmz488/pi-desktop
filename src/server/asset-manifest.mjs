@@ -18,6 +18,19 @@ export const sharedAssets = new Map([
     "/composer-model-picker.js",
     ["src/ui/chat/composer-model-picker.js", javascript],
   ],
+  ["/chat-dialog.js", ["src/ui/chat/chat-dialog.js", javascript]],
+  [
+    "/preferences-settings.js",
+    ["src/ui/chat/preferences-settings.js", javascript],
+  ],
+  ["/provider-settings.js", ["src/ui/chat/provider-settings.js", javascript]],
+  ["/resource-settings.js", ["src/ui/chat/resource-settings.js", javascript]],
+  ["/package-settings.js", ["src/ui/chat/package-settings.js", javascript]],
+  ["/remote-settings.js", ["src/ui/chat/remote-settings.js", javascript]],
+  [
+    "/composer-attachments.js",
+    ["src/ui/chat/composer-attachments.js", javascript],
+  ],
   ["/workspace-panels.js", ["src/ui/shared/workspace-panels.js", javascript]],
   [
     "/extension-workbench.js",

@@ -1,3 +1,10 @@
+import { createChatDialog } from "./chat-dialog.js";
+import { createPreferencesSettings } from "./preferences-settings.js";
+import { createProviderSettings } from "./provider-settings.js";
+import { createResourceSettings } from "./resource-settings.js";
+import { createPackageSettings } from "./package-settings.js";
+import { createRemoteSettings } from "./remote-settings.js";
+import { createComposerAttachments } from "./composer-attachments.js";
 import { createComposerModelPicker } from "./composer-model-picker.js";
 import { createWorkspacePanels } from "./workspace-panels.js";
 import { createExtensionWorkbench } from "./extension-workbench.js";
@@ -188,12 +195,14 @@ function chooseDurableAgent(id) {
       String(id),
       $("#prompt").value,
     ).text;
-    renderAttachments();
+    composerAttachments.render();
     $("#messages").replaceChildren();
     resetInteraction();
   }
   actionEpoch++;
   durableAgentId = String(id);
+  closeModelControls();
+  syncChatViews();
   sessionStorage.setItem(selectionKey, durableAgentId);
   closeActionMenu();
   extensionWorkbench?.update([], readPanelContext());
@@ -452,75 +461,6 @@ function closeModelControls() {
 for (const node of document.querySelectorAll("[data-dsh-icon]"))
   node.innerHTML = dshIcon(node.dataset.dshIcon);
 let desktopReady = false;
-function renderDesktopConfiguration() {
-  const host = $("#personality-profiles");
-  host.innerHTML =
-    (desktopConfiguration?.promptProfiles ?? [])
-      .map(
-        (row) =>
-          `<article class="settings-card"><h3>${esc(row.name)}</h3><p class="config-location">AGENTS.md</p><button data-edit-personality="${esc(row.id)}">编辑人格</button></article>`,
-      )
-      .join("") ||
-    '<p class="muted">尚未添加人格。可在此添加，也可在输入框上方创建。</p>';
-}
-let personalityDocument,
-  personalitySaving = false;
-async function loadPersonality() {
-  if (!runtimePrefix) return;
-  const value = await api("/api/personality");
-  personalityDocument = value;
-  $("#personality-file").textContent = value.file;
-  $("#personality-content").value = value.content;
-  $("#personality-status").textContent = value.exists
-    ? "已加载 AGENTS.md"
-    : "尚未配置，保存后创建 AGENTS.md";
-  renderDesktopConfiguration();
-}
-$("#personality-form").onsubmit = async (event) => {
-  event.preventDefault();
-  if (!personalityDocument || personalitySaving) return;
-  personalitySaving = true;
-  $("#save-personality").disabled = true;
-  try {
-    const result = await api("/api/personality", {
-      content: $("#personality-content").value,
-      revision: personalityDocument.revision,
-    });
-    personalityDocument = result;
-    $("#personality-status").textContent =
-      result.effectiveFile !== result.file
-        ? `已保存；Pi 当前优先加载 ${result.effectiveFile}`
-        : result.reloadRequired?.length
-          ? "已保存；部分 Agent 需重载后应用"
-          : "已保存并应用到运行中的 Agent";
-    toast("全局人格已保存");
-  } catch (error) {
-    $("#personality-status").textContent = error.message;
-  } finally {
-    personalitySaving = false;
-    $("#save-personality").disabled = false;
-  }
-};
-async function updateAllExtensions() {
-  const preview = await api("/api/packages/update-all");
-  openDialog(
-    "全量更新 Pi 插件",
-    `<p>使用 Pi 原生 <code>${esc(preview.command)}</code> 逻辑更新全部用户插件。遵循固定版本规则，更新后需重载各 Agent。</p><p>${preview.sources.map(esc).join("<br>") || "没有配置用户插件"}</p>`,
-    async () => {
-      await api("/api/packages/update-all", {
-        revision: preview.revision,
-        inventoryKey: preview.inventoryKey,
-      });
-      toast("全量更新完成，重载 Agent 后应用");
-      await sessionInventories.refresh(state, {
-        force: true,
-        kinds: view === "providers" ? ["providers"] : ["plugins"],
-      });
-      renderPlugins();
-    },
-    "更新全部插件",
-  );
-}
 window.addEventListener("message", (event) => {
   if (
     runtimePrefix &&
@@ -550,13 +490,9 @@ window.addEventListener("message", (event) => {
     const draft = event.data.draft;
     if (typeof draft?.text === "string" && Array.isArray(draft.files)) {
       sessionDrafts.edit(draft.text);
-      for (const file of draft.files)
-        sessionDrafts.addFile(state.sessionId, {
-          ...file,
-          id: `transferred-${++attachmentSerial}`,
-        });
+      composerAttachments.restore(draft.files, state.sessionId);
       $("#prompt").value = draft.text;
-      renderAttachments();
+      composerAttachments.render();
     }
     return;
   }
@@ -573,6 +509,7 @@ window.addEventListener("message", (event) => {
         sessionConnection.pause();
         connected = false;
       } else if (!document.hidden) void sessionConnection.resume();
+      syncChatViews();
     }
     const next = {
       agent: event.data.agent,
@@ -584,11 +521,8 @@ window.addEventListener("message", (event) => {
     };
     if (JSON.stringify(next) === JSON.stringify(desktopConfiguration)) return;
     desktopConfiguration = next;
-    $(".desktop-personality").hidden = false;
     $(".desktop-update-all").hidden = false;
-    $("#settings-scope").hidden = true;
-    $("#settings-scope").value = "global";
-    renderDesktopConfiguration();
+    syncChatViews();
     renderComposerContext();
     workspacePanel?.configure(desktopConfiguration);
     return;
@@ -599,7 +533,7 @@ window.addEventListener("message", (event) => {
     event.source === window.parent &&
     event.data?.type === "pi-desktop:appearance"
   ) {
-    applyAppearance();
+    preferencesSettings.applyAppearance();
     return;
   }
   if (
@@ -617,86 +551,26 @@ window.addEventListener("message", (event) => {
 let view = "workspace",
   state,
   connected = false,
-  dialogSave,
-  dialogGeneration = 0,
   toastTimer,
   streaming,
-  pluginRevision,
-  providerRevision,
-  providerCatalog = [],
-  settingsDocument,
-  filter = "all",
   activeInteraction,
-  interactionSignature = "",
-  marketLoaded = false,
-  marketQuery = "",
-  marketGeneration = 0,
-  marketPage = 1,
-  settingsGeneration = 0;
+  interactionSignature = "";
 let historyOwner = "",
   historyIndex = -1,
   historyDraft = "";
 const sentHistory = new Map();
-let skillsInventory = [],
-  mcpInventory = { rows: [], revisions: {} },
-  activeCalls = new Map();
-let pluginInventory = { writable: false, updatesSupported: false },
-  checkingPackageUpdates = false;
-let plugins = [],
-  providers = [],
-  modelChoices = [],
-  sessions = [],
+let activeCalls = new Map();
+let sessions = [],
   messageRows = [],
-  marketRows = [],
-  groups = [],
   selected = null;
-let draft = new Map(),
-  pending = false;
 let commands = [],
   commandMatches = [],
   commandIndex = 0,
-  commandDismissed = "",
-  settingsCategory = "agent";
+  commandDismissed = "";
 let btwThread = null,
   btwBusy = false;
 // UUIDv7 IDs share their leading timestamp; display enough for practical selection.
 const SESSION_ID_DISPLAY_LENGTH = 18;
-const MAX_DRAFT_ATTACHMENT_BYTES = 16 * 1024 * 1024;
-const expandedProviders = new Set();
-const demoSettings = { global: {}, project: {} };
-const optionLabels = {
-  off: "关闭",
-  on: "开启",
-  only: "仅使用 Codemode",
-  minimal: "极少",
-  low: "低",
-  medium: "中等",
-  high: "高",
-  xhigh: "更高",
-  max: "最大",
-  "one-at-a-time": "逐条处理",
-  all: "全部",
-  ask: "询问",
-  always: "总是",
-  never: "从不",
-  auto: "自动",
-  streaming: "请求期间预热",
-  idle: "空闲时预热",
-  regular: "常规",
-  fullscreen: "全屏",
-  system: "跟随系统",
-  transcript: "会话记录",
-  "resume-hint": "恢复提示",
-  hidden: "隐藏",
-  tree: "会话树",
-  fork: "分叉会话",
-  none: "无",
-  default: "默认",
-  "no-tools": "隐藏工具消息",
-  "user-only": "仅用户消息",
-  "labeled-only": "仅标记消息",
-  "user-and-assistant": "用户与助手",
-};
 const demoMessages = [
   {
     role: "user",
@@ -768,42 +642,181 @@ const demoMessages = [
 }));
 for (const element of document.querySelectorAll("[data-icon]"))
   element.innerHTML = icon(element.dataset.icon);
-const systemTheme = matchMedia("(prefers-color-scheme:dark)");
-function applyAppearance() {
-  const theme = localStorage.getItem("pi-web-theme") || "light";
-  const savedSize = Number(localStorage.getItem("pi-web-font-size") || 14);
-  const size = String(
-    Number.isInteger(savedSize) ? Math.max(12, Math.min(24, savedSize)) : 14,
-  );
-  const dark = theme === "dark" || (theme === "system" && systemTheme.matches);
-  document.body.classList.toggle("dark", dark);
-  // boot.js 用 <html data-theme> 在首帧前应用主题，这里保持两处一致。
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.documentElement.style.setProperty("--ui-font-size", `${size}px`);
-  document.documentElement.style.setProperty(
-    "--ui-font-scale",
-    String(Number(size) / 14),
-  );
-  $("#web-theme").value = theme;
-  $("#web-font-size").value = size;
+let chatPageActive = true,
+  chatViewsIdentity,
+  chatViewsActive;
+function chatViewIdentity() {
+  return JSON.stringify([
+    runtimePrefix,
+    desktopConfiguration?.agent?.generation,
+    actionEpoch,
+    durableAgentId || state?.sessionId,
+    state?.cwd,
+    state?.epoch,
+    state?.backend?.id,
+  ]);
 }
-applyAppearance();
-systemTheme.addEventListener("change", applyAppearance);
-window.addEventListener("storage", applyAppearance);
-$("#web-theme").addEventListener("change", (event) => {
-  localStorage.setItem("pi-web-theme", event.target.value);
-  applyAppearance();
-});
-$("#web-font-size").addEventListener("change", (event) => {
-  localStorage.setItem("pi-web-font-size", event.target.value);
-  applyAppearance();
-});
-function adjustFontSize(delta) {
-  const current = Number(localStorage.getItem("pi-web-font-size") || 14);
-  const next = Math.max(12, Math.min(24, current + delta));
-  localStorage.setItem("pi-web-font-size", String(next));
-  applyAppearance();
+function chatViewsAreActive() {
+  return (
+    chatPageActive &&
+    !document.hidden &&
+    hostFocused &&
+    (!live ||
+      (connected &&
+        !!state &&
+        (!durableAgentId || state.sessionId === durableAgentId) &&
+        !pendingConversation))
+  );
 }
+const chatDialog = createChatDialog({
+  getIdentity: chatViewIdentity,
+  onError: (error) => toast(error.message),
+});
+const preferencesSettings = createPreferencesSettings({
+  live,
+  embedded: !!runtimePrefix,
+  api,
+  esc,
+  toast,
+  openDialog,
+  getState: () => state,
+  getDesktopConfiguration: () => desktopConfiguration,
+  desktopMessage,
+  showView,
+  refresh: () => refresh(),
+});
+const providerSettings = createProviderSettings({
+  live,
+  api,
+  esc,
+  field,
+  openDialog,
+  toast,
+  getState: () => state,
+  refresh: () => refresh(),
+  pollInteractions: () => pollInteractions(),
+  selectModel: (provider, id) => selectComposerModel(provider, id),
+  setDefaults(defaults) {
+    state.defaults = defaults;
+  },
+  async openModels(id) {
+    await showView("workspace");
+    await composerModelPicker.openModels(id);
+  },
+  onModelsChanged: () => composerModelPicker.update(),
+});
+const packageSettings = createPackageSettings({
+  live,
+  api,
+  esc,
+  icon,
+  field,
+  openDialog,
+  isDialogCurrent: (token) => chatDialog.isCurrent(token),
+  toast,
+  getState: () => state,
+  getConnected: () => connected,
+  refresh: () => refresh(),
+  refreshInventories: () =>
+    sessionInventories.refresh(state, { force: true, kinds: ["plugins"] }),
+});
+const resourceSettings = createResourceSettings({
+  live,
+  api,
+  esc,
+  icon,
+  field,
+  openDialog,
+  toast,
+  getState: () => state,
+  getCommands: () => commands,
+  loadCommands,
+  async useCommand(name) {
+    const identity = chatViewIdentity();
+    await showView("workspace");
+    if (identity !== chatViewIdentity()) return;
+    $("#prompt").value = `/${name} `;
+    $("#prompt").focus();
+  },
+  async beginInteraction(job) {
+    activeInteraction = { id: job.id };
+    await pollInteractions();
+  },
+  refresh: () => refresh(),
+});
+const remoteSettings = createRemoteSettings({
+  live,
+  api,
+  esc,
+  toast,
+  getAgent: () => desktopConfiguration?.agent?.id,
+});
+const composerAttachments = createComposerAttachments({
+  live,
+  embedded: !!runtimePrefix,
+  drafts: sessionDrafts,
+  api,
+  getState: () => state,
+  esc,
+  toast,
+  onChange: () => syncComposerButton(),
+  openPreview(file) {
+    if (workspacePanel) workspacePanel.openAttachment(file);
+    else
+      openDialog(
+        file.name,
+        file.image
+          ? `<img class="attachment-preview" src="${esc(file.url)}" alt="${esc(file.name)}">`
+          : `<pre class="attachment-text-preview">${esc(file.preview)}</pre>`,
+        () => {},
+        "关闭",
+      );
+  },
+});
+function syncChatViews() {
+  const identity = chatViewIdentity(),
+    active = chatViewsAreActive();
+  if (chatViewsIdentity !== identity) chatDialog.close();
+  if (chatViewsIdentity !== identity || (chatViewsActive && !active))
+    sessionInventories.invalidate();
+  chatViewsIdentity = identity;
+  chatViewsActive = active;
+  const context = { identity, view, active };
+  preferencesSettings.setContext(context);
+  preferencesSettings.update();
+  providerSettings.setContext(context);
+  providerSettings.update();
+  packageSettings.setContext(context);
+  resourceSettings.setContext(context);
+  remoteSettings.setContext({ identity, active: active && view === "remote" });
+}
+async function selectComposerModel(provider, id) {
+  if (!live) {
+    const row = providerSettings.pickerModels.find(
+      (item) => item.id === provider,
+    );
+    selected = {
+      ...(row?.models.find((item) => item.id === id) ?? { id, name: id }),
+      provider,
+    };
+    state.model = selected;
+    $("#selected-model").textContent = selected.name;
+    providerSettings.update();
+    composerModelPicker.update();
+    return;
+  }
+  const identity = chatViewIdentity();
+  const result = await api("/api/model", {
+    provider,
+    id,
+    sessionId: state?.sessionId,
+  });
+  if (identity !== chatViewIdentity()) return;
+  await refresh();
+  if (identity === chatViewIdentity() && result.deferred)
+    toast("模型将在当前任务结束后应用");
+}
+
 function toast(message) {
   clearTimeout(toastTimer);
   $("#toast").textContent = message;
@@ -963,6 +976,7 @@ async function showView(next) {
   const previous = view;
   const changed = view !== next;
   view = next;
+  if (changed) chatDialog.close();
   if (runtimePrefix)
     window.parent.postMessage(
       { type: "pi-desktop:view-changed", view: next },
@@ -1016,42 +1030,17 @@ async function showView(next) {
           ? $("#view-extensions")
           : $(`#view-${next}`),
     );
-  if (next === "general" && !settingsDocument) await loadSettings();
-  if (next === "marketplace" && !marketLoaded) await loadMarket();
+  syncChatViews();
   if (live && state && ["plugins", "providers", "marketplace"].includes(next))
     await sessionInventories.refresh(state, {
       kinds: [next === "providers" ? "providers" : "plugins"],
     });
-  if (next === "plugins") {
-    renderPlugins();
-    if (
-      live &&
-      pluginInventory.updatesSupported &&
-      pluginInventory.writable &&
-      !pluginInventory.updatesCheckedAt
-    )
-      void checkPackageUpdates();
-  }
-  if (next === "providers") renderProviders();
-  if (next === "skills") {
-    await loadCommands();
-    if (live) skillsInventory = (await api("/api/skills")).rows;
-    renderSkills();
-  }
-  if (next === "personality" && !personalityDocument) await loadPersonality();
-  if (next === "mcp") await loadMcp();
-  if (next === "remote") await loadConnection(undefined, true);
 }
 function field(label, name, value = "", type = "text", extra = "") {
   return `<label class="field-label">${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
 }
-function openDialog(title, html, save, submit = "保存") {
-  ++dialogGeneration;
-  dialogSave = save;
-  $("#dialog-title").textContent = title;
-  $("#dialog-body").innerHTML = html;
-  $("#dialog-submit").textContent = submit;
-  $("#dialog").showModal();
+function openDialog(...args) {
+  return chatDialog.open(...args);
 }
 const disclosures = new Map();
 // Fold bodies keep their own reading position (long tool arguments and output).
@@ -1154,22 +1143,6 @@ function runningActivityText() {
     return "等待中";
   return compactActivityText(
     workingMessage || (state?.phase === "output" ? "生成中" : "处理中"),
-  );
-}
-function openProviderCatalog() {
-  openDialog(
-    "添加模型提供商",
-    `<div class="provider-catalog">${providerCatalog
-      .filter((row) => row.auth.apiKey || row.auth.oauth)
-      .map(
-        (row) =>
-          `<div class="resource-row"><strong>${esc(row.name)}</strong><div>${row.auth.apiKey ? `<button class="outline-button" data-login-provider="${esc(row.id)}" data-auth-type="api_key">API Key</button>` : ""}${row.auth.oauth ? `<button class="outline-button" data-login-provider="${esc(row.id)}" data-auth-type="oauth">登录账号</button>` : ""}</div></div>`,
-      )
-      .join(
-        "",
-      )}</div><button type="button" class="outline-button" data-action="custom-provider">自定义兼容服务</button>`,
-    () => {},
-    "关闭",
   );
 }
 function toolMarkup(block) {
@@ -2295,1015 +2268,13 @@ async function refreshSessions() {
   if (live) sessions = (await api("/api/sessions")).rows;
   renderSessions();
 }
-function renderPlugins() {
-  const q = $("#plugin-search").value.toLowerCase();
-  const writable =
-    !live ||
-    (connected &&
-      !checkingPackageUpdates &&
-      pluginInventory.writable &&
-      state?.packageManagement);
-  const rows = plugins.filter(
-    (row) =>
-      (filter === "all" ||
-        (filter === "enabled" && row.enabled) ||
-        (filter === "pending" && row.pending) ||
-        (filter === "updates" && row.updateAvailable === true)) &&
-      `${row.name} ${row.source}`.toLowerCase().includes(q),
-  );
-  $("#plugin-permissions").hidden = !state?.capabilities?.readOnly;
-  $("#plugin-grid").innerHTML =
-    rows
-      .map((row) => {
-        const version =
-          row.type === "package"
-            ? `<p class="package-version">${row.installedVersion ? "已安装 v" + esc(row.installedVersion) : "已安装版本未读取"}${row.versionError ? " · " + esc(row.versionError) : ""}</p>`
-            : "";
-        const update =
-          row.type !== "package"
-            ? ""
-            : `<span class="tag ${row.updateAvailable ? "amber" : ""}">${row.updateAvailable === true ? "Pi 原生报告有更新" : row.updateAvailable === false ? "原生检查未报告更新" : "尚未检查更新"}</span>`;
-        return `<article class="plugin-card"><div class="plugin-card-head"><span class="plugin-icon">${icon("plugin")}</span><div><h2>${esc(row.name)}</h2><small>${esc(row.source)}</small></div><button class="switch" role="switch" aria-checked="${row.enabled}" aria-label="${row.enabled ? "停用" : "启用"} ${esc(row.name)}" data-toggle-plugin="${esc(row.id)}"></button></div><p>${esc(row.description)}</p>${version}<div class="catalog-types">${update}</div><div class="plugin-card-footer"><span class="tag ${row.pending ? "amber" : ""}">${row.pending ? "待重载" : row.enabled ? "配置启用" : "配置停用"}</span><div><button data-config-plugin="${esc(row.id)}">${row.adapted ? "配置" : "详情"}</button>${row.packageName ? `<button data-market-detail="${esc(row.packageName)}">目录完整介绍</button>` : ""}${row.type === "package" ? `<button data-plugin-resources="${esc(row.id)}">资源过滤</button><button data-package-action="update" data-package-source="${esc(row.source)}" data-package-scope="${esc(row.scope ?? "global")}" ${writable ? "" : "disabled"}>${row.updateAvailable ? "有更新 · 更新" : "原生更新"}</button><button data-package-action="remove" data-package-source="${esc(row.source)}" data-package-scope="${esc(row.scope ?? "global")}" ${writable ? "" : "disabled"}>卸载</button>` : ""}</div></div></article>`;
-      })
-      .join("") || '<div class="empty">没有匹配的插件</div>';
-  $('#plugin-filter [data-filter="all"] span').textContent = plugins.length;
-  $('#plugin-filter [data-filter="updates"] span').textContent = plugins.filter(
-    (row) => row.updateAvailable === true,
-  ).length;
-  const button = $('[data-action="check-package-updates"]');
-  button.disabled =
-    checkingPackageUpdates ||
-    (live &&
-      (!connected ||
-        !pluginInventory.writable ||
-        !pluginInventory.updatesSupported));
-  button.textContent = checkingPackageUpdates ? "检查中…" : "检查更新";
-  $("#package-update-status").textContent = checkingPackageUpdates
-    ? "正在使用 Pi 原生接口检查，不安装／更新／重载…"
-    : !live
-      ? "演示模式；不生成可更新包。"
-      : !pluginInventory.updatesSupported
-        ? "当前宿主未提供原生更新检查，请等任务结束后授权更新宿主。"
-        : `${pluginInventory.updatesCheckedAt ? "上次原生检查：" + new Date(pluginInventory.updatesCheckedAt).toLocaleString() : "尚未检查；点击检查更新"}。遵循 Pi 的固定版本、范围和项目覆盖规则；离线或网络失败可能不报告更新，未报告不等于已是最新。`;
-  const count = plugins.filter((row) => row.pending).length;
-  $("#reload-notice").hidden = !pending && !count;
-  $("#pending-label").textContent = state?.capabilities?.readOnly
-    ? "无项目会话只运行读取与网页工具；插件配置可在项目 Agent 重载后应用。"
-    : "配置已保存，重载后应用扩展变更。其他运行中的 Agent 也需要重载。";
-}
-
-async function configurePlugin(id) {
-  const row = plugins.find((item) => item.id === id);
-  if (!row) return;
-  if (!row.adapted) {
-    openDialog(
-      row.name,
-      `<p class="muted">${esc(row.source)}</p><p>${esc(row.description)}</p><div class="dialog-note">可在这里启停扩展、管理包来源和资源路径。此插件没有声明 Web 配置表单；它的私有参数由插件自己的配置接口定义。</div><button type="button" class="outline-button" data-view="general" data-action="close-dialog">管理资源配置</button>`,
-      () => {},
-      "关闭",
-    );
-    return;
-  }
-  const doc = live
-    ? await api(`/api/plugin-config?id=${encodeURIComponent(id)}`)
-    : {
-        data: row.config,
-        fields: Object.keys(row.config).map((key) => ({
-          key,
-          type: "boolean",
-          label: key,
-        })),
-      };
-  openDialog(
-    `${row.name} 配置`,
-    doc.fields
-      .map((spec) => {
-        const value = doc.data[spec.key];
-        return `<label class="field-label">${esc(spec.label ?? spec.key)}${spec.type === "boolean" || spec.type === "enum" ? `<select name="${esc(spec.key)}">${(spec.type === "boolean" ? [true, false] : spec.options).map((option) => `<option value="${esc(JSON.stringify(option))}" ${option === value ? "selected" : ""}>${esc(option === true ? "开启" : option === false ? "关闭" : option)}</option>`).join("")}</select>` : `<input name="${esc(spec.key)}" type="${spec.secret ? "password" : spec.type === "number" ? "number" : "text"}" value="${esc(spec.secret ? "" : value)}" ${spec.secret ? 'autocomplete="new-password" placeholder="留空保留"' : ""}>`}</label>`;
-      })
-      .join(""),
-    async (form) => {
-      const patch = Object.fromEntries(
-        [...form].map(([key, value]) => {
-          const spec = doc.fields.find((item) => item.key === key);
-          return [
-            key,
-            spec.type === "boolean" || spec.type === "enum"
-              ? JSON.parse(value)
-              : spec.type === "number"
-                ? Number(value)
-                : value,
-          ];
-        }),
-      );
-      if (live) {
-        await api("/api/plugin-config", { id, revision: doc.revision, patch });
-        await refresh();
-      } else {
-        row.config = { ...row.config, ...patch };
-        row.pending = true;
-        pending = true;
-        renderPlugins();
-      }
-      toast("配置已保存，重载后应用");
-    },
-  );
-}
-function renderProviders() {
-  const q = $("#provider-search").value.toLowerCase();
-  $("#default-model-label").textContent =
-    `默认模型：${state?.defaults?.id ? `${state.defaults.provider} / ${state.defaults.id}` : "由 pi 自动选择"}`;
-  const rows = providers
-    .filter((row) => row.keyConfigured || row.custom)
-    .filter((row) =>
-      `${row.id} ${row.name} ${row.models.map((model) => model.id).join(" ")}`
-        .toLowerCase()
-        .includes(q),
-    )
-    .sort(
-      (a, b) =>
-        Number(b.custom || b.keyConfigured) -
-        Number(a.custom || a.keyConfigured),
-    );
-  $("#provider-list").innerHTML =
-    rows
-      .map((row) => {
-        const expanded = expandedProviders.has(row.id);
-        return `<article class="provider-card"><div class="provider-summary"><span class="provider-symbol">${esc(row.name.slice(0, 1).toUpperCase())}</span><div class="provider-content"><div class="provider-heading"><h2>${esc(row.name)}</h2>${selected?.provider === row.id ? '<span class="tag">当前使用</span>' : ""}<span class="tag">${row.custom ? "自定义" : "Pi 原生"}</span></div><div class="provider-endpoint">${esc(row.baseUrl || row.api || "由提供商管理端点")}</div><div class="provider-status"><span class="dot ${row.keyConfigured ? "" : "inactive"}"></span>${row.keyConfigured ? "认证已配置" : "尚未配置认证"}<span>· ${row.models.length} 个模型</span></div></div><div class="provider-actions"><button class="outline-button" data-provider="${esc(row.id)}">配置</button>${row.auth?.apiKey ? `<button class="outline-button" data-login-provider="${esc(row.id)}" data-auth-type="api_key">API Key</button>` : ""}${row.auth?.oauth ? `<button class="outline-button" data-login-provider="${esc(row.id)}" data-auth-type="oauth">登录账号</button>` : ""}<button class="outline-button" data-expand-provider="${esc(row.id)}" aria-expanded="${expanded}">${expanded ? "收起模型" : "查看模型"} ${expanded ? "⌃" : "⌄"}</button></div></div><div class="provider-detail" ${expanded ? "" : "hidden"}><div class="provider-detail-toolbar"><strong>模型</strong><div>${row.keyConfigured && row.auth?.apiKey ? `<button class="outline-button" data-logout-provider="${esc(row.id)}">退出认证</button>` : ""}<button class="outline-button" data-default-provider="${esc(row.id)}">设为默认</button>${row.custom ? `<button class="outline-button" data-delete-provider="${esc(row.id)}">移除配置</button>` : ""}</div></div><div class="provider-models">${row.models
-          .slice(0, 24)
-          .map(
-            (model) =>
-              `<button data-model-provider="${esc(row.id)}" data-model-id="${esc(model.id)}" ${live && model.available === false ? "disabled" : ""} class="${selected?.provider === row.id && selected?.id === model.id ? "selected" : ""}">${esc(model.name)}</button>`,
-          )
-          .join(
-            "",
-          )}${row.models.length > 24 ? `<button data-all-models="${esc(row.id)}">全部 ${row.models.length} 个模型…</button>` : ""}</div></div></article>`;
-      })
-      .join("") || '<div class="empty">没有匹配的提供商</div>';
-}
-function renderSkills() {
-  const query = $("#skill-search").value.toLowerCase();
-  const inventoryCommands = skillsInventory.length
-    ? [
-        ...skillsInventory.map((row) => ({
-          ...row,
-          name: `skill:${row.name}`,
-          label: row.name,
-          source: "skill",
-          skillId: row.id,
-        })),
-        ...commands.filter((row) => row.source !== "skill"),
-      ]
-    : commands;
-  const rows = inventoryCommands.filter(
-    (row) =>
-      ["skill", "prompt", "extension"].includes(row.source) &&
-      `${row.name} ${row.description}`.toLowerCase().includes(query),
-  );
-  $("#skill-list").innerHTML =
-    ["skill", "prompt", "extension"]
-      .map((source) => {
-        const items = rows.filter((row) => row.source === source);
-        if (!items.length) return "";
-        return `<section class="settings-card"><h2>${{ skill: "技能", prompt: "提示模板", extension: "扩展命令" }[source]} <span class="scope-tag">${items.length}</span></h2>${items.map((row) => `<div class="resource-row"><div><strong>${esc(row.label || row.name)}</strong><small>${esc(row.description)}</small><code>/${esc(row.name)}</code></div>${row.source === "skill" && row.skillId ? `<span class="scope-tag">${row.scope === "project" ? "项目" : "用户"}</span><button class="switch" role="switch" aria-label="启用技能 ${esc(row.label)}" aria-checked="${row.enabled}" data-toggle-skill="${esc(row.skillId)}"></button>` : ""}<button class="outline-button" data-use-command="${esc(row.name)}" ${row.enabled === false ? "disabled" : ""}>使用</button></div>`).join("")}</section>`;
-      })
-      .join("") ||
-    '<div class="empty">pi 尚未加载匹配的技能或模板。可在 Pi 配置中检查资源路径与过滤规则，然后重载。</div>';
-}
-$("#skill-search").addEventListener("input", renderSkills);
-async function loadMcp() {
-  if (live) mcpInventory = await api("/api/mcp");
-  const query = $("#mcp-search").value.toLowerCase();
-  $("#mcp-pending").hidden = !mcpInventory.pending;
-  $("#mcp-list").innerHTML =
-    mcpInventory.rows
-      .map((row, index) => ({ row, index }))
-      .filter(({ row }) =>
-        `${row.name} ${row.config.description ?? ""}`
-          .toLowerCase()
-          .includes(query),
-      )
-      .map(
-        ({ row, index }) =>
-          `<article class="provider-card mcp-card"><div class="provider-main"><span class="provider-logo">${icon("layers")}</span><div class="provider-info"><h2>${esc(row.name)} <span class="scope-tag">${row.scope === "project" ? "项目" : row.scope === "extension" ? "扩展注册" : "用户"}</span></h2><p>${esc(row.config.description || (row.config.url ? row.config.url : [row.config.command, ...(row.config.args ?? [])].join(" ")))}</p><div class="provider-status"><span class="dot"></span>${row.overridden ? "被项目配置覆盖" : !row.trusted ? "项目信任后加载" : !row.enabled ? "已停用" : row.tools.length ? `已发现 ${row.tools.length} 个工具` : "已配置 · 查看连接状态"} · ${esc(row.config.exposure ?? "codemode")}</div></div>${row.scope !== "extension" ? `<button class="switch" role="switch" aria-label="启用 MCP ${esc(row.name)}" aria-checked="${row.enabled}" data-toggle-mcp="${index}"></button>` : ""}</div><div class="mcp-actions"><button class="outline-button" data-edit-mcp="${index}">${row.scope === "extension" ? "创建用户覆盖" : "配置"}</button><button data-mcp-action="reconnect" data-mcp-name="${esc(row.name)}" ${!row.enabled || row.overridden || !row.trusted ? "disabled" : ""}>重新连接</button>${row.config.url ? `<button data-mcp-action="login" data-mcp-name="${esc(row.name)}">登录</button><button data-mcp-action="logout" data-mcp-name="${esc(row.name)}">退出认证</button>` : ""}${row.scope !== "extension" ? `<button data-remove-mcp="${index}">卸载</button>` : ""}</div>${row.tools.length ? `<details class="mcp-tools"><summary>工具 · ${row.tools.length}</summary>${row.tools.map((tool) => `<p><code>${esc(tool.name)}</code><small>${esc(tool.description)}</small></p>`).join("")}</details>` : ""}</article>`,
-      )
-      .join("") ||
-    '<div class="empty">连接一个 MCP 服务，为 pi 添加工具和资源。</div>';
-}
-$("#mcp-search").addEventListener("input", () =>
-  loadMcp().catch((error) => toast(error.message)),
-);
-function jsonField(label, name, value) {
-  return `<label class="field-label">${esc(label)}<textarea name="${esc(name)}" rows="3" spellcheck="false">${esc(JSON.stringify(value, null, 2))}</textarea></label>`;
-}
-function configureMcp(row) {
-  const config = row?.config ?? {},
-    scope = row?.scope === "project" ? "project" : "global";
-  openDialog(
-    row ? `${row.name} 配置` : "添加 MCP 服务",
-    `<div class="field-grid">${field("名称", "name", row?.name ?? "", "text", row ? "readonly" : 'pattern="[A-Za-z0-9_-]+" required')}<label class="field-label">保存范围<select name="scope" ${row && row.scope !== "extension" ? "disabled" : ""}><option value="global" ${scope === "global" ? "selected" : ""}>用户</option><option value="project" ${scope === "project" ? "selected" : ""}>当前项目</option></select></label></div><label class="field-label">连接方式<select name="transport" id="mcp-transport"><option value="stdio" ${!config.url ? "selected" : ""}>本地进程 · stdio</option><option value="http" ${config.url ? "selected" : ""}>远程服务 · HTTP</option></select></label>${field("描述", "description", config.description ?? "")}<div id="mcp-stdio" ${config.url ? "hidden" : ""}>${field("启动命令", "command", config.command ?? "", "text", 'placeholder="npx"')}${jsonField("命令参数（JSON 数组）", "args", config.args ?? [])}${field("工作目录（可选）", "cwd", config.cwd ?? "")}${jsonField("环境变量（JSON 对象）", "env", config.env ?? {})}</div><div id="mcp-http" ${!config.url ? "hidden" : ""}>${field("服务 URL", "url", config.url ?? "", "text", 'placeholder="https://example.com/mcp"')}${jsonField("请求头（JSON 对象）", "headers", config.headers ?? {})}${field("使用模型提供商的认证（可选）", "authProvider", config.auth?.provider ?? "")}${jsonField("OAuth 参数（JSON 对象，可选）", "oauth", config.oauth ?? {})}</div><div class="dialog-note">已保存的环境变量、请求头和 OAuth 密钥以空值显示；留空保留对应凭据。支持 $环境变量。删除键可清除对应值。</div><div class="field-grid"><label class="field-label">工具暴露<select name="exposure">${["codemode", "deferred", "direct", "hidden"].map((value) => `<option ${value === (config.exposure ?? "codemode") ? "selected" : ""}>${value}</option>`).join("")}</select></label>${field("调用超时（秒）", "timeout", config.timeout ?? 60, "number", 'min="1" required')}</div>${jsonField("单个工具的暴露方式（JSON 对象，可选）", "toolExposure", config.toolExposure ?? {})}`,
-    async (data) => {
-      if (!live) {
-        toast("MCP 管理需要连接 pi web");
-        return;
-      }
-      const name = data.get("name"),
-        selectedScope = data.get("scope") ?? scope;
-      const parse = (key, fallback) => {
-        try {
-          return JSON.parse(data.get(key) || fallback);
-        } catch {
-          throw new Error(`${key} 不是有效 JSON`);
-        }
-      };
-      const value = {
-        description: data.get("description"),
-        exposure: data.get("exposure"),
-        timeout: Number(data.get("timeout")),
-        toolExposure: parse("toolExposure", "{}"),
-      };
-      if (data.get("transport") === "http")
-        Object.assign(value, {
-          type: "http",
-          url: data.get("url"),
-          headers: parse("headers", "{}"),
-          oauth: parse("oauth", "{}"),
-          auth: data.get("authProvider")
-            ? { provider: data.get("authProvider") }
-            : null,
-          command: null,
-          args: null,
-          env: null,
-          cwd: null,
-        });
-      else
-        Object.assign(value, {
-          type: "stdio",
-          command: data.get("command"),
-          args: parse("args", "[]"),
-          env: parse("env", "{}"),
-          cwd: data.get("cwd") || null,
-          url: null,
-          headers: null,
-          oauth: null,
-          auth: null,
-        });
-      await api("/api/mcp", {
-        action: "save",
-        name,
-        scope: selectedScope,
-        revision:
-          row && row.scope !== "extension"
-            ? row.revision
-            : mcpInventory.revisions[selectedScope],
-        config: value,
-      });
-      await loadMcp();
-      await refresh();
-      toast("MCP 配置已保存，重载后生效");
-    },
-  );
-  $("#mcp-transport").addEventListener("change", (event) => {
-    $("#mcp-http").hidden = event.target.value !== "http";
-    $("#mcp-stdio").hidden = event.target.value !== "stdio";
-  });
-}
-function configureProvider(id) {
-  const row = providers.find((item) => item.id === id);
-  openDialog(
-    row ? `${row.name} 配置` : "添加提供商",
-    field(
-      "提供商 ID",
-      "id",
-      row?.id,
-      "text",
-      row
-        ? "readonly required"
-        : 'required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]*"',
-    ) +
-      field("服务端点", "baseUrl", row?.baseUrl, "url", "required") +
-      `<label class="field-label">API 格式<select name="api">${[...new Set(["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", ...(row?.api ? [row.api] : [])])].map((value) => `<option ${row?.api === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>` +
-      field(
-        "密钥或环境变量引用（留空保留）",
-        "apiKey",
-        "",
-        "password",
-        'autocomplete="new-password"',
-      ) +
-      field(
-        row ? "添加模型 ID（留空保持）" : "模型 ID",
-        "modelId",
-        "",
-        "text",
-        row ? "" : "required",
-      ) +
-      '<div class="dialog-note">保存到 models.json，只修改编辑的字段；已有密钥、兼容设置和模型元数据保持原样。原生账号认证使用提供商卡片上的登录入口。</div>',
-    async (form) => {
-      const data = Object.fromEntries(form);
-      if (live) {
-        await api("/api/provider", { ...data, revision: providerRevision });
-        await refresh();
-      } else {
-        let next = row;
-        if (!next) {
-          next = { id: data.id, name: data.id, custom: true, models: [] };
-          providers.push(next);
-        }
-        Object.assign(next, {
-          baseUrl: data.baseUrl,
-          api: data.api,
-          keyConfigured: next.keyConfigured || !!data.apiKey,
-          custom: true,
-        });
-        if (
-          data.modelId &&
-          !next.models.some((model) => model.id === data.modelId)
-        )
-          next.models.push({ id: data.modelId, name: data.modelId });
-        renderProviders();
-      }
-      toast("提供商配置已保存");
-    },
-  );
-}
-let remoteRefreshTimer;
-async function loadConnection(address, prepare = false) {
-  if (!live) {
-    $("#network-status").textContent = "预览";
-    return;
-  }
-  let info = await api(
-    `/api/remote?${new URLSearchParams({ ...(address ? { address } : {}), ...(desktopConfiguration?.agent ? { agent: desktopConfiguration.agent.id } : {}) })}`,
-  );
-  if (
-    !info.remoteClient &&
-    info.tunnel?.prepareSupported &&
-    ["off", "error"].includes(info.tunnel.phase) &&
-    (prepare || info.tunnel.runtime?.phase === "off")
-  )
-    info = await api("/api/remote", { action: "prepare" });
-  const tunnel = info.tunnel;
-  const checking = tunnel?.phase === "checking";
-  const starting = ["preparing", "starting", "checking"].includes(
-      tunnel?.phase,
-    ),
-    ready = tunnel?.phase === "ready";
-  $("#network-status").textContent = info.remoteClient
-    ? "远程已连接"
-    : ready
-      ? "共享已开启"
-      : starting
-        ? checking
-          ? "验证公网连接"
-          : tunnel?.phase === "preparing"
-            ? "启动 Tailscale"
-            : tunnel?.runtime?.phase === "login"
-              ? "等待登录"
-              : "正在连接"
-        : tunnel?.phase === "error"
-          ? "连接失败"
-          : info.lan
-            ? "局域网共享"
-            : tunnel?.runtime?.backendState === "Running"
-              ? "Tailscale 已就绪"
-              : tunnel?.runtime?.backendState === "NeedsLogin"
-                ? "需要登录 Tailscale"
-                : "未开启";
-  $("#connection-title").textContent = info.remoteClient
-    ? "已连接电脑上的 Pi"
-    : ready
-      ? "扫码即可远程操作"
-      : "手机扫码连接";
-  $("#connection-description").textContent = info.remoteClient
-    ? "你可以发送消息、查看进度和切换 Agent。远程连接由电脑管理。"
-    : checking
-      ? "正在验证公网 HTTPS 入口。首次开启的 DNS 更新可能需要最多 10 分钟；验证通过后显示二维码，可以随时取消。"
-      : "开启连接后，手机扫码即可在浏览器操作。Tailscale 由 Desktop 维护；首次使用请完成账号与 HTTPS／Funnel 授权。";
-  $("#connection-actions").hidden = info.remoteClient || !tunnel;
-  $("#start-remote").hidden = ready;
-  $("#start-remote").disabled = starting;
-  $("#start-remote").textContent = starting
-    ? checking
-      ? "验证公网连接…"
-      : "正在连接…"
-    : tunnel?.runtime?.backendState === "NeedsLogin"
-      ? "登录并开启远程连接"
-      : "开启远程连接";
-  $("#stop-remote").hidden = !starting && !ready;
-  $("#rotate-remote").hidden = !ready;
-  $("#connection-error").hidden = !tunnel?.error;
-  $("#connection-error").textContent = tunnel?.error ?? "";
-  $("#connection-setup").hidden = !tunnel || ready || info.remoteClient;
-  $("#connection-setup").href =
-    tunnel?.setupUrl ?? "https://tailscale.com/docs/features/tailscale-funnel";
-  $("#connection-approval").hidden = !tunnel?.approvalUrl;
-  $("#connection-approval").href = tunnel?.approvalUrl ?? "";
-  if (info.qr && (ready || info.lan || !tunnel)) {
-    const image = document.createElement("img");
-    image.src = info.qr;
-    image.alt = "手机扫码打开同一 Pi 会话";
-    $("#connection-qr").replaceChildren(image);
-  } else {
-    const placeholder = document.createElement("p");
-    placeholder.className = "connection-placeholder";
-    placeholder.textContent = info.remoteClient
-      ? "远程已连接"
-      : starting
-        ? checking
-          ? "正在验证手机扫码入口，成功后显示二维码…"
-          : "正在建立远程连接…"
-        : "开启后显示二维码";
-    $("#connection-qr").replaceChildren(placeholder);
-  }
-  $("#connection-url").hidden = !ready && !info.lan && !info.remoteClient;
-  $("#connection-url").textContent =
-    ready && tunnel.url ? tunnel.url : info.url;
-  $("#connection-url").href = info.url;
-  $("#connection-addresses").innerHTML = info.urls
-    .map(
-      (url) =>
-        `<button class="outline-button" data-connection-address="${esc(url)}" aria-pressed="${url === info.url}">${esc(new URL(url).hostname)}</button>`,
-    )
-    .join("");
-  $("#connection-addresses").hidden = ready;
-  $("#connection-port").textContent = `端口 ${info.port}`;
-  $("#connection-port").hidden = ready || info.remoteClient;
-  clearTimeout(remoteRefreshTimer);
-  if (view === "remote" && tunnel && !info.remoteClient)
-    remoteRefreshTimer = setTimeout(
-      () => {
-        if (view === "remote")
-          loadConnection().catch((error) => toast(error.message));
-      },
-      starting ? 1000 : 3000,
-    );
-}
-const catalogOrigin = "https://pi.dev";
-const catalogForbiddenTags = [
-  "script",
-  "style",
-  "link",
-  "meta",
-  "base",
-  "iframe",
-  "object",
-  "embed",
-  "img",
-  "video",
-  "audio",
-  "source",
-  "form",
-  "input",
-  "button",
-];
-function catalogDocument(result) {
-  if (result.source !== "pi.dev" || typeof result.html !== "string")
-    throw new Error("官方目录返回格式已变化，请查看 pi.dev");
-  const clean = DOMPurify.sanitize(result.html, {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: catalogForbiddenTags,
-    FORBID_ATTR: ["style", "src", "srcset"],
-  });
-  return new DOMParser().parseFromString(clean, "text/html");
-}
-function catalogPackageUrl(name) {
-  return `${catalogOrigin}/packages/${encodeURIComponent(name).replaceAll("%2F", "/")}`;
-}
-function parseCatalogPage(result) {
-  const doc = catalogDocument(result);
-  const count = doc.querySelector(".packages-count")?.textContent.trim();
-  if (
-    !count ||
-    !/^\d+(?:\s*[-–]\s*\d+)?\s*\/\s*\d+(?:\s+\(of\s+\d+\))?$/.test(count)
-  )
-    throw new Error("官方目录列表结构已变化，请查看 pi.dev");
-  const rows = [...doc.querySelectorAll("article[data-package-card]")].map(
-    (card) => {
-      const name = card.dataset.packageName;
-      if (
-        !/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/.test(name ?? "") ||
-        name.length > 214
-      )
-        throw new Error("官方目录包名无效");
-      const monthly = Number(card.dataset.packageDownloads),
-        published = Number(card.dataset.packageDate);
-      let version;
-      for (const link of card.querySelectorAll(".packages-links a[href]")) {
-        try {
-          version ??=
-            new URL(link.getAttribute("href"), catalogOrigin).searchParams.get(
-              "package-version",
-            ) || undefined;
-        } catch {}
-      }
-      return {
-        name,
-        source: `npm:${name}`,
-        url: catalogPackageUrl(name),
-        version,
-        description:
-          card.querySelector(".packages-desc")?.textContent.trim() ?? "",
-        author:
-          card.querySelector(".packages-meta span")?.textContent.trim() ?? "",
-        types: (card.dataset.packageTypes ?? "").split(/\s+/).filter(Boolean),
-        downloads:
-          card.dataset.packageDownloads &&
-          Number.isSafeInteger(monthly) &&
-          monthly >= 0
-            ? monthly
-            : null,
-        published:
-          card.dataset.packageDate &&
-          Number.isFinite(published) &&
-          published > 0
-            ? published
-            : null,
-      };
-    },
-  );
-  if (!rows.length && Number(count.split("/").at(-1)) !== 0)
-    throw new Error("官方目录列表不完整，未生成替代结果");
-  const page = Number(
-    doc.querySelector(".pagination-page.is-active")?.textContent ?? result.page,
-  );
-  const pages = new Set();
-  for (const link of doc.querySelectorAll(".packages-pagination a[href]")) {
-    try {
-      const destination = new URL(link.getAttribute("href"), catalogOrigin);
-      const value = Number(destination.searchParams.get("page") ?? "1");
-      if (
-        destination.origin === catalogOrigin &&
-        destination.pathname === "/packages" &&
-        Number.isSafeInteger(value) &&
-        value >= 1 &&
-        value <= 9999
-      )
-        pages.add(value);
-    } catch {}
-  }
-  const previous = Math.max(0, ...[...pages].filter((value) => value < page));
-  const next = [...pages]
-    .filter((value) => value > page)
-    .sort((a, b) => a - b)[0];
-  return { rows, count, page, previous, next };
-}
-function installedMarketPackage(name) {
-  return plugins.find(
-    (plugin) =>
-      plugin.packageName === name ||
-      plugin.source?.replace(/@[^@/]+$/, "") === `npm:${name}`,
-  );
-}
-function renderMarket() {
-  const writable =
-    !live ||
-    (connected &&
-      !checkingPackageUpdates &&
-      pluginInventory.writable &&
-      state?.packageManagement);
-  $("#market-grid").innerHTML =
-    marketRows
-      .map((row) => {
-        const installed = installedMarketPackage(row.name);
-        const needsUpdate = installed?.updateAvailable === true;
-        return `<article class="plugin-card"><div class="plugin-card-head"><span class="plugin-icon">${icon("plugin")}</span><div><h2><button type="button" class="catalog-name" data-market-detail="${esc(row.name)}">${esc(row.name)}</button></h2><small>${row.version ? "目录 v" + esc(row.version) : "目录未提供版本"}${row.author ? " · " + esc(row.author) : ""}</small></div></div><p>${esc(row.description)}</p><div class="catalog-types">${row.types.map((type) => `<span class="tag">${esc(type)}</span>`).join("") || '<span class="muted">官方类型未标记</span>'}</div><div class="catalog-metrics"><span>${row.downloads === null ? "月下载量未提供" : row.downloads.toLocaleString() + " 次/月"}</span><span>${row.published ? "版本发布 " + esc(new Date(row.published).toLocaleDateString()) : "发布时间未提供"}</span></div><div class="plugin-card-footer"><button type="button" data-market-detail="${esc(row.name)}">完整介绍</button><a href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">pi.dev ↗</a><button class="outline-button" data-package-action="${needsUpdate ? "update" : "install"}" data-package-source="${esc(needsUpdate ? installed.source : row.source)}" data-package-scope="${esc(installed?.scope ?? "global")}" ${!writable || (installed && !needsUpdate) ? "disabled" : ""}>${needsUpdate ? "有更新 · 更新" : installed ? "已安装" : "安装"}</button></div></article>`;
-      })
-      .join("") || '<div class="empty">没有匹配的官方目录包</div>';
-}
-async function loadMarket({ page = 1, refresh = false } = {}) {
-  const generation = ++marketGeneration;
-  const filters = {
-    q: $("#market-search").value,
-    type: $("#market-type").value,
-    sort: $("#market-sort").value,
-  };
-  const query = JSON.stringify(filters);
-  if (query !== marketQuery) page = 1;
-  $("#market-pages").replaceChildren();
-  if (!live || !state?.marketplaceOfficial) {
-    marketRows = [];
-    marketLoaded = true;
-    $("#market-status").textContent = live
-      ? "当前宿主未加载官方目录接口；请等任务结束后授权更新原宿主。"
-      : "演示模式；真实宿主从 pi.dev 官方目录读取，不生成假插件。";
-    $("#market-grid").innerHTML =
-      '<div class="empty">可从上方链接直接阅读 pi.dev 官方目录</div>';
-    return;
-  }
-  $("#market-status").textContent = refresh
-    ? "正在刷新 pi.dev 官方目录…"
-    : "正在读取 pi.dev 官方目录…";
-  $("#market-grid").innerHTML = '<div class="empty">正在加载…</div>';
-  try {
-    const parameters = new URLSearchParams({
-      ...filters,
-      page: String(page),
-      refresh: refresh ? "1" : "0",
-    });
-    const result = await api(`/api/package-catalog?${parameters}`);
-    if (generation !== marketGeneration) return;
-    const catalog = parseCatalogPage(result);
-    marketRows = catalog.rows;
-    marketPage = catalog.page;
-    marketLoaded = true;
-    marketQuery = query;
-    $("#market-status").textContent =
-      `pi.dev 官方目录 · ${catalog.count} · 读取于 ${new Date(result.fetchedAt).toLocaleTimeString()}`;
-    $("#market-pages").innerHTML =
-      `<button type="button" class="outline-button" data-market-page="${catalog.previous}" ${catalog.previous ? "" : "disabled"}>上一页</button><span>第 ${catalog.page} 页</span><button type="button" class="outline-button" data-market-page="${catalog.next ?? ""}" ${catalog.next ? "" : "disabled"}>下一页</button>`;
-    renderMarket();
-  } catch (error) {
-    if (generation !== marketGeneration) return;
-    marketLoaded = false;
-    $("#market-status").textContent = error.message;
-    $("#market-grid").innerHTML =
-      '<div class="empty"><button class="outline-button" data-action="retry-market">重试</button></div>';
-  }
-}
-function safeCatalogReadme(html, sourceUrl) {
-  const node = document.createElement("div");
-  node.innerHTML = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ALLOW_DATA_ATTR: false,
-    ALLOW_ARIA_ATTR: false,
-    FORBID_TAGS: catalogForbiddenTags,
-    FORBID_ATTR: ["id", "name", "class", "style", "src", "srcset"],
-  });
-  for (const link of node.querySelectorAll("a")) {
-    try {
-      const href = link.getAttribute("href");
-      if (!href) throw new Error();
-      const destination = new URL(href, sourceUrl);
-      if (
-        !["https:", "http:"].includes(destination.protocol) ||
-        destination.username ||
-        destination.password
-      )
-        throw new Error();
-      link.href = destination.href;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-    } catch {
-      link.replaceWith(document.createTextNode(link.textContent));
-    }
-  }
-  return node.innerHTML;
-}
-async function showPackageDetails(name) {
-  if (live && !state?.marketplaceOfficial) {
-    toast("当前宿主未提供 pi.dev 完整介绍，请授权更新后使用");
-    return;
-  }
-  openDialog(
-    `${name} · 完整介绍`,
-    '<p class="muted">正在读取 pi.dev 官方详情…</p>',
-    () => {},
-    "关闭",
-  );
-  const generation = dialogGeneration,
-    owner = state?.sessionId;
-  try {
-    const result = await api(
-      `/api/package-details?name=${encodeURIComponent(name)}`,
-    );
-    if (generation !== dialogGeneration || !$("#dialog").open) return;
-    if (owner !== state?.sessionId) {
-      $("#dialog").close();
-      return;
-    }
-    const doc = catalogDocument(result);
-    if (doc.querySelector("h1.content-title")?.textContent.trim() !== name)
-      throw new Error("官方详情身份或结构已变化，请查看 pi.dev");
-    const labels = {
-      Package: "包名",
-      Version: "目录版本",
-      Published: "版本发布时间",
-      Downloads: "下载量",
-      Author: "作者",
-      License: "许可证",
-      Types: "官方类型",
-      Size: "体积",
-      Dependencies: "依赖",
-    };
-    const metadata = [...doc.querySelectorAll("dl.detail-grid dt")]
-      .map((key) => {
-        const value = key.nextElementSibling;
-        return value?.tagName === "DD"
-          ? `<dt>${esc(labels[key.textContent.trim()] ?? key.textContent)}</dt><dd>${esc(value.textContent.trim())}</dd>`
-          : "";
-      })
-      .join("");
-    const readme = doc.querySelector(".packages-readme");
-    const manifest = doc.querySelector(".raw-data-panel");
-    const installed = installedMarketPackage(name);
-    $("#dialog-body").innerHTML =
-      `<div class="package-details"><p>${esc(doc.querySelector(".content-description")?.textContent ?? "")}</p>${installed?.installedVersion ? `<p>本机已安装 v${esc(installed.installedVersion)}${installed.updateAvailable ? " · Pi 原生检查报告有更新" : ""}</p>` : ""}<dl class="package-metadata">${metadata}</dl><p><a href="${esc(catalogPackageUrl(name))}" target="_blank" rel="noopener noreferrer">查看 pi.dev 原始页面 ↗</a></p><p class="dialog-note">第三方包可执行代码并影响 Agent。介绍由作者提供，不代表官方审核；保留完整文字，不自动加载图片／视频，可在原始页面查看媒体。安装／更新需另行确认，不会自动重载。</p>${manifest ? `<details><summary>Pi manifest</summary><pre>${esc(manifest.textContent)}</pre></details>` : ""}<h3>完整 README</h3><div class="markdown-body catalog-readme">${readme ? safeCatalogReadme(readme.innerHTML, result.sourceUrl) : '<p class="muted">官方页面未提供 README；不会用摘要冒充完整介绍。</p>'}</div></div>`;
-  } catch (error) {
-    if (generation === dialogGeneration && $("#dialog").open)
-      $("#dialog-body").innerHTML =
-        `<p class="dialog-note">${esc(error.message)}</p>`;
-  }
-}
-async function checkPackageUpdates() {
-  if (checkingPackageUpdates) return;
-  if (!live || !pluginInventory.updatesSupported) {
-    toast("此宿主未提供 Pi 原生更新检查");
-    return;
-  }
-  const owner = state?.sessionId,
-    cwd = state?.cwd;
-  checkingPackageUpdates = true;
-  renderPlugins();
-  try {
-    const result = await api("/api/package-updates", { sessionId: owner });
-    if (owner !== state?.sessionId || cwd !== state?.cwd) return;
-    plugins = result.rows;
-    pluginRevision = result.revision;
-    pluginInventory = result;
-    renderPlugins();
-    if (marketLoaded) renderMarket();
-    toast(
-      `原生检查报告 ${plugins.filter((row) => row.updateAvailable).length} 个可更新包；未报告不代表已是最新`,
-    );
-  } catch (error) {
-    if (owner === state?.sessionId && cwd === state?.cwd) toast(error.message);
-  } finally {
-    checkingPackageUpdates = false;
-    renderPlugins();
-    if (marketLoaded) renderMarket();
-  }
-}
-
-async function packageAction(action, sourceValue, scope = "global") {
-  if (live && !(state?.packageManagement ?? state?.capabilities?.marketplace)) {
-    toast("当前宿主未提供原生包管理，请等任务结束后授权更新宿主");
-    return;
-  }
-  const target = { sessionId: state?.sessionId, cwd: state?.cwd };
-  const inventoryKey = pluginInventory.inventoryKey;
-  const row = plugins.find(
-    (item) =>
-      item.type === "package" &&
-      item.source === sourceValue &&
-      item.scope === scope,
-  );
-  const revision = action === "install" ? undefined : row?.revision;
-  openDialog(
-    { install: "安装插件", update: "更新插件", remove: "移除插件" }[action],
-    `<p>${esc(sourceValue)}</p>${row?.installedVersion ? `<p>本机已安装 v${esc(row.installedVersion)}${row.updateAvailable ? " · Pi 原生报告有更新" : ""}</p>` : ""}<label class="field-label">配置范围<select name="scope" ${action === "install" ? "" : "disabled"}><option value="global">用户配置</option><option value="project" ${live && !state?.projectTrusted ? "disabled" : ""}>当前项目</option></select></label><div class="dialog-note">使用 Pi 原生包管理器。${action === "install" ? "第三方包可以执行代码并影响 Agent；请先阅读完整介绍与源码。目录安装遵循官方未固定版本的来源，更新由 Pi 原生规则决定。" : action === "update" ? "update(source) 按 Pi 原生来源匹配，可能同时匹配用户与当前受信任项目声明；遵循覆盖与固定版本规则，不解除固定版本。" : "只移除所示范围的声明；保留其他原生资源过滤和配置。"}不会自动 reload；重载前请保存草稿和附件。</div>`,
-    async (form) => {
-      if (live) {
-        if (target.sessionId !== state?.sessionId || target.cwd !== state?.cwd)
-          throw new Error("当前会话或工作区已变化，请重新确认插件操作");
-        await api("/api/package", {
-          action,
-          source: sourceValue,
-          scope: action === "install" ? form.get("scope") : scope,
-          sessionId: target.sessionId,
-          revision,
-          inventoryKey,
-        });
-        await refresh();
-        if (marketLoaded) renderMarket();
-      } else {
-        pending = true;
-        if (action === "install")
-          plugins.push({
-            id: sourceValue,
-            name: sourceValue,
-            source: sourceValue,
-            type: "package",
-            enabled: true,
-            pending: true,
-            description: "演示安装",
-            adapted: false,
-          });
-        if (action === "remove")
-          plugins = plugins.filter((item) => item.source !== sourceValue);
-        renderPlugins();
-      }
-      toast("原生包操作已完成；未自动重载，请按需保存草稿后应用");
-    },
-    "确认" + { install: "安装", update: "更新", remove: "移除" }[action],
-  );
-  $('#dialog-body select[name="scope"]').value = scope;
-}
-
-function effectiveValue(spec) {
-  const own = settingsDocument.values[spec.key],
-    inherited = settingsDocument.inherited?.[spec.key];
-  return own !== null && own !== undefined
-    ? own
-    : settingsDocument.scope === "project" &&
-        inherited !== null &&
-        inherited !== undefined
-      ? inherited
-      : spec.default;
-}
-function renderSetting(spec) {
-  const project = settingsDocument.scope === "project";
-  if (project && spec.globalOnly) return "";
-  const own = settingsDocument.values[spec.key];
-  const storedDraft = draft.get(spec.key);
-  const raw = storedDraft?.raw ? storedDraft.value : undefined;
-  const reset = draft.has(spec.key) && draft.get(spec.key) === null;
-  const value =
-    draft.has(spec.key) && !reset
-      ? raw === undefined
-        ? storedDraft
-        : spec.type === "enum"
-          ? JSON.parse(raw)
-          : raw
-      : reset
-        ? project
-          ? (settingsDocument.inherited?.[spec.key] ?? spec.default)
-          : spec.default
-        : effectiveValue(spec);
-  const tag =
-    reset || own === null || own === undefined
-      ? project
-        ? "继承用户"
-        : "默认值"
-      : project
-        ? "项目覆盖"
-        : "用户配置";
-  let control;
-  const name = `data-setting="${esc(spec.key)}"`;
-  if (spec.type === "boolean")
-    control = `<button type="button" class="switch" role="switch" aria-label="${esc(spec.label)}" aria-checked="${!!value}" ${name}></button>`;
-  else if (spec.type === "enum")
-    control = `<select ${name} aria-label="${esc(spec.label)}">${spec.options.map((option) => `<option value="${esc(JSON.stringify(option))}" ${option === value ? "selected" : ""}>${esc(option === true ? "开启" : option === false ? "关闭" : (optionLabels[option] ?? option))}</option>`).join("")}</select>`;
-  else if (spec.type === "array" || spec.type === "object")
-    control = `<textarea ${name} aria-label="${esc(spec.label)}" spellcheck="false">${esc(raw ?? (spec.type === "array" ? value.join("\n") : JSON.stringify(value, null, 2)))}</textarea>`;
-  else
-    control = `<input ${name} aria-label="${esc(spec.label)}" type="${spec.secret ? "password" : spec.type === "number" ? "number" : "text"}" value="${esc(spec.secret ? (raw ?? storedDraft ?? "") : value)}" ${spec.type === "number" ? `min="${spec.min ?? 0}" ${spec.max === undefined ? "" : `max="${spec.max}"`}` : ""} ${spec.secret ? `autocomplete="new-password" placeholder="${own?.configured ? "已配置 · 留空保持" : "尚未配置"}"` : ""}>`;
-  return `<div class="setting-row"><label class="setting-label">${esc(spec.label)}<span class="scope-tag">${tag}</span><small>${esc(spec.key)}${spec.help ? "<br>" + esc(spec.help) : ""}</small></label><div class="setting-control">${control}<button type="button" class="inherit-button" data-reset-setting="${esc(spec.key)}" title="删除此范围的覆盖值">重置</button></div></div>`;
-}
-function filterSettings() {
-  const query = $("#settings-search").value.toLowerCase();
-  for (const group of document.querySelectorAll(".settings-group")) {
-    for (const row of group.querySelectorAll(".setting-row"))
-      row.hidden = !row.textContent.toLowerCase().includes(query);
-    group.hidden =
-      (!query && group.dataset.group !== settingsCategory) ||
-      ![...group.querySelectorAll(".setting-row")].some((row) => !row.hidden);
-  }
-}
-function syncSettingsCategories() {
-  for (const tab of document.querySelectorAll("[data-settings-category]"))
-    tab.setAttribute(
-      "aria-selected",
-      String(tab.dataset.settingsCategory === settingsCategory),
-    );
-}
-$("#settings-search").addEventListener("input", filterSettings);
-function renderSettings() {
-  if (!settingsDocument) return;
-  $("#settings-categories").innerHTML = groups
-    .map(
-      (group) =>
-        `<button type="button" role="tab" aria-selected="${settingsCategory === group.id}" data-settings-category="${esc(group.id)}">${esc(group.title)}</button>`,
-    )
-    .join("");
-  $("#settings-groups").innerHTML = groups
-    .map(
-      (group) =>
-        `<section class="settings-group" data-group="${esc(group.id)}"><h2>${esc(group.title)}</h2>${group.fields.map(renderSetting).join("")}</section>`,
-    )
-    .join("");
-  $("#config-location").textContent =
-    settingsDocument.scope === "project"
-      ? `${state?.cwd ?? "当前工作区"}/.pi/settings.json${settingsDocument.trusted === false ? " · 项目未信任，pi 暂不应用项目配置" : ""}`
-      : settingsDocument.file || "~/.pi/agent/settings.json";
-  updateDraft();
-  filterSettings();
-}
-function updateDraft() {
-  $("#project-trust-notice").hidden =
-    state?.capabilities?.readOnly || state?.projectTrusted !== false;
-  $("#save-settings").disabled = !draft.size;
-  $("#draft-label").textContent = draft.size
-    ? `${draft.size} 项未保存修改`
-    : "没有未保存的修改";
-  $("#settings-pending").hidden = !pending;
-}
-async function loadSettings() {
-  const scope = $("#settings-scope").value,
-    generation = ++settingsGeneration;
-  const document = live
-    ? await api(`/api/settings?scope=${scope}`)
-    : {
-        scope,
-        groups,
-        values: Object.fromEntries(
-          groups.flatMap((group) =>
-            group.fields.map((spec) => [
-              spec.key,
-              demoSettings[scope][spec.key] ?? null,
-            ]),
-          ),
-        ),
-        inherited: demoSettings.global,
-        trusted: true,
-      };
-  if (generation !== settingsGeneration) return;
-  settingsDocument = document;
-  groups = document.groups;
-  draft.clear();
-  renderSettings();
-}
-function parseSetting(spec, element) {
-  if (spec.type === "boolean")
-    return element.getAttribute("aria-checked") === "true";
-  if (spec.type === "enum") return JSON.parse(element.value);
-  if (spec.type === "array")
-    return element.value
-      .split("\n")
-      .map((value) => value.trim())
-      .filter(Boolean);
-  if (spec.type === "object") return JSON.parse(element.value);
-  if (spec.type === "number") return Number(element.value);
-  if (spec.type === "auto-number")
-    return element.value === "auto" ? "auto" : Number(element.value);
-  return element.value;
-}
-$("#settings-form").addEventListener("input", (event) => {
-  const element = event.target.closest("[data-setting]");
-  if (element) {
-    draft.set(element.dataset.setting, { raw: true, value: element.value });
-    updateDraft();
-  }
-});
-$("#settings-form").addEventListener("change", (event) => {
-  const element = event.target.closest("[data-setting]");
-  if (element) {
-    draft.set(element.dataset.setting, { raw: true, value: element.value });
-    updateDraft();
-  }
-});
-$("#settings-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const patch = {};
-    for (const [key, value] of draft) {
-      const spec = groups
-        .flatMap((group) => group.fields)
-        .find((item) => item.key === key);
-      const element = [...document.querySelectorAll("[data-setting]")].find(
-        (item) => item.dataset.setting === key,
-      );
-      patch[key] = value === null ? null : parseSetting(spec, element);
-    }
-    if (live)
-      await api("/api/settings", {
-        scope: settingsDocument.scope,
-        revision: settingsDocument.revision,
-        patch,
-      });
-    else
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === null) delete demoSettings[settingsDocument.scope][key];
-        else demoSettings[settingsDocument.scope][key] = value;
-      }
-    pending = true;
-    await loadSettings();
-    toast("Pi 配置已保存");
-  } catch (error) {
-    toast(error.message);
-  }
-});
-$("#settings-scope").addEventListener("change", async () => {
-  if (draft.size) {
-    const prior = settingsDocument.scope;
-    const desired = $("#settings-scope").value;
-    $("#settings-scope").value = prior;
-    openDialog(
-      "切换配置范围",
-      "<p>当前表单有未保存的修改。切换后将放弃这些修改。</p>",
-      async () => {
-        $("#settings-scope").value = desired;
-        await loadSettings();
-      },
-      "放弃并切换",
-    );
-  } else await loadSettings();
-});
 const sessionInventories = createSessionInventories({
-  load: (kind, owner) =>
+  load: (kind, owner, { signal }) =>
     api(
       `/api/${kind === "modelChoices" ? "providers?view=picker&" : `${kind}?`}sessionId=${encodeURIComponent(owner ?? "")}`,
+      undefined,
+      { signal },
     ),
-  onReset() {
-    plugins = [];
-    providers = [];
-    modelChoices = [];
-    providerCatalog = [];
-    pluginRevision = providerRevision = undefined;
-    pluginInventory = { writable: false, updatesSupported: false };
-    renderPlugins();
-    renderProviders();
-    if (marketLoaded) renderMarket();
-  },
   onError(kind, error) {
     if (
       kind === "modelChoices" ||
@@ -3318,22 +2289,8 @@ const sessionInventories = createSessionInventories({
       (state?.host === "durable" && owner !== durableAgentId)
     )
       return;
-    if (kind === "modelChoices") {
-      modelChoices = value.rows;
-      composerModelPicker.update();
-    } else if (kind === "plugins") {
-      plugins = value.rows;
-      pluginRevision = value.revision;
-      pluginInventory = value;
-      renderPlugins();
-      if (marketLoaded) renderMarket();
-    } else {
-      providers = value.rows;
-      providerCatalog = value.catalog ?? [];
-      providerRevision = value.revision;
-      renderProviders();
-      composerModelPicker.update();
-    }
+    if (kind === "plugins") packageSettings.applyInventory(value);
+    else providerSettings.applyInventory(kind, value);
   },
 });
 const sessionConnection = createSessionConnection({
@@ -3352,6 +2309,7 @@ const sessionConnection = createSessionConnection({
         unauthorized: "授权已失效，请重新扫码",
       }[status] ?? "连接 Pi…";
     syncComposerButton();
+    syncChatViews();
     gitPane.update();
   },
   openStream({ epoch, after }, handlers) {
@@ -3473,6 +2431,7 @@ async function refreshOnce(snapshot) {
     closeActionMenu();
   }
   state = snapshot;
+  syncChatViews();
   document.body.classList.toggle(
     "remote-client",
     state?.capabilities?.remote === true,
@@ -3509,10 +2468,9 @@ async function refreshOnce(snapshot) {
     document.body.classList.add("right-collapsed");
     syncRightSidebar();
   }
-  renderAttachments();
+  composerAttachments.render();
   extensionAdapterRegistry.setSession(state?.sessionId);
   selected = state.model;
-  pending = state.pending;
   $("#session-title").textContent = state.name;
   $("#selected-model").textContent = selected?.name ?? "选择模型";
   composerModelPicker.update();
@@ -3542,7 +2500,7 @@ async function refreshOnce(snapshot) {
   if (Array.isArray(state.commands))
     commands = normalizeCommands(state.commands);
   else if (commandListKey !== commandKey()) commands = [];
-  renderSkills();
+  resourceSettings.update();
   $("#workspace-name").textContent =
     state.capabilities?.readOnly && !nativeHistory
       ? "无项目对话"
@@ -3581,37 +2539,22 @@ async function refreshOnce(snapshot) {
   $("#analysis-control").title = deferredConfiguration
     ? "模型或思考强度将在当前任务结束后应用"
     : "选择模型和思考强度";
-  $("#settings-pending-note").textContent = state.idle
-    ? "保存的 Pi 设置需要重载后应用。"
-    : "当前任务继续使用已加载设置；保存的更改将在任务结束后重载应用。";
   renderThinkingPicker();
   gitPane.update();
   $("#stop-button").hidden = state.idle;
   $("#prompt").disabled = !!state.capabilities?.nativeHistory;
   syncComposerButton();
   renderMessages(state.messages, { enter: enteringSession });
-  void sessionInventories.refresh(snapshot, {
-    kinds:
-      view === "providers"
-        ? ["providers"]
-        : ["plugins", "marketplace"].includes(view)
-          ? ["plugins"]
-          : [],
-  });
-  if (view === "skills") {
-    const owner = snapshot.sessionId;
-    void api("/api/skills")
-      .then((value) => {
-        if (state?.sessionId !== owner || view !== "skills") return;
-        skillsInventory = value.rows;
-        renderSkills();
-      })
-      .catch((error) => toast(error.message));
-  }
-  if (view === "mcp") void loadMcp().catch((error) => toast(error.message));
-  renderPlugins();
-  renderProviders();
-  updateDraft();
+  if (chatViewsAreActive())
+    void sessionInventories.refresh(snapshot, {
+      kinds:
+        view === "providers"
+          ? ["providers"]
+          : ["plugins", "marketplace"].includes(view)
+            ? ["plugins"]
+            : [],
+    });
+  syncChatViews();
   if (snapshot.host === "durable") {
     sessions = snapshot.agents.map((agent) => ({
       ...agent,
@@ -3631,7 +2574,7 @@ function applyRecord(record) {
   }
   if (record.kind === "remote_changed") {
     if (view === "remote")
-      void loadConnection().catch((error) => toast(error.message));
+      void remoteSettings.refresh().catch((error) => toast(error.message));
     return;
   }
   // 切换未就绪时，state 仍属于旧会话；仅保留不修改会话内容的通知与包进度。
@@ -3719,6 +2662,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeActionMenu();
 });
 document.addEventListener("visibilitychange", () => {
+  syncChatViews();
   if (!live) return;
   if (document.hidden || !hostFocused) sessionConnection.pause();
   else sessionConnection.resume();
@@ -3727,6 +2671,7 @@ window.addEventListener("offline", () => {
   if (live) {
     sessionConnection.pause();
     connected = false;
+    syncChatViews();
     $("#connection-status").dataset.state = "offline";
     $("#connection-status").textContent = "网络离线";
     syncComposerButton();
@@ -3735,13 +2680,29 @@ window.addEventListener("offline", () => {
 window.addEventListener("online", () => {
   if (live && hostFocused) sessionConnection.resume();
 });
-window.addEventListener("pagehide", () => {
+window.addEventListener("pagehide", (event) => {
+  chatPageActive = false;
+  clearInterval(interactionTimer);
+  syncChatViews();
+  if (!event.persisted) {
+    preferencesSettings.dispose();
+    providerSettings.dispose();
+    packageSettings.dispose();
+    resourceSettings.dispose();
+    remoteSettings.dispose();
+    composerAttachments.dispose();
+    chatDialog.dispose();
+    sessionInventories.dispose();
+  }
   branchTree.setActive(false);
   taskPanel.setActive(false);
   if (live) sessionConnection.pause();
 });
 window.addEventListener("pageshow", (event) => {
   if (!event.persisted) return;
+  chatPageActive = true;
+  if (live) interactionTimer = setInterval(() => pollInteractions(), 1200);
+  syncChatViews();
   branchTree.setActive(true);
   taskPanel.setActive(true);
   extensionWorkbench?.update(messageRows, readPanelContext());
@@ -3872,7 +2833,7 @@ $("#interaction-form").addEventListener("change", (event) => {
       sibling.checked = false;
   }
 });
-let interactionPoll;
+let interactionPoll, interactionTimer;
 /* Polling asks for a cheap revision first. A host that cannot answer cheaply
  * reports unsupported and the page keeps its previous behaviour; every third
  * tick still refreshes so a missed bit can only delay, never lose, an update. */
@@ -3902,7 +2863,8 @@ async function revisionChanged(kind) {
   }
 }
 function pollInteractions() {
-  if (!live || !connected || !hostFocused || document.hidden) return;
+  if (!live || !connected || !hostFocused || document.hidden || !chatPageActive)
+    return;
   interactionPoll ??= (async () => {
     try {
       if (!(await revisionChanged("interactions"))) return;
@@ -4028,28 +2990,6 @@ async function cancelInteraction() {
     });
   resetInteraction();
 }
-$("#dialog-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  $("#dialog-submit").disabled = true;
-  try {
-    await dialogSave?.(new FormData(form));
-    $("#dialog").close();
-    form.reset();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    $("#dialog-submit").disabled = false;
-  }
-});
-$("#plugin-search").addEventListener("input", renderPlugins);
-$("#provider-search").addEventListener("input", renderProviders);
-$("#market-search-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  void loadMarket();
-});
-for (const id of ["market-type", "market-sort"])
-  $("#" + id).addEventListener("change", () => void loadMarket());
 const THINKING_MENU_GUTTER = 12;
 const thinkingLabels = {
   off: "关闭思考",
@@ -4064,7 +3004,7 @@ const composerModelPicker = createComposerModelPicker({
   trigger: $("#analysis-control"),
   getData: () => ({
     model: selected,
-    providers: modelChoices,
+    providers: providerSettings.pickerModels,
     thinkingLevel: state?.thinkingLevel ?? $("#thinking-level").value,
     effortLabel:
       thinkingLabels[state?.thinkingLevel ?? $("#thinking-level").value] ?? "",
@@ -4078,15 +3018,7 @@ const composerModelPicker = createComposerModelPicker({
       state?.idle ??
       !live,
   }),
-  selectModel: async (provider, id) => {
-    const result = await api("/api/model", {
-      provider,
-      id,
-      sessionId: state?.sessionId,
-    });
-    await refresh();
-    if (result.deferred) toast("模型将在当前任务结束后应用");
-  },
+  selectModel: selectComposerModel,
   selectThinking: async (level) => {
     const result = await api("/api/thinking", {
       level,
@@ -4202,6 +3134,17 @@ document.addEventListener(
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
+  if (
+    !button.dataset.view &&
+    !button.dataset.go &&
+    [
+      preferencesSettings,
+      providerSettings,
+      resourceSettings,
+      packageSettings,
+    ].some((module) => module.handleClick(button))
+  )
+    return;
   try {
     if (button.dataset.thinking) {
       if (live) {
@@ -4215,327 +3158,17 @@ document.addEventListener("click", async (event) => {
       $("#thinking-level").focus();
       return;
     }
-    if (button.dataset.toggleSkill) {
-      const row = skillsInventory.find(
-        (row) => row.id === button.dataset.toggleSkill,
-      );
-      await api("/api/skill", {
-        id: row.id,
-        revision: row.revision,
-        enabled: !row.enabled,
-      });
-      skillsInventory = (await api("/api/skills")).rows;
-      renderSkills();
-      await refresh();
-      toast("技能配置已保存，重载后生效");
-      return;
-    }
-    if (button.dataset.editMcp) {
-      configureMcp(mcpInventory.rows[Number(button.dataset.editMcp)]);
-      return;
-    }
-    if (button.dataset.toggleMcp || button.dataset.removeMcp) {
-      const row =
-        mcpInventory.rows[
-          Number(button.dataset.toggleMcp ?? button.dataset.removeMcp)
-        ];
-      if (button.dataset.removeMcp) {
-        openDialog(
-          `移除 ${row.name}`,
-          "<p>将从该范围的 mcp.json 移除此服务。</p>",
-          async () => {
-            await api("/api/mcp", {
-              action: "remove",
-              name: row.name,
-              scope: row.scope,
-              revision: row.revision,
-            });
-            await loadMcp();
-            await refresh();
-          },
-          "移除",
-        );
-      } else {
-        await api("/api/mcp", {
-          action: "toggle",
-          name: row.name,
-          scope: row.scope,
-          revision: row.revision,
-          enabled: !row.enabled,
-        });
-        await loadMcp();
-        await refresh();
-      }
-      return;
-    }
-    if (button.dataset.mcpAction) {
-      const job = await api("/api/mcp-action", {
-        action: button.dataset.mcpAction,
-        name: button.dataset.mcpName,
-      });
-      activeInteraction = { id: job.id };
-      await pollInteractions();
-      return;
-    }
     if (button.dataset.commandIndex !== undefined) {
       await acceptCommand(Number(button.dataset.commandIndex), true);
       return;
     }
-    if (button.dataset.useCommand) {
-      await showView("workspace");
-      $("#prompt").value = `/${button.dataset.useCommand} `;
-      $("#prompt").focus();
-      return;
-    }
-    if (button.dataset.settingsCategory) {
-      settingsCategory = button.dataset.settingsCategory;
-      $("#settings-search").value = "";
-      // 只切换可见分组：重建整页会丢失滚动与焦点，并在每次打开分类时闪一下。
-      syncSettingsCategories();
-      filterSettings();
-      return;
-    }
-    if (button.dataset.expandProvider) {
-      const id = button.dataset.expandProvider;
-      expandedProviders.has(id)
-        ? expandedProviders.delete(id)
-        : expandedProviders.add(id);
-      renderProviders();
-      return;
-    }
     if (button.dataset.view || button.dataset.go) {
-      if ($("#dialog").open) $("#dialog").close();
+      if ($("#dialog").open) chatDialog.close();
       await showView(button.dataset.view || button.dataset.go);
       return;
     }
-    if (button.dataset.filter) {
-      filter = button.dataset.filter;
-      for (const tab of $("#plugin-filter").querySelectorAll("button"))
-        tab.classList.toggle("selected", tab === button);
-      renderPlugins();
-      return;
-    }
-    if (button.dataset.setting) {
-      const spec = groups
-        .flatMap((group) => group.fields)
-        .find((item) => item.key === button.dataset.setting);
-      if (spec?.type === "boolean") {
-        button.setAttribute(
-          "aria-checked",
-          button.getAttribute("aria-checked") !== "true",
-        );
-        draft.set(spec.key, button.getAttribute("aria-checked") === "true");
-        updateDraft();
-      }
-      return;
-    }
-    if (button.dataset.resetSetting) {
-      draft.set(button.dataset.resetSetting, null);
-      const spec = groups
-        .flatMap((group) => group.fields)
-        .find((item) => item.key === button.dataset.resetSetting);
-      const row = button.closest(".setting-row");
-      row.outerHTML = renderSetting(spec);
-      updateDraft();
-      return;
-    }
-    if (button.dataset.togglePlugin) {
-      const row = plugins.find(
-        (item) => item.id === button.dataset.togglePlugin,
-      );
-      if (live) {
-        await api("/api/plugin", {
-          id: row.id,
-          enabled: !row.enabled,
-          revision: row.revision ?? pluginRevision,
-        });
-        await refresh();
-      } else {
-        row.enabled = !row.enabled;
-        row.pending = true;
-        pending = true;
-        renderPlugins();
-      }
-      toast("扩展配置已保存");
-      return;
-    }
-    if (button.dataset.pluginResources) {
-      const row = plugins.find(
-        (item) => item.id === button.dataset.pluginResources,
-      );
-      const doc = live
-        ? await api(`/api/plugin-resources?id=${encodeURIComponent(row.id)}`)
-        : { values: {}, revision: pluginRevision };
-      openDialog(
-        "包资源过滤",
-        `<p>${esc(row.source)}</p>` +
-          ["extensions", "skills", "prompts", "themes"]
-            .map(
-              (key) =>
-                `<label class="field-label">${esc(key)}<textarea name="${key}" placeholder="继承包默认资源；输入 [] 停用此类资源">${esc(Object.hasOwn(doc.values, key) ? JSON.stringify(doc.values[key], null, 2) : "")}</textarea></label>`,
-            )
-            .join("") +
-          `<label class="field-label">自动加载<select name="autoload"><option value="inherit" ${doc.values.autoload === undefined ? "selected" : ""}>包默认</option><option value="true" ${doc.values.autoload === true ? "selected" : ""}>开启</option><option value="false" ${doc.values.autoload === false ? "selected" : ""}>关闭，仅加载显式资源</option></select></label>`,
-        async (form) => {
-          const patch = {};
-          for (const key of ["extensions", "skills", "prompts", "themes"]) {
-            const raw = form.get(key).trim();
-            const parsed = raw ? JSON.parse(raw) : null;
-            if (
-              JSON.stringify(parsed) !== JSON.stringify(doc.values[key] ?? null)
-            )
-              patch[key] = parsed;
-          }
-          const autoload =
-            form.get("autoload") === "inherit"
-              ? null
-              : form.get("autoload") === "true";
-          if (autoload !== (doc.values.autoload ?? null))
-            patch.autoload = autoload;
-          if (live) {
-            await api("/api/plugin-resources", {
-              id: row.id,
-              revision: doc.revision,
-              patch,
-            });
-            await refresh();
-          } else {
-            row.pending = true;
-            pending = true;
-            renderPlugins();
-          }
-          toast("资源过滤已保存");
-        },
-      );
-      return;
-    }
-    if (button.dataset.configPlugin) {
-      await configurePlugin(button.dataset.configPlugin);
-      return;
-    }
-    if (button.dataset.provider) {
-      configureProvider(button.dataset.provider);
-      return;
-    }
-    if (button.dataset.modelId) {
-      const row = providers.find(
-        (item) => item.id === button.dataset.modelProvider,
-      );
-      const model = row.models.find(
-        (item) => item.id === button.dataset.modelId,
-      );
-      if (live) {
-        await api("/api/model", { provider: row.id, id: model.id });
-        await refresh();
-      } else {
-        selected = { ...model, provider: row.id };
-        $("#selected-model").textContent = model.name;
-        renderProviders();
-      }
-      if ($("#dialog").open) $("#dialog").close();
-      return;
-    }
-    if (button.dataset.allModels) {
-      const row = providers.find(
-        (item) => item.id === button.dataset.allModels,
-      );
-      openModels([row]);
-      return;
-    }
-    if (button.dataset.defaultProvider) {
-      const row = providers.find(
-        (item) => item.id === button.dataset.defaultProvider,
-      );
-      const models = row.models.filter((model) => model.available !== false);
-      openDialog(
-        "选择默认模型",
-        `<label class="field-label">${esc(row.name)}<select name="id">${models.map((model) => `<option value="${esc(model.id)}">${esc(model.name)}</option>`).join("")}</select></label>`,
-        async (form) => {
-          if (!form.get("id")) throw new Error("请先配置认证");
-          if (live) {
-            await api("/api/default-model", {
-              provider: row.id,
-              id: form.get("id"),
-            });
-            await refresh();
-          } else {
-            state.defaults = { provider: row.id, id: form.get("id") };
-            renderProviders();
-          }
-          toast("默认模型已保存");
-        },
-      );
-      return;
-    }
-    if (button.dataset.connectionAddress) {
-      await loadConnection(button.dataset.connectionAddress);
-      return;
-    }
-    if (button.dataset.loginProvider) {
-      $("#dialog").close();
-      if (live) {
-        await api("/api/auth-start", {
-          provider: button.dataset.loginProvider,
-          type: button.dataset.authType,
-        });
-        await pollInteractions();
-      } else toast("认证演示不保存凭据");
-      return;
-    }
-    if (button.dataset.logoutProvider) {
-      openDialog(
-        "退出提供商认证",
-        "<p>移除此提供商在 pi auth.json 中的凭据。环境变量和 models.json 中的密钥单独管理。</p>",
-        async () => {
-          await api("/api/auth-logout", {
-            provider: button.dataset.logoutProvider,
-          });
-          await refresh();
-        },
-        "退出认证",
-      );
-      return;
-    }
-    if (button.dataset.deleteProvider) {
-      openDialog(
-        "移除自定义提供商配置",
-        `<p>${esc(button.dataset.deleteProvider)}</p><p class="muted">删除 models.json 中此提供商的端点、密钥与模型配置。</p>`,
-        async () => {
-          if (live) {
-            await api("/api/provider-remove", {
-              id: button.dataset.deleteProvider,
-              revision: providerRevision,
-            });
-            await refresh();
-          } else {
-            providers = providers.filter(
-              (row) => row.id !== button.dataset.deleteProvider,
-            );
-            renderProviders();
-          }
-        },
-        "移除配置",
-      );
-      return;
-    }
-    if (button.dataset.marketDetail) {
-      await showPackageDetails(button.dataset.marketDetail);
-      return;
-    }
-    if (button.dataset.marketPage) {
-      await loadMarket({ page: Number(button.dataset.marketPage) });
-      return;
-    }
-    if (button.dataset.packageAction) {
-      await packageAction(
-        button.dataset.packageAction,
-        button.dataset.packageSource,
-        button.dataset.packageScope,
-      );
-      return;
-    }
     if (button.dataset.sessionId) {
-      $("#dialog").close();
+      chatDialog.close();
       if (live) {
         // 先同步更换草稿／面板身份，再导航；不能让 await 把新输入记进旧会话。
         const switching = switchConversation(button.dataset.sessionId);
@@ -4570,18 +3203,6 @@ document.addEventListener("click", async (event) => {
       return;
     }
     switch (button.dataset.action) {
-      case "add-mcp":
-        configureMcp();
-        break;
-      case "resource-settings":
-      case "display-settings":
-        settingsCategory =
-          button.dataset.action === "resource-settings"
-            ? "resources"
-            : "display";
-        await showView("general");
-        renderSettings();
-        break;
       case "sidebar":
         if (runtimePrefix && state?.capabilities?.remote !== true) {
           desktopMessage("toggle-sidebar");
@@ -4593,15 +3214,8 @@ document.addEventListener("click", async (event) => {
             !document.body.classList.contains("sidebar-open");
         } else document.body.classList.toggle("sidebar-collapsed");
         break;
-      case "theme":
-        localStorage.setItem(
-          "pi-web-theme",
-          document.body.classList.contains("dark") ? "light" : "dark",
-        );
-        applyAppearance();
-        break;
       case "close-dialog":
-        $("#dialog").close();
+        chatDialog.close();
         $("#dialog-form").reset();
         break;
       case "close-preview":
@@ -4659,116 +3273,20 @@ document.addEventListener("click", async (event) => {
           "关闭",
         );
         break;
-      case "custom-provider":
-        $("#dialog").close();
-        configureProvider();
-        break;
-      case "add-provider":
-        openProviderCatalog();
-        break;
-      case "trust-project":
-        openDialog(
-          "信任当前项目",
-          `<p>${esc(state.cwd)}</p><p>允许 pi 加载此项目的扩展、技能和配置。扩展会在本机执行。</p>`,
-          async () => {
-            await api("/api/project-trust", { trusted: true });
-            await refresh();
-            if (!draft.size) await loadSettings();
-          },
-          "信任并加载",
-        );
-        break;
-      case "refresh-models":
-        if (live) {
-          await api("/api/refresh-models", {});
-          await refresh();
-        }
-        toast("模型目录已刷新");
-        break;
-      case "install-source":
-        openDialog(
-          "从来源安装",
-          field(
-            "npm、Git 或本地路径",
-            "source",
-            "",
-            "text",
-            'required placeholder="npm:包名、git:https://github.com/owner/repo 或 /本地路径"',
-          ) +
-            '<label class="field-label">范围<select name="scope"><option value="global">用户配置</option><option value="project">当前项目</option></select></label>',
-          async (form) => {
-            if (live) {
-              await api("/api/package", {
-                action: "install",
-                source: form.get("source"),
-                scope: form.get("scope"),
-              });
-              await refresh();
-            }
-            toast("安装已完成，重载后应用");
-          },
-          "安装",
-        );
-        break;
       case "reload":
         if (live) {
           await api("/api/reload", {});
           await refresh();
-          if (view === "general" && !draft.size) await loadSettings();
-        } else {
-          pending = false;
-          plugins.forEach((row) => (row.pending = false));
-          renderPlugins();
-          updateDraft();
         }
+        preferencesSettings.reloaded();
+        packageSettings.reloaded();
         toast("已重载");
-        break;
-      case "discard-settings":
-        await loadSettings();
-        break;
-      case "refresh-market":
-        await loadMarket({ page: marketPage, refresh: true });
-        break;
-      case "check-package-updates":
-        await checkPackageUpdates();
-        break;
-      case "search-market-mcp":
-        $("#market-search").value = "mcp";
-        $("#market-type").value = "";
-        await loadMarket();
-        break;
-      case "retry-market":
-        await loadMarket({ refresh: true });
         break;
       case "composer-tools":
         openComposerTools();
         break;
       case "model":
         composerModelPicker.open();
-        break;
-      case "refresh-connection":
-        await loadConnection(undefined, true);
-        break;
-      case "add-personality":
-        desktopMessage("configure-prompt");
-        break;
-      case "refresh-personality":
-        await loadPersonality();
-        break;
-      case "update-all-extensions":
-        await updateAllExtensions();
-        break;
-      case "start-remote":
-      case "stop-remote":
-      case "rotate-remote":
-        await api("/api/remote", {
-          action: {
-            "start-remote": "start",
-            "stop-remote": "stop",
-            "rotate-remote": "rotate",
-          }[button.dataset.action],
-        });
-        await loadConnection();
         break;
       case "stop":
         if (live) await api("/api/abort", {});
@@ -4780,7 +3298,7 @@ document.addEventListener("click", async (event) => {
   }
 });
 let commandLoad, commandListKey;
-const commandKey = () => `${state?.sessionId}:${state?.commandsRevision}`;
+const commandKey = () => `${chatViewIdentity()}:${state?.commandsRevision}`;
 const normalizeCommands = (rows) =>
   rows.map((row) =>
     row.name === "sessions"
@@ -4799,7 +3317,7 @@ async function loadCommands() {
       if (commandKey() !== key) return;
       commands = normalizeCommands(value.rows);
       commandListKey = key;
-      renderSkills();
+      resourceSettings.update();
     })
     .finally(() => {
       if (commandLoad === job) commandLoad = undefined;
@@ -4814,13 +3332,13 @@ function closeCommands() {
 function syncComposerButton() {
   syncComposerTools();
   $("#send-button").disabled =
-    choosingContext ||
+    composerAttachments.choosing ||
     !!state?.capabilities?.nativeHistory ||
     (live && (!state || !connected)) ||
     (state?.host === "durable" && state.sessionId !== durableAgentId) ||
     !$("#ask-user").hidden ||
-    attachmentRows().some((file) => file.status !== "ready") ||
-    (!$("#prompt").value.trim() && !attachmentRows().length);
+    composerAttachments.rows().some((file) => file.status !== "ready") ||
+    (!$("#prompt").value.trim() && !composerAttachments.rows().length);
 }
 function formatTokens(value) {
   return value >= 1000
@@ -5033,282 +3551,6 @@ async function executeWebCommand(row, args) {
     });
   else toast(`${row.label} · 演示，实际运行请使用 pi web`);
 }
-let attachmentSerial = 0;
-let choosingContext = false;
-const referenceMode = () =>
-  state?.capabilities?.attachments?.defaultMode === "reference";
-function desktopFiles() {
-  try {
-    return window.piDesk ?? window.parent.piDesk;
-  } catch {
-    return undefined;
-  }
-}
-function attachmentRows(id = sessionDrafts.read().owner) {
-  return sessionDrafts.read(id).files;
-}
-function sizeComposer() {
-  if (!runtimePrefix) return;
-  const prompt = $("#prompt");
-  prompt.rows = 1;
-  prompt.style.height = "auto";
-  prompt.style.height = `${Math.min(120, Math.max(36, prompt.scrollHeight))}px`;
-}
-function renderAttachments() {
-  sizeComposer();
-  const files = attachmentRows();
-  const node = $("#context-attachments");
-  node.hidden = files.length === 0;
-  $("#attach-context").disabled =
-    choosingContext || (live && !state?.capabilities?.attachments);
-  $("#attach-context").title = referenceMode()
-    ? "添加本地文件引用"
-    : "上传上下文文件";
-  node.innerHTML = files
-    .map(
-      (file) =>
-        `<div class="attachment-chip" data-attachment-id="${file.id}"><button type="button" data-context-preview="${file.id}" title="${esc(file.path ?? file.name)}" ${file.status !== "ready" ? "disabled" : ""}>${esc(file.name)}<small>${file.status === "reading" ? "读取中…" : file.status === "error" ? esc(file.error) : file.kind === "reference" ? "本地引用 · 按需读取" : `${Math.ceil(file.size / 1024)} KiB · 提交时校验`}</small></button><button type="button" data-context-remove="${file.id}" aria-label="移除 ${esc(file.name)}">✕</button></div>`,
-    )
-    .join("");
-  syncComposerButton();
-}
-function addReferences(files, id) {
-  const max = state?.capabilities?.attachments?.maxCount ?? 8;
-  for (const file of files) {
-    if (attachmentRows(id).length >= max) {
-      toast(`最多添加 ${max} 个上下文文件`);
-      break;
-    }
-    sessionDrafts.addFile(id, {
-      ...file,
-      id: `context-${++attachmentSerial}`,
-      status: "ready",
-      preview: `${file.path}\n\n本地文件引用，Agent 将按需读取。`,
-    });
-  }
-  renderAttachments();
-}
-$("#attach-context").addEventListener("click", async () => {
-  if (!referenceMode()) return $("#context-files").click();
-  if (choosingContext) return;
-  const id = sessionDrafts.read().owner;
-  choosingContext = true;
-  renderAttachments();
-  try {
-    const paths = await desktopFiles()?.pickFiles?.();
-    if (paths && !paths.length) return;
-    const result = await api("/api/context/files", {
-      sessionId: id,
-      ...(paths ? { paths } : {}),
-    });
-    addReferences(result.files, id);
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    choosingContext = false;
-    renderAttachments();
-  }
-});
-async function addContextFiles(chosen) {
-  if (live && !state?.capabilities?.attachments) {
-    toast("当前服务尚未支持附件；请等任务结束后更新宿主");
-    return;
-  }
-  const id = sessionDrafts.read().owner;
-  if (referenceMode()) {
-    for (const file of chosen) {
-      if (
-        attachmentRows(id).length >=
-        (state.capabilities.attachments.maxCount ?? 8)
-      ) {
-        toast("最多添加 8 个上下文文件");
-        break;
-      }
-      const entry = {
-        id: `context-${++attachmentSerial}`,
-        name: file.name,
-        size: file.size,
-        kind: "reference",
-        status: "reading",
-      };
-      sessionDrafts.addFile(id, entry);
-      renderAttachments();
-      try {
-        const desktop = desktopFiles();
-        let path;
-        try {
-          path = desktop?.filePath?.(file);
-        } catch {}
-        if (!path && desktop?.cacheContextFile) {
-          if (file.size > 4 * 1024 * 1024)
-            throw new Error("剪贴板附件超过 4 MiB，请保存后选择原文件");
-          path = await desktop.cacheContextFile({
-            name: file.name,
-            bytes: new Uint8Array(await file.arrayBuffer()),
-          });
-        }
-        if (!path)
-          throw new Error(
-            "浏览器无法提供文件路径，请使用 + 选择本机文件；剪贴板文件请先保存",
-          );
-        const reference = (
-          await api("/api/context/files", { sessionId: id, paths: [path] })
-        ).files[0];
-        Object.assign(entry, reference, {
-          status: "ready",
-          preview: `${reference.path}\n\n本地文件引用，Agent 将按需读取。`,
-        });
-      } catch (error) {
-        entry.status = "error";
-        entry.error = error.message || "无法引用本地文件";
-      }
-      sessionDrafts.updateFile(id, entry);
-      renderAttachments();
-    }
-    return;
-  }
-  const limits = state?.capabilities?.attachments ?? {
-    maxCount: 8,
-    maxTotalBytes: 4 * 1024 * 1024,
-    maxTextBytes: 512 * 1024,
-  };
-  for (const file of chosen) {
-    const rows = attachmentRows(id);
-    if (rows.length >= limits.maxCount) {
-      toast(`最多添加 ${limits.maxCount} 个附件；未添加 ${file.name}`);
-      continue;
-    }
-    const entry = {
-      id: `context-${++attachmentSerial}`,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      status: "reading",
-    };
-    sessionDrafts.addFile(id, entry);
-    renderAttachments();
-    try {
-      if (
-        /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|pages|zip|7z|rar)$/i.test(
-          file.name,
-        )
-      )
-        throw new Error("Pi 当前不支持此格式；请先转为 UTF-8 文本或图片");
-      const total = sessionDrafts.totalBytes();
-      if (
-        attachmentRows(id).reduce((sum, item) => sum + item.size, 0) >
-          limits.maxTotalBytes ||
-        total > MAX_DRAFT_ATTACHMENT_BYTES
-      )
-        throw new Error("附件超出限制：每会话 4 MiB，全部草稿 16 MiB");
-      const image =
-        /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name) ||
-        [
-          "image/png",
-          "image/jpeg",
-          "image/gif",
-          "image/webp",
-          "image/bmp",
-        ].includes(file.type);
-      if (
-        file.type.startsWith("image/") &&
-        file.type !== "image/svg+xml" &&
-        !image
-      )
-        throw new Error("Pi 当前不支持此图片格式");
-      if (!image && file.size > limits.maxTextBytes)
-        throw new Error("文本附件不能超过 512 KiB");
-      entry.url = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("无法读取文件，请重新选择"));
-        reader.onabort = () => reject(new Error("文件读取已取消"));
-        reader.readAsDataURL(file);
-      });
-      entry.data = entry.url.slice(entry.url.indexOf(",") + 1);
-      if (image) {
-        entry.image = true;
-        const mime =
-          {
-            png: "image/png",
-            jpg: "image/jpeg",
-            jpeg: "image/jpeg",
-            gif: "image/gif",
-            webp: "image/webp",
-            bmp: "image/bmp",
-          }[file.name.split(".").at(-1).toLowerCase()] ?? file.type;
-        entry.url = `data:${mime};base64,${entry.data}`;
-      } else {
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(
-          Uint8Array.from(atob(entry.data), (value) => value.charCodeAt(0)),
-        );
-        if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text))
-          throw new Error("Pi 当前不支持二进制附件");
-        entry.preview =
-          text.slice(0, 4000) +
-          (text.length > 4000 ? "\n…（仅预览截断，提交完整文本）" : "");
-      }
-      entry.status = "ready";
-    } catch (error) {
-      entry.status = "error";
-      entry.error = error.message || "附件读取失败";
-      delete entry.data;
-      delete entry.url;
-    }
-    sessionDrafts.updateFile(id, entry);
-    renderAttachments();
-  }
-}
-$("#context-files").addEventListener("change", (event) => {
-  const files = [...event.target.files];
-  event.target.value = "";
-  void addContextFiles(files).catch((error) => toast(error.message));
-});
-$("#prompt").addEventListener("paste", (event) => {
-  const data = event.clipboardData;
-  if (!data || event.currentTarget.disabled || $("#composer").hidden) return;
-  const files = data.files.length
-    ? [...data.files]
-    : [...data.items]
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .filter(Boolean);
-  // Only real clipboard File bytes are attachments; text, HTML and paths are not.
-  if (!files.length) return;
-  event.preventDefault();
-  const text = data.getData("text/plain");
-  if (text) {
-    const prompt = event.currentTarget;
-    prompt.setRangeText(
-      text,
-      prompt.selectionStart,
-      prompt.selectionEnd,
-      "end",
-    );
-    prompt.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-  void addContextFiles(files).catch((error) => toast(error.message));
-});
-$("#context-attachments").addEventListener("click", (event) => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  const id = button.dataset.contextRemove ?? button.dataset.contextPreview;
-  const file = attachmentRows().find((item) => item.id === id);
-  if (!file) return;
-  if (button.dataset.contextRemove) {
-    sessionDrafts.removeFile(sessionDrafts.read().owner, id);
-    renderAttachments();
-  } else if (workspacePanel) workspacePanel.openAttachment(file);
-  else
-    openDialog(
-      file.name,
-      file.image
-        ? `<img class="attachment-preview" src="${esc(file.url)}" alt="${esc(file.name)}">`
-        : `<pre class="attachment-text-preview">${esc(file.preview)}</pre>`,
-      () => {},
-      "关闭",
-    );
-});
 function completeSubmission(submission) {
   sessionDrafts.edit($("#prompt").value);
   const current = sessionDrafts.complete(submission);
@@ -5317,7 +3559,7 @@ function completeSubmission(submission) {
     $("#prompt").value === submission.text
   )
     $("#prompt").value = current.text;
-  renderAttachments();
+  composerAttachments.render();
 }
 function composerHistory(owner) {
   const persisted = messageRows
@@ -5358,7 +3600,7 @@ function showComposerHistory(value) {
   const prompt = $("#prompt");
   prompt.value = value;
   prompt.setSelectionRange(value.length, value.length);
-  sizeComposer();
+  composerAttachments.resize();
   syncComposerButton();
   updateCommands();
 }
@@ -5496,7 +3738,7 @@ $("#prompt").addEventListener("input", () => {
   historyIndex = -1;
   historyDraft = "";
   sessionDrafts.edit($("#prompt").value);
-  sizeComposer();
+  composerAttachments.resize();
   syncComposerButton();
   commandIndex = 0;
   commandDismissed = "";
@@ -5522,7 +3764,7 @@ $("#native-history-resume").addEventListener("click", () =>
 );
 $("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (choosingContext) {
+  if (composerAttachments.choosing) {
     toast("请先完成文件选择");
     return;
   }
@@ -5697,17 +3939,17 @@ document.addEventListener("keydown", (event) => {
     if (event.key === "0" || event.code === "Digit0") {
       event.preventDefault();
       localStorage.setItem("pi-web-font-size", "14");
-      applyAppearance();
+      preferencesSettings.applyAppearance();
       return;
     }
     if (event.key === "=" || event.key === "+" || event.code === "Equal") {
       event.preventDefault();
-      adjustFontSize(1);
+      preferencesSettings.adjustFontSize(1);
       return;
     }
     if (event.key === "-" || event.key === "_" || event.code === "Minus") {
       event.preventDefault();
-      adjustFontSize(-1);
+      preferencesSettings.adjustFontSize(-1);
       return;
     }
   }
@@ -6816,14 +5058,13 @@ function revealShell() {
 async function boot() {
   if (!live) {
     commands = (await import("./pi-commands.mjs")).webCommands;
-    groups = await (await fetch("/settings-schema.json")).json();
     state = {
       cwd: "~/Projects/pi-desktop",
       sessionId: "demo-1",
       idle: true,
       defaults: {},
     };
-    plugins = [
+    const demoPlugins = [
       {
         id: "rtk",
         name: "RTK Optimizer",
@@ -6844,7 +5085,7 @@ async function boot() {
         adapted: false,
       },
     ];
-    providers = [
+    const demoProviders = [
       {
         id: "example",
         name: "兼容服务 · 演示",
@@ -6870,8 +5111,11 @@ async function boot() {
     ];
     renderMessages(demoMessages);
     renderSessions();
-    renderPlugins();
-    renderProviders();
+    state.model = selected;
+    syncChatViews();
+    packageSettings.applyInventory({ rows: demoPlugins });
+    providerSettings.applyInventory("providers", { rows: demoProviders });
+    providerSettings.applyInventory("modelChoices", { rows: demoProviders });
     syncComposerButton();
     revealShell();
     await showView(
@@ -6895,14 +5139,7 @@ async function boot() {
   await showView(
     titles[location.hash.slice(1)] ? location.hash.slice(1) : "workspace",
   );
-  setInterval(() => pollInteractions(), 1200);
-  setInterval(() => {
-    if (!connected || document.hidden || view !== "mcp") return;
-    void (async () => {
-      if (!(await revisionChanged("resources"))) return;
-      await loadMcp();
-    })().catch((error) => toast(error.message));
-  }, 1500);
+  interactionTimer = setInterval(() => pollInteractions(), 1200);
 }
 boot().catch((error) => {
   revealShell();
@@ -6910,10 +5147,4 @@ boot().catch((error) => {
   $("#prompt").disabled = true;
   $("#send-button").disabled = true;
   toast(`${error.message}。正在自动重试连接。`);
-});
-
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-edit-personality]");
-  if (button)
-    desktopMessage("configure-prompt", { id: button.dataset.editPersonality });
 });

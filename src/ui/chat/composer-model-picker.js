@@ -232,6 +232,27 @@ export function createComposerModelPicker({
     render();
     focusCurrent();
   }
+  async function openModels(provider = "") {
+    pane = "model";
+    query = provider;
+    panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    loadingModels = true;
+    const current = ++generation;
+    render();
+    focusCurrent();
+    try {
+      await loadModels();
+    } catch (error) {
+      if (current === generation) onError(error);
+    } finally {
+      if (current === generation) {
+        loadingModels = false;
+        render();
+        focusCurrent();
+      }
+    }
+  }
   function update() {
     const data = getData();
     trigger.querySelector(".model-trigger-label").textContent =
@@ -293,5 +314,5 @@ export function createComposerModelPicker({
   window.addEventListener("resize", () => {
     if (!panel.hidden) position();
   });
-  return { update, close, open };
+  return { update, close, open, openModels };
 }

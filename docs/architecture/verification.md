@@ -100,6 +100,10 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 代码与文档规范（[代码与文档规范](../guides/code-style.md)）不新增自动风格检查器，按清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
 
+## 聊天视图与附件
+
+`node test/chat-views-browser-check.mjs` 使用真实 Host／worker 及公开模块，故意延迟已读取的真实 HTTP 响应，验证 A/B/A 的人格、配置和 MCP 读取隔离、设置草稿与分类／资源焦点、远程离页后不 prepare／补刷、页面卸载清理及共享对话框的保存代际。`test/browser-check.mjs` 继续覆盖全部设置／资源页面和市场／配置写入，`test/context-files-browser-check.mjs` 验证 Electron 本地文件索引；原会话导航、输入展示和远程专项保持。契约见[聊天视图](interfaces/chat-views.md)。
+
 ## 会话只读面板
 
 `test/session-panel-loader.test.mjs` 用有界时钟验证代际、取消读取、节流／补刷与销毁，不依赖真实时间轮询。`test:extensions:browser` 追加真实工作台与两面板的隔离浏览器验收：旧 DOM、晚到响应、A/B/A、背景取消确认、同会话权限变化、折叠／滚动、unsupported 与资源清理。`test:workspace:browser` 追加真实默认 worker 的聊天控制器验收：在新快照返回前立即撤下旧数据，迟到任务读模型／分叉结果不切换会话，能力变化正确隐藏入口，且两个真实在途任务均未被误取消。它也验证默认分支的独立转录、两次退回后 Q1 原点与再次分叉。读模型能力在完整／chat 快照内都由 `test/bridge.test.mjs` 守住，不依赖方法存在性猜测。

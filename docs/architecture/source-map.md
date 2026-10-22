@@ -35,6 +35,10 @@
 
 归档位置同时受代码规范约束：调用者视角的契约写在 `docs/architecture/interfaces/`，实现原因写在源码注释，命名与术语见 [代码与文档规范](../guides/code-style.md)。
 
+## 聊天视图 seam
+
+`src/ui/chat/chat.js` 保留会话协调、固定请求目标、消息与装配；配置／人格／外观、提供商、技能／MCP、插件／市场、远程页及输入附件各有状态、请求和清理所有者，不穿透可写的全局状态包。共享对话框固定展示／保存代际，模型选择与工作台继续复用原 module。见[聊天视图契约](interfaces/chat-views.md)。
+
 ## 原生任务管理 seam
 
 `src/control-plane/host-tasks.mjs` 保留公开聚合与定向转发；`src/agent/managed-subagents.mjs` 用原生 task／owned conversation／submission 组合委托，并注册模型可调用的 `desk_subagent`。`src/ui/shared/task-panel-management.js` 在既有任务页内承接当前会话的发起／详情，`task-detail-view.js` 共用纯文本展示，`subagent-history.js` 在既有分支页单列终态记录；不新增任务页面或弹窗。状态、模型循环、调度与恢复继续属于 Durable，子会话资源仍经既有能力 seam 绑定。接口和可执行证据见 [任务与子代理](interfaces/host-tasks.md) 和 [模型工具](interfaces/subagent-tools.md)。
