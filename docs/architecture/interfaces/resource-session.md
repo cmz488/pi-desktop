@@ -69,7 +69,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 ## 不变量
 
 - **owned 资源 scope 独立**：发起前绑定子会话自己的工具 scope，恢复时也先于 Harness resume 注册；不会为此创建第二个 worker／SQLite，也不借用父会话工具闭包。`attach` 在 workspace 显式声明 `spawnSubagent` 时注册其 owned preparer；具体契约见 [Host 任务](host-tasks.md)。
-- **审批与交互**：审批模式存在 workspace 配置中，owned 子代理继承父会话有效策略；Host 显式启动策略先于恢复应用到 worker，不能被存量子会话覆盖。聚合交互只含当前 owned 范围，子会话条目带 `sourceConversationId` 和名称；历史 fork 无权代答。
+- **审批与交互**：默认 Desktop 的审批模式存在 worker 范围的 workspace 文档中，不随历史退回／分叉恢复旧值，owned 子代理继承有效策略；Host 显式启动策略先于恢复应用到 worker，不能被存量子会话覆盖。聚合交互只含当前 owned 范围，子会话条目带 `sourceConversationId` 和名称；历史 fork 无权代答。
 - **资源回收**：委托终态且子会话工作已结束后，先完成原生结束事件及状态写回，再释放宿主和其工具 scope。若结束事件产生新工作则暂不释放；重启只预热活跃／待恢复 owned 会话，历史详情不装载 SDK 资源。异步维护失败通过通知保留错误上下文，不静默吞掉。
 - **输入来源**：宿主在展开前捕获用户原文；原生程序发送标注为 automatic，注册命令的只展示记录与模型贡献分开。可靠关联、继承与兼容回退见[输入展示契约](input-presentation.md)。
 - **资源会话不跑模型循环**：它只提供工具与交互；所有被接受的模型回合都由 Durable 拥有（源码注释：`The resource Session never runs a second model loop`）。

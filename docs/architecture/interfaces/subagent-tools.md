@@ -39,7 +39,7 @@
 - message 的 requestId 固定同一内容与模式，同 ID 换内容为冲突。已接受的消息在终态／重启后仍可取回原回执；新消息不能复活终态委托。投递作为原生 owned task 持久准入，取消调用者的等待不撤销已准入投递，显式中止委托仍级联中止投递。steer 在原生工具轮次边界投递，followUp 在当前运行结束后处理。旧版已投递消息沿原生 submission 去重，不能补写或重放工作。
 - wait 的取消只撤销观察；abort 回执必须区分 marked 与 terminal，实际终态以原生 task 决定。
 - 同一子代理结果的回答绑定 submission 已决定的不可变 answer，不从当前上下文猜最后助手回复。新回执同时返回 `answerUnits` 与 `answerTruncated`，完整回答使用 result 分段读取；旧回执没有编号时只沿原始 submission 查找。
-- 子代理继承父会话当前有效的审批策略。owned 后代的交互通过父会话原有交互 UI 展示，注明子会话来源；回答仍校验当前 owned 范围与原生 prompt ID。历史 fork 无权读取或回答源会话的交互。
+- 子代理继承父会话当前有效的审批策略；默认 Host 的策略是 worker 范围的当前值，既有历史分支与旧位置的新分叉都不能恢复旧权限，其他 worker 不受影响。owned 后代的交互通过父会话原有交互 UI 展示，注明子会话来源；回答仍校验当前 owned 范围与原生 prompt ID。历史 fork 无权读取或回答源会话的交互。
 
 ## 顺序约束
 

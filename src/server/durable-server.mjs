@@ -181,6 +181,7 @@ export async function startDurableDesk(options = {}) {
         ...options.workspaceOptions,
         readOnly: options.readOnly,
         approvalMode: options.approvalMode,
+        sharedApproval: options.singleAgent === true,
         initialize: (target) => resources?.attach(target),
       }));
     if (options.workspace) await resources?.attach(workspace);

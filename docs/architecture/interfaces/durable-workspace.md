@@ -21,6 +21,7 @@ export async function openAgentWorkspace(options); // -> workspace
   storagePath,       // 可选；SQLite 路径（默认在 agent 目录下）
   settings,          // 可选；Harness 设置
   approvalMode,      // 可选；Host 显式启动审批策略，在恢复前应用到受管会话
+  sharedApproval,    // 可选；默认 Desktop 为 true：权限属于 worker，不随历史分叉／退回变化
   env,               // 可选；NodeExecutionEnv 或只读环境
   extensions,        // 可选；预装扩展名
   initialize,        // 可选；async (workspace) => void，在返回前调用
@@ -99,6 +100,7 @@ workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，�
 - **退回来源必须可对齐**：Host 从同一个 Pi 投影同时取得消息与 `origins: number[]`，按可见 `user`／`assistant`／`toolResult`／`custom` 顺序排列，不包含 UI 摘要和 system。来源必须是该会话的已知 entry；原点与标记原子提交，不能因数量不符就省略映射。直接调用方的简单旧调用仍兼容，不能对齐的复杂历史返回 409，不再伪装成标记来源。
 - **模型与 UI 角色分离**：退回消息通过 Pi `convertToLlm` 写入 model；有摘要／custom 等原生角色时，原始贡献保存在同一标记的只读 UI 数据里，卡片与消息原点不会因规范化而丢失。
 - **内置模型管理工具**：`desk-subagents` 注册 `desk_subagent`，通过原生 invocation 固定调用会话；spawn／message／read／result／list／wait／abort 只操作其 owned 范围。配置准入与 HTTP 共用，原生工具不能交给资源 Session 开启另一执行循环；完整契约见 [子代理工具](subagent-tools.md)。
+- **Host 审批不可回溯**：`sharedApproval:true` 时，审批策略保存为 worker 范围的原生文档，覆盖既有分支和 owned 子会话，也覆盖从旧历史位置新建的分叉；调整时原子检查整个 worker 空闲。其他 worker 不受影响；兼容多会话宿主仍保留逐会话策略。
 - **原生子代理不产生新 writer**：原生 task 检查点、owned 会话与 submission 复用当前 Harness；模型与工具循环、取消与恢复仍由 Durable 承担。子资源绑定在恢复前完成，不借用父会话工具闭包。
 - **等待不拥有执行生命周期**：`execute("wait", input, { signal })` 把 signal 仅用于 Durable 的等待 Context；其他命令沿用原有上下文。取消观察不会 abort 任务，指定任务的所有权校验不变。HTTP 额外的租约／配额、前端续租与总预算见 [任务契约](task-graph.md)。
 - **`readOnly` 只能减少能力，不能改变接口形状**：只读模式下 `read`、`live`、`execute` 仍可用，但工具集被裁剪为 `read` 与只读 web。

@@ -334,3 +334,111 @@ test(
     gate.resolve();
   },
 );
+
+test(
+  "Host 收紧审批覆盖既有分支及旧位置的新分叉，但不影响其他 worker",
+  { timeout: 60000 },
+  async (t) => {
+    const { f, actor, prefix, parent } = await setup(t, {
+      modelReply: async (input) =>
+        input.messages.at(-1)?.content === "BRANCH_POLICY_WRITE"
+          ? {
+              toolCalls: [
+                {
+                  id: "branch-write",
+                  type: "function",
+                  function: {
+                    name: "write",
+                    arguments: JSON.stringify({
+                      path: "branch-policy-proof.txt",
+                      content: "不应写入",
+                    }),
+                  },
+                },
+              ],
+            }
+          : { text: "DONE" },
+    });
+    await f.call(`${prefix}/api/prompt?sessionId=${parent}`, {
+      sessionId: parent,
+      message: "权限变更前的分叉位置",
+    });
+    const before = await until(
+      () => f.call(`${prefix}/api/state?sessionId=${parent}`),
+      (value) =>
+        value.idle && value.messages.some((row) => row.text === "DONE"),
+    );
+    const oldEntry = before.messages.find((row) => row.role === "user").entryId;
+    const existing = await f.legacyFork(actor.id, parent, { mode: "tail" });
+    const project = (await f.call("/api/workspace")).projects.find(
+      (row) => row.cwd === f.cwd,
+    );
+    const peer = await f.command("conversation.create", {
+      projectId: project.id,
+      name: "独立权限对照",
+    });
+    const peerParent = (await f.call(`/agents/${peer.id}/api/state`)).sessionId;
+    await f.command("agent.policy", { id: actor.id, mode: "ask-all" });
+    const historical = await f.legacyFork(actor.id, parent, {
+      entryId: oldEntry,
+    });
+    assert.equal(
+      (await f.call(`/agents/${peer.id}/api/agent?sessionId=${peerParent}`))
+        .active.approvalMode,
+      "ask-risky",
+      "worker 之间不共享审批覆盖",
+    );
+    for (const sessionId of [existing.sessionId, historical.sessionId]) {
+      assert.equal(
+        (await f.call(`${prefix}/api/agent?sessionId=${sessionId}`)).active
+          .approvalMode,
+        "ask-all",
+        "历史配置不能恢复旧权限",
+      );
+      const created = await f.call(
+        `${prefix}/api/command?sessionId=${sessionId}`,
+        {
+          command: "subagent.spawn",
+          id: Number(sessionId),
+          sessionId,
+          requestId: `branch-policy-${sessionId}`,
+          prompt: "BRANCH_POLICY_WRITE",
+          config: { tools: ["write"] },
+        },
+      );
+      const observed = await until(
+        async () => ({
+          detail: await f.call(
+            `${prefix}/api/task-detail?sessionId=${sessionId}&taskId=${created.taskId}`,
+          ),
+          jobs: await f.call(
+            `${prefix}/api/interactions?sessionId=${sessionId}`,
+          ),
+        }),
+        (value) =>
+          value.detail.task.status === "terminal" ||
+          value.jobs.rows.some((row) => row.prompt),
+      );
+      const job = observed.jobs.rows.find((row) => row.prompt);
+      assert.ok(job, "分支的子代理必须先等待批准");
+      await assert.rejects(readFile(join(f.cwd, "branch-policy-proof.txt")), {
+        code: "ENOENT",
+      });
+      await f.call(`${prefix}/api/interaction-reply?sessionId=${sessionId}`, {
+        id: job.id,
+        promptId: job.prompt.id,
+        value: job.prompt.options.find((row) => row.label === "取消").id,
+      });
+      await until(
+        () =>
+          f.call(
+            `${prefix}/api/task-detail?sessionId=${sessionId}&taskId=${created.taskId}`,
+          ),
+        (value) => value.task.status === "terminal",
+      );
+    }
+    await assert.rejects(readFile(join(f.cwd, "branch-policy-proof.txt")), {
+      code: "ENOENT",
+    });
+  },
+);

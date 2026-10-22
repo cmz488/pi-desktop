@@ -83,6 +83,13 @@ const AgentProfile = defineDoc({
   fork: "asOf",
   initial: () => ({ name: "Agent", revision: 1, shellPath: "", shellEnv: {} }),
 });
+// Host 权限属于当前 worker，不属于可退回、可按历史位置复制的会话配置。
+const WorkerApproval = defineDoc({
+  kind: "desk.worker-approval",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+});
 const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const text = (value, limit, label) => {
   if (typeof value !== "string" || value.length > limit || value.includes("\0"))
@@ -510,7 +517,13 @@ export async function openAgentWorkspace(options) {
         shellEnv: { ...parent.shellEnv },
         nativeDefaults: parent.nativeDefaults !== false,
         nativeInitialized: false,
-        approvalMode: parent.approvalMode ?? options.approvalMode ?? "yolo",
+        approvalMode:
+          (options.sharedApproval
+            ? (await tx.doc(WorkerApproval)).mode
+            : undefined) ??
+          parent.approvalMode ??
+          options.approvalMode ??
+          "yolo",
         maxTurns: task.input.config.maxTurns ?? DEFAULT_SUBAGENT_TURNS,
         subagent: true,
       };
@@ -786,9 +799,12 @@ export async function openAgentWorkspace(options) {
         ),
       );
   async function summary(conversation) {
-    const [agent, profile] = await Promise.all([
+    const [agent, profile, workerApproval] = await Promise.all([
       conversation.agent(context),
       harness.snapshot(AgentProfile, conversation.id, context),
+      options.sharedApproval
+        ? harness.snapshot(WorkerApproval, context)
+        : undefined,
     ]);
     return {
       id: conversation.id,
@@ -808,7 +824,11 @@ export async function openAgentWorkspace(options) {
       subagent: profile?.subagent === true,
       nativeInitialized: !!profile?.nativeInitialized,
       nativeDefaults: profile?.nativeDefaults !== false,
-      approvalMode: profile?.approvalMode ?? options.approvalMode ?? "yolo",
+      approvalMode:
+        workerApproval?.mode ??
+        profile?.approvalMode ??
+        options.approvalMode ??
+        "yolo",
       idle: !foreground(conversation.id),
     };
   }
@@ -1255,12 +1275,20 @@ export async function openAgentWorkspace(options) {
     if (command === "configure") {
       const prior = await summary(selected);
       const { patch, profile } = await changes(input, prior);
+      const sharedApproval =
+        options.sharedApproval && profile.approvalMode !== undefined;
       let deferred = false;
       await selected.commit(async (tx) => {
         // profile revision 与任务扫描都在 Durable 的提交线上校验。
         const tasks = await Promise.all(
           ["pending", "running", "waiting", "completing"].map((status) =>
-            tx.scanTasks({ conversationId: selected.id, status }, 1),
+            tx.scanTasks(
+              {
+                ...(sharedApproval ? {} : { conversationId: selected.id }),
+                status,
+              },
+              1,
+            ),
           ),
         );
         const running = tasks.some((page) => page.items.length);
@@ -1288,6 +1316,10 @@ export async function openAgentWorkspace(options) {
         } else {
           await configure(tx, selected.id, patch);
           delete document.pendingConfiguration;
+        }
+        if (sharedApproval) {
+          (await tx.doc(WorkerApproval)).mode = profile.approvalMode;
+          delete profile.approvalMode;
         }
         Object.assign(document, profile);
         document.revision++;
@@ -1819,14 +1851,20 @@ export async function openAgentWorkspace(options) {
     // owned 会话也必须使用新策略，不能让存量文档覆盖 Host 配置。
     if (options.approvalMode !== undefined) {
       const mode = validateApprovalMode(options.approvalMode);
-      const managed = [];
-      for (const row of await scanAll())
-        if (await harness.snapshot(AgentProfile, row.id, context))
-          managed.push(row.id);
-      await harness.commit(async (tx) => {
-        for (const id of managed)
-          (await tx.doc(AgentProfile, id)).approvalMode = mode;
-      }, context);
+      if (options.sharedApproval) {
+        await harness.commit(async (tx) => {
+          (await tx.doc(WorkerApproval)).mode = mode;
+        }, context);
+      } else {
+        const managed = [];
+        for (const row of await scanAll())
+          if (await harness.snapshot(AgentProfile, row.id, context))
+            managed.push(row.id);
+        await harness.commit(async (tx) => {
+          for (const id of managed)
+            (await tx.doc(AgentProfile, id)).approvalMode = mode;
+        }, context);
+      }
     }
     await options.initialize?.(workspace);
   } catch (error) {
