@@ -100,6 +100,10 @@ Goal 回归使用已安装的真实 `pi-goal-x` 和本地 faux 模型，覆盖�
 
 代码与文档规范（[代码与文档规范](../guides/code-style.md)）不新增自动风格检查器，按清单核对（注释只写为什么、被覆盖模块有契约块、契约写在接口文档而不是调用点、术语与 `CONTEXT.md` 一致、改动自带可执行证据）。契约测试的“敏感性”归验证契约管辖：临时反向修改实现时至少一条断言必须失败，验证后还原；只有能因实现变化而失败的断言才算证据。
 
+## Composer 样式
+
+`node test/composer-style-browser-check.mjs` 验证公开 stylesheet 的唯一所有权、96 个双主题／独立／嵌入计算样式状态、320–1280px 与横屏、实际粗指针、键盘菜单及视口／触达边界。修改前可用 `--write-baseline /tmp/composer-before.json` 保存临时基线，修改后用 `--baseline /tmp/composer-before.json` 比较所采集属性和几何；不把基线 JSON 作为产品资产。当前契约见[Composer 样式](interfaces/composer-styles.md)，本次前后记录见[所有权验收](../history/composer-style-ownership.md)。
+
 ## 聊天视图与附件
 
 `node test/chat-views-browser-check.mjs` 使用真实 Host／worker 及公开模块，故意延迟已读取的真实 HTTP 响应，验证 A/B/A 的人格、配置和 MCP 读取隔离、设置草稿与分类／资源焦点、远程离页后不 prepare／补刷、页面卸载清理及共享对话框的保存代际。`test/browser-check.mjs` 继续覆盖全部设置／资源页面和市场／配置写入，`test/context-files-browser-check.mjs` 验证 Electron 本地文件索引；原会话导航、输入展示和远程专项保持。契约见[聊天视图](interfaces/chat-views.md)。

@@ -29,6 +29,8 @@
 | [会话只读面板](read-panels.md)                 | `src/ui/shared/session-panel-loader.js`、`branch-tree-panel.js`、`task-panel.js`、`extension-workbench.js`                             | 身份失效、确认、能力／权限、节流与生命周期                                                       | `test/session-panel-loader.test.mjs`、`test/read-panels-browser-check.mjs`、`test/read-panels-desktop-browser-check.mjs`                |
 | [全 Host 任务与子代理](host-tasks.md)          | `src/control-plane/host-tasks.mjs`、`src/agent/managed-subagents.mjs`、`src/ui/shared/host-task-panel.js`                              | 跨 worker 聚合、存储代际目标、原生 owned 子代理准入／恢复、等待／中止                            | `test/host-task-management.test.mjs`、`test/host-tasks-browser-check.mjs`                                                               |
 
+输入控件的基础、嵌入与条件样式另见[Composer 样式契约](composer-styles.md)：单一所有者、公开加载顺序及真实计算样式比较。
+
 客户端可见性与操作资格另见[客户端能力策略](client-policy.md)：未声明、只读、远程、目标未就绪、unsupported 与调用方收窄；不代替后端授权。
 
 聊天设置／资源视图与附件另见[聊天视图契约](chat-views.md)：状态所有权、固定目标、读取取消、共享保存代际和草稿／焦点保持。

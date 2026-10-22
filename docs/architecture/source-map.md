@@ -27,6 +27,8 @@
 
 两个页面共用 `src/ui/boot.js` 的同步首屏引导，保留 `/boot.js`（聊天，含预览）与 `/workspace-boot.js`（项目工作区）两个既有 URL。宿主与 Agent 页面的 CSP 都是 `script-src 'self'`，引导必须作为同源外部脚本加载；主题与嵌入背景在聊天延迟模块运行前就生效。模块加载期间只显示加载提示，脚本失败时提供重新加载入口，不按超时展示演示占位内容；聊天控制器接管后才显示骨架或真实会话。
 
+输入区与其菜单、状态读数的基础／嵌入／响应式规则统一由 `src/ui/chat/composer.css` 拥有，保留 `/prototype.css` 与 `/chat-shell.css` 的公共地址，并在 shell／token 后加载 `/composer.css`。其他界面不为这些控件追加后置覆盖，见[样式契约](interfaces/composer-styles.md)。
+
 浏览器源码中的相对 import 按公共 URL 解释。它们不等同于磁盘目录关系；浏览器专用文件不能直接改成相对 `src/shared` 的路径。共享纯逻辑放在同一物理目录，使 Node 与浏览器都能跨相同 seam 使用。
 
 ## 运行边界

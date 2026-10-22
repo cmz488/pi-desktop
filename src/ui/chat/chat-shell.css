@@ -334,146 +334,9 @@ body.chat-shell.desktop-embedded {
   border-radius: inherit;
   background: var(--customMessageLabel);
 }
-.chat-shell .composer-wrap {
-  max-width: 1180px;
-  padding: 16px 24px max(8px, env(safe-area-inset-bottom));
-}
-.chat-shell .composer {
-  border: 1px solid var(--glass-edge);
-  background: var(--composer-glass);
-  border-radius: 28px;
-  box-shadow: var(--jelly-shadow);
-  backdrop-filter: var(--frost-filter);
-  padding: 18px 20px 12px;
-  transition:
-    box-shadow var(--motion-fast),
-    border-color var(--motion-fast);
-}
-.chat-shell .composer:focus-within {
-  border-color: var(--control-border);
-  box-shadow:
-    var(--jelly-shadow),
-    0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-.chat-shell .composer textarea {
-  min-height: 58px;
-  max-height: 160px;
-  padding: 0;
-  font-size: var(--text-ui-base);
-  line-height: 1.7;
-  background: transparent;
-}
-.chat-shell .composer-toolbar {
-  gap: 8px;
-  padding-top: 8px;
-}
-.chat-shell.desktop-embedded .composer {
-  padding: 16px 20px 10px;
-}
-.chat-shell.desktop-embedded .composer textarea {
-  line-height: 1.5;
-}
-.chat-shell.desktop-embedded .composer-toolbar {
-  padding-top: 4px;
-}
-.chat-shell .composer-control {
-  border-radius: 999px;
-  border-color: var(--hairline);
-  background: var(--glass);
-  min-height: 32px;
-}
-.chat-shell .composer-control:hover,
-.chat-shell .composer-control[aria-expanded="true"] {
-  background: var(--glass-raised);
-  border-color: var(--control-border);
-}
-.chat-shell #analysis-control {
-  border: 1px solid var(--glass-edge);
-  border-radius: 999px;
-  background: var(--glass);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-.chat-shell .composer-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 0 12px 12px;
-  font-size: var(--text-ui-sm);
-}
+
 /* Selects stay native (OS menus, keyboard, IME) but the trigger is ours. */
-.chat-shell .context-selector {
-  gap: 8px;
-  padding: 7px 12px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 999px;
-  background: var(--glass);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-  color: var(--muted);
-  transition:
-    background-color var(--motion-fast),
-    border-color var(--motion-fast),
-    color var(--motion-fast);
-}
-.chat-shell .context-selector:hover {
-  background: var(--glass-raised);
-  color: var(--text);
-}
-.chat-shell .context-selector:focus-within {
-  border-color: var(--control-border);
-  color: var(--text);
-  outline: none;
-}
-.chat-shell .context-selector:has(select:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.chat-shell .context-selector > [data-dsh-icon]:first-child {
-  color: var(--muted);
-}
-.chat-shell .context-selector > span[data-dsh-icon]:last-of-type {
-  transition: transform 180ms var(--ease-jelly);
-}
-.chat-shell .context-selector:focus-within > [data-dsh-icon]:last-child {
-  transform: rotate(180deg);
-}
-.chat-shell .context-selector select {
-  max-width: 220px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--text-ui-sm);
-}
-.chat-shell .composer-note {
-  padding: 12px 10px 0;
-  color: var(--muted);
-}
-.chat-shell .session-metrics {
-  font-family: var(--font-ui);
-}
-.chat-shell #send-button {
-  border-radius: 50%;
-  background: var(--button-ink);
-  color: var(--button-label);
-  box-shadow: 0 4px 12px rgba(27, 56, 57, 0.13);
-  width: 38px;
-  height: 38px;
-  transition:
-    background-color var(--motion-fast),
-    box-shadow var(--motion-fast);
-}
-.chat-shell #send-button:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-.chat-shell #attach-context {
-  background: var(--glass);
-  border: 1px solid var(--glass-edge);
-  border-radius: 50%;
-  width: 34px;
-  height: 34px;
-  padding: 7px;
-}
+
 .chat-shell .empty-conversation {
   padding: 24px 0;
   gap: 12px;
@@ -568,10 +431,7 @@ body.chat-shell.desktop-embedded {
   border-color: var(--hairline);
   background: transparent;
 }
-.chat-shell :is(input, select, textarea):not(#prompt) {
-  border-color: var(--control-border);
-  border-radius: 12px;
-}
+
 .chat-shell select option {
   background: var(--panel);
 }
@@ -1083,127 +943,6 @@ body.chat-shell.desktop-embedded {
   color: var(--text);
 }
 
-/* Session readings: quiet glass chips under the composer, one line on desktop. */
-.chat-shell .composer-note {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  padding: 11px 14px 2px;
-  color: var(--muted);
-  font-size: var(--text-ui-sm);
-}
-.chat-shell .session-metrics {
-  display: flex;
-  flex: 1 1 100%;
-  align-items: center;
-  gap: 8px 16px;
-  min-width: 0;
-  font-family: var(--font-ui);
-  font-variant-numeric: tabular-nums;
-}
-.chat-shell .metrics-primary,
-.chat-shell .metrics-secondary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  white-space: nowrap;
-}
-.chat-shell .metrics-primary {
-  flex: 1 1 auto;
-}
-.chat-shell .metrics-secondary {
-  flex: 0 1 auto;
-  margin-left: auto;
-  grid-template-columns: none;
-}
-.chat-shell #run-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 150px;
-  padding-right: 4px;
-  color: var(--muted);
-}
-.chat-shell #run-status .dot {
-  width: 7px;
-  height: 7px;
-}
-.chat-shell .stat-pill,
-.chat-shell #token-cost {
-  padding: 4px 11px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 999px;
-  background: var(--glass);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-  color: var(--muted);
-  font-size: var(--text-ui-xs);
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-}
-.chat-shell #token-cost {
-  max-width: none;
-  padding: 4px 10px;
-  overflow: visible;
-  text-overflow: clip;
-}
-.chat-shell .stat-pill:hover,
-.chat-shell .stat-pill[aria-expanded="true"] {
-  background: var(--glass-raised);
-  color: var(--text);
-}
-.chat-shell #send-mode {
-  width: auto;
-  max-width: 128px;
-  margin: 0;
-  padding: 3px 9px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 999px;
-  background: var(--glass);
-  color: var(--text);
-  font-size: var(--text-ui-xs);
-  line-height: 1.5;
-}
-.chat-shell #usage-details {
-  padding: 18px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 22px;
-  background: var(--glass-raised);
-  box-shadow: var(--shadow);
-  backdrop-filter: var(--frost-filter);
-}
-.chat-shell #usage-details .usage-heading strong {
-  font-weight: 500;
-}
-.chat-shell #usage-breakdown {
-  gap: 8px 16px;
-  margin: 12px 0;
-  font-size: var(--text-ui-sm);
-}
-.chat-shell #usage-breakdown dt {
-  color: var(--muted);
-}
-@container composer (max-width: 680px) {
-  .chat-shell .session-metrics {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-  }
-  .chat-shell .metrics-primary,
-  .chat-shell .metrics-secondary {
-    flex-wrap: wrap;
-    grid-template-columns: none;
-  }
-  .chat-shell .metrics-secondary {
-    margin-left: 0;
-  }
-  .chat-shell .metrics-secondary > * {
-    flex: 0 1 auto;
-  }
-}
-
 /* File viewer: document plus a switchable project tree (side-by-side column). */
 .panel-file-layout {
   display: grid;
@@ -1435,23 +1174,7 @@ body.chat-shell.desktop-embedded {
     padding: 12px 16px;
     border-radius: 20px 20px 6px 20px;
   }
-  .chat-shell .composer-wrap {
-    padding: 12px 4px max(6px, env(safe-area-inset-bottom));
-  }
-  .chat-shell .composer {
-    padding: 15px 14px 10px;
-    border-radius: 24px;
-  }
-  .chat-shell .composer-context {
-    gap: 12px;
-    padding: 0 6px 10px;
-  }
-  .chat-shell .context-selector select {
-    max-width: 150px;
-  }
-  .chat-shell .composer-note {
-    padding: 10px 6px 0;
-  }
+
   .chat-shell .workspace-right.workspace-panels {
     margin: 0;
   }
@@ -1487,120 +1210,9 @@ body.chat-shell.desktop-embedded {
 }
 @media (pointer: coarse) {
   .chat-shell .icon-button,
-  .workspace-view-switch button,
-  .chat-shell #send-button,
-  .chat-shell #attach-context {
+  .workspace-view-switch button {
     min-width: 44px;
     min-height: 44px;
-  }
-}
-
-/* Composer listboxes: the whole pill is the trigger and the menu is ours. */
-.chat-shell .context-selector {
-  cursor: pointer;
-}
-.chat-shell .context-trigger {
-  display: inline-flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 224px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--text-ui-sm);
-  line-height: 1.25;
-  text-align: left;
-  cursor: pointer;
-}
-.chat-shell .context-trigger-label {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.chat-shell .context-trigger:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-.chat-shell .context-native {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.chat-shell .context-selector.menu-open {
-  border-color: var(--control-border);
-  background: var(--glass-raised);
-}
-.chat-shell .context-selector.menu-open > span[data-dsh-icon]:last-of-type,
-.chat-shell .context-selector:focus-within > span[data-dsh-icon]:last-of-type {
-  transform: rotate(180deg);
-}
-.chat-shell .context-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: -10px;
-  z-index: 70;
-  min-width: 200px;
-  max-width: min(320px, 72vw);
-  max-height: 300px;
-  overflow: auto;
-  padding: 6px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 16px;
-  background: var(--glass-raised);
-  box-shadow: var(--shadow);
-  backdrop-filter: var(--frost-filter);
-  animation: context-menu-in 160ms var(--ease-jelly);
-  overscroll-behavior: contain;
-}
-.chat-shell .composer-toolbar .context-menu {
-  top: auto;
-  bottom: calc(100% + 8px);
-}
-.chat-shell .context-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font-size: var(--text-ui-sm);
-  line-height: 1.5;
-  text-align: left;
-}
-.chat-shell .context-option:hover,
-.chat-shell .context-option.is-active {
-  background: var(--hover);
-}
-.chat-shell .context-option[aria-selected="true"] {
-  font-weight: 500;
-}
-.chat-shell .context-option[aria-selected="true"]::after {
-  content: "✓";
-  margin-left: auto;
-  color: var(--accent);
-}
-.chat-shell .context-option.is-action {
-  color: var(--muted);
-}
-@keyframes context-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: none;
   }
 }
 
@@ -1928,14 +1540,10 @@ body.remote-client .workspace-view-switch {
 }
 
 @media (max-width: 720px) {
-  #composer {
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
-  }
   .main-nav button,
   .settings-nav button,
   .panel-shortcut,
-  .panel-file-row,
-  #composer button {
+  .panel-file-row {
     min-height: 44px;
   }
   #messages {

@@ -55,6 +55,7 @@ export const sharedAssets = new Map([
   ],
   ["/design-tokens.css", ["src/ui/design-tokens.css", "text/css"]],
   ["/chat-shell.css", ["src/ui/chat/chat-shell.css", "text/css"]],
+  ["/composer.css", ["src/ui/chat/composer.css", "text/css"]],
   ["/dsh-icons.mjs", ["src/ui/shared/dsh-icons.mjs", javascript]],
   ["/session-drafts.mjs", ["src/shared/session-drafts.mjs", javascript]],
   ["/connection.mjs", ["src/shared/connection.mjs", javascript]],
