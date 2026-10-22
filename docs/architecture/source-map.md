@@ -35,6 +35,10 @@
 
 归档位置同时受代码规范约束：调用者视角的契约写在 `docs/architecture/interfaces/`，实现原因写在源码注释，命名与术语见 [代码与文档规范](../guides/code-style.md)。
 
+## 客户端策略 seam
+
+`src/ui/shared/client-policy.js` 为聊天入口和会话面板共享只读资格投影；原生能力声明、权限、项目可信及远程路径仍由后端拥有，连接／观察／数据身份与确认在消费方继续收窄。见[客户端策略契约](interfaces/client-policy.md)。
+
 ## 聊天视图 seam
 
 `src/ui/chat/chat.js` 保留会话协调、固定请求目标、消息与装配；配置／人格／外观、提供商、技能／MCP、插件／市场、远程页及输入附件各有状态、请求和清理所有者，不穿透可写的全局状态包。共享对话框固定展示／保存代际，模型选择与工作台继续复用原 module。见[聊天视图契约](interfaces/chat-views.md)。

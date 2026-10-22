@@ -22,7 +22,7 @@ import {createExtensionWorkbench} from '/extension-workbench.js';
 import {createExtensionAdapterRegistry} from '/extension-adapters.mjs';
 import {createBranchTreePanel} from '/branch-tree-panel.js';
 import {createTaskPanel} from '/task-panel.js';
-let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},taskReply={},taskStatus='waiting',rows=[];
+let owner='1',capabilities={sessionTree:true,tasks:true,readOnly:false},qualifications={},taskReply={},taskStatus='waiting',rows=[];
 // 真实 chat.js 会在首次渲染后解除首屏隐藏；这个夹具取代了它，所以自己解除。
 delete document.documentElement.dataset.booting;
 const requests=[],commands=[],notices=[],held=new Set(),pending=[],unsupported=new Set(),versions=new Map(),treeOverrides=new Map();
@@ -30,16 +30,17 @@ const model=(kind,id,version)=>unsupported.has(kind)?{supported:false}:kind==='t
 const read=(kind,id,options={})=>{const key=kind+':'+id;const version=(versions.get(key)??0)+1;versions.set(key,version);const record={kind,id,version,signal:options.signal};requests.push(record);const value=kind==='tree'&&treeOverrides.has(id)?treeOverrides.get(id):model(kind,id,version);return held.has(key)?new Promise(resolve=>pending.push({...record,resolve:()=>resolve(value)})):Promise.resolve(value);};
 const root=document.querySelector('#view-extensions');root.hidden=false;document.querySelector('#view-workspace').hidden=true;
 const branch=createBranchTreePanel({fetchTree:(id,options)=>read('tree',id,options),command:async(name,input)=>{commands.push({command:name,...input});return{};},toast:text=>notices.push(text),switchSession:async()=>{}});
-const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),command:async input=>{commands.push(input);return taskReply;},toast:text=>notices.push(text),currentSession:()=>owner});
+const task=createTaskPanel({fetchTasks:(id,options)=>read('tasks',id,options),fetchDetail:(id,_taskId,options)=>read('details',id,options),command:async input=>{commands.push(input);return taskReply;},toast:text=>notices.push(text),currentSession:()=>owner});
 const pages=[branch,task];
 const controller=createExtensionWorkbench({root,registry:createExtensionAdapterRegistry(),builtinPages:pages,sanitize:text=>text,onCount:count=>root.dataset.count=count,onError:text=>notices.push(text)});
-const update=()=>controller.update(rows,{sessionId:owner,capabilities,sessionCommands:true});
+const update=()=>controller.update(rows,{sessionId:owner,capabilities,sessionCommands:true,...qualifications});
 window.panelFixture={requests,commands,notices,pages,
 render(next){rows=next;update();},
 reply(value){taskReply=value;},
 status(value){taskStatus=value;return task.refresh({force:true});},
 update(id,caps=capabilities){owner=String(id);capabilities=caps;update();for(const page of pages)void page.refresh();},
 select(kind){return controller.select(kind==='tasks'?task.key:branch.key);},
+policy(next){qualifications=next;update();for(const page of pages)void page.refresh();},
 hold(kind,id){held.add(kind+':'+id);},
 unhold(kind,id){held.delete(kind+':'+id);},
 release(kind,id){held.delete(kind+':'+id);for(const item of pending.splice(0).filter(item=>{if(item.kind===kind&&item.id===id){item.resolve();return false;}return true;}))pending.push(item);},
@@ -852,6 +853,79 @@ try {
     ),
     true,
     "等待命令同样捕获不可变目标",
+  );
+  await evaluate(
+    "panelFixture.policy({taskCommands:false});panelFixture.select('tasks')",
+  );
+  await until("!!document.querySelector('[data-task-id=\"801\"]')");
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('[data-task-action]')].every(button=>button.disabled)",
+    ),
+    true,
+    "网关显式收窄优先于通用 sessionCommands",
+  );
+  const narrowedCommands = await evaluate("panelFixture.commands.length");
+  await evaluate(
+    "document.querySelector('[data-task-action=background]').click();panelFixture.select('tree')",
+  );
+  await until("!!document.querySelector('[data-node-id=n839]')");
+  assert.equal(
+    await evaluate(
+      "[...document.querySelectorAll('[data-branch-action]')].every(button=>button.disabled)",
+    ),
+    true,
+    "远程分支保留读取，不开放管理",
+  );
+  assert.equal(
+    await evaluate("panelFixture.commands.length"),
+    narrowedCommands,
+  );
+  const unreadyReads = await evaluate("panelFixture.requests.length");
+  await evaluate("panelFixture.policy({ready:false,taskCommands:false})");
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.extension-page-choice').length",
+    ),
+    0,
+    "明确未就绪不泄露旧入口",
+  );
+  assert.equal(
+    await evaluate("panelFixture.requests.length"),
+    unreadyReads,
+    "未就绪不读取旧目标",
+  );
+  await evaluate(
+    "panelFixture.policy({ready:true,taskCommands:false});panelFixture.select('tasks')",
+  );
+  await until("!!document.querySelector('[data-task-id=\"801\"]')");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('[data-task-action=background]').disabled",
+    ),
+    true,
+    "就绪只恢复读取，不能恢复被收窄的管理",
+  );
+  await evaluate(
+    "panelFixture.unsupported('details',true);panelFixture.update('8',{sessionTree:true,tasks:true,taskDetails:true});panelFixture.select('tasks')",
+  );
+  await until("!!document.querySelector('[data-task-inspect=\"801\"]')");
+  await evaluate(
+    "document.querySelector('[data-task-inspect=\"801\"]').click()",
+  );
+  await until(
+    "document.querySelector('.task-panel-detail')?.textContent.includes('未提供原生任务详情')",
+  );
+  const detailReads = await evaluate(
+    "panelFixture.requests.filter(row=>row.kind==='details').length",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 2200));
+  assert.equal(
+    await evaluate(
+      "panelFixture.requests.filter(row=>row.kind==='details').length",
+    ),
+    detailReads,
+    "详情 unsupported 不继续探测或伪造任务成功",
   );
   await evaluate("panelFixture.dispose()");
   const reads = await evaluate("panelFixture.requests.length");

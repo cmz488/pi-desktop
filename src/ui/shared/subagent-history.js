@@ -1,3 +1,4 @@
+import { readClientPolicy } from "./client-policy.js";
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { renderTaskDetail } from "./task-detail-view.js";
 import { taskReceiptLabel, hasMessageFailure } from "./task-vocabulary.js";
@@ -60,6 +61,8 @@ export function createSubagentHistory({ fetchHistory, fetchDetail }) {
     detail.hidden = !selected;
     detail.setAttribute("aria-busy", String(inspector.loading));
     if (inspector.error) detail.textContent = inspector.error;
+    else if (inspector.data?.supported === false)
+      detail.textContent = "此宿主未提供原生任务详情。";
     else if (inspector.data) renderTaskDetail(detail, inspector.data);
     else detail.textContent = "读取已提交记录…";
   }
@@ -180,9 +183,7 @@ export function createSubagentHistory({ fetchHistory, fetchDetail }) {
       enabled =
         typeof fetchHistory === "function" &&
         typeof fetchDetail === "function" &&
-        context.capabilities?.taskDetails === true &&
-        context.capabilities?.sessionTree === true &&
-        context.capabilities?.remote !== true;
+        readClientPolicy(context).canReadSubagentHistory;
       const changed = history.setContext({
         owner: String(context.sessionId ?? ""),
         sessionId: String(target || context.sessionId || ""),

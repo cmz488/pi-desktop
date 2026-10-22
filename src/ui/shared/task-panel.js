@@ -1,3 +1,4 @@
+import { readClientPolicy } from "./client-policy.js";
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { dshIcon } from "./dsh-icons.mjs";
 import { createTaskPanelManagement } from "./task-panel-management.js";
@@ -74,13 +75,12 @@ export function createTaskPanel({
   function updateContext(context) {
     const owner = String(context.sessionId ?? currentSession?.() ?? "");
     panelContext = context;
+    const policy = readClientPolicy({ ...context, sessionId: owner });
     const changed = loader.setContext({
       owner,
       sessionId: owner,
-      enabled: context.capabilities?.tasks === true,
-      canManage:
-        (context.taskCommands ?? context.sessionCommands) === true &&
-        context.capabilities?.readOnly !== true,
+      enabled: policy.canReadTasks,
+      canManage: policy.canManageTasks,
     });
     management.update(context, loader.data);
     return changed;
@@ -668,7 +668,13 @@ export function createTaskPanel({
     key: "desktop:task-panel",
     view: { label: "Desktop", title: "任务与子代理", status: "" },
     get available() {
-      return loader.available;
+      return (
+        loader.available &&
+        readClientPolicy(
+          { ...panelContext, sessionId: loader.context.sessionId },
+          { supported: loader.data?.supported },
+        ).canReadTasks
+      );
     },
     refresh: loader.refresh,
     setActive(value) {

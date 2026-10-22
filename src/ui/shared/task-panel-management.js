@@ -1,3 +1,4 @@
+import { readClientPolicy } from "./client-policy.js";
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { renderTaskDetail } from "./task-detail-view.js";
 import { dshIcon } from "./dsh-icons.mjs";
@@ -74,6 +75,8 @@ export function createTaskPanelManagement({
       );
       error.setAttribute("role", "alert");
       detail.prepend(error);
+    } else if (data?.supported === false) {
+      detail.textContent = "此宿主未提供原生任务详情。";
     } else if (data?.task.status === "terminal") {
       selected = "";
       retarget();
@@ -326,8 +329,7 @@ export function createTaskPanelManagement({
       model = data;
       enabled =
         typeof fetchDetail === "function" &&
-        context.capabilities?.taskDetails === true &&
-        context.capabilities?.remote !== true;
+        readClientPolicy(context).canReadTaskDetails;
       if (
         selected &&
         data &&

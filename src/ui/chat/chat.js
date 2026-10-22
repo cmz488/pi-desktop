@@ -1,3 +1,4 @@
+import { readClientPolicy } from "./client-policy.js";
 import { createChatDialog } from "./chat-dialog.js";
 import { createPreferencesSettings } from "./preferences-settings.js";
 import { createProviderSettings } from "./provider-settings.js";
@@ -661,11 +662,7 @@ function chatViewsAreActive() {
     chatPageActive &&
     !document.hidden &&
     hostFocused &&
-    (!live ||
-      (connected &&
-        !!state &&
-        (!durableAgentId || state.sessionId === durableAgentId) &&
-        !pendingConversation))
+    (!live || (connected && readClientPolicy(readPanelContext()).ready))
   );
 }
 const chatDialog = createChatDialog({
@@ -971,7 +968,10 @@ function closeSidebar() {
 }
 async function showView(next) {
   if (!titles[next]) return;
-  if (state?.capabilities?.remote === true && !["workspace"].includes(next))
+  if (
+    !readClientPolicy(readPanelContext()).canViewSettings &&
+    next !== "workspace"
+  )
     next = "workspace";
   const previous = view;
   const changed = view !== next;
@@ -1372,8 +1372,7 @@ function canOpenComposerTools() {
   const context = readPanelContext();
   return (
     live &&
-    context.capabilities.remote !== true &&
-    context.capabilities.tasks === true &&
+    readClientPolicy(context).canOpenTaskWorkbench &&
     taskPanel.available
   );
 }
@@ -2323,7 +2322,7 @@ const sessionConnection = createSessionConnection({
 });
 /* 会话栏的「打开分支树」：选中内置页，并把目标会话交给面板。 */
 window.addEventListener("pi-desktop:branch-tree", (event) => {
-  if (state?.capabilities?.sessionTree !== true) return;
+  if (!readClientPolicy(readPanelContext()).canReadBranches) return;
   if (event.detail?.sessionId) branchTree.setSession(event.detail.sessionId);
   extensionWorkbench?.update(messageRows, readPanelContext());
   if (!extensionWorkbench?.select(branchTree.key))
@@ -3333,9 +3332,8 @@ function syncComposerButton() {
   syncComposerTools();
   $("#send-button").disabled =
     composerAttachments.choosing ||
-    !!state?.capabilities?.nativeHistory ||
+    !readClientPolicy(readPanelContext()).canCompose ||
     (live && (!state || !connected)) ||
-    (state?.host === "durable" && state.sessionId !== durableAgentId) ||
     !$("#ask-user").hidden ||
     composerAttachments.rows().some((file) => file.status !== "ready") ||
     (!$("#prompt").value.trim() && !composerAttachments.rows().length);
@@ -3768,9 +3766,9 @@ $("#composer").addEventListener("submit", async (event) => {
     toast("请先完成文件选择");
     return;
   }
-  if (state?.capabilities?.nativeHistory) return;
-  if (state?.host === "durable" && state.sessionId !== durableAgentId) {
-    toast("请等待 Agent 切换完成；草稿已保留");
+  if (!readClientPolicy(readPanelContext()).canCompose) {
+    if (!state?.capabilities?.nativeHistory)
+      toast("请等待 Agent 切换完成；草稿已保留");
     return;
   }
   if (live && !connected) {
@@ -4975,25 +4973,21 @@ function readPanelContext() {
       ? durableAgentId || state.sessionId || ""
       : (state?.sessionId ?? ""),
   );
-  const ready = String(state?.sessionId ?? "") === selected;
   return {
     sessionId: selected,
-    capabilities: ready ? (state?.capabilities ?? {}) : {},
-    sessionCommands: ready && state?.sessionCommands === true,
-    // 既有远程网关裁剪 /api/command；不能为了启用面板按钮放宽这条边界。
+    ready:
+      !!state &&
+      String(state.sessionId ?? "") === selected &&
+      !pendingConversation,
+    capabilities: state?.capabilities ?? {},
+    sessionCommands: state?.sessionCommands === true,
+    // 既有远程网关裁剪 /api/command；策略必须保留此 adapter 的显式收窄。
     taskCommands:
-      ready &&
-      state?.sessionCommands === true &&
-      state?.capabilities?.remote !== true,
+      state?.sessionCommands === true && state?.capabilities?.remote !== true,
   };
 }
 function canManageBranches() {
-  const context = readPanelContext();
-  return (
-    context.sessionCommands &&
-    context.capabilities.readOnly !== true &&
-    context.capabilities.remote !== true
-  );
+  return readClientPolicy(readPanelContext()).canManageBranches;
 }
 /* 内置「分支树」页：数据来自 /api/tree，动作复用消息菜单与会话栏的同一条命令路径。 */
 const branchTree = createBranchTreePanel({

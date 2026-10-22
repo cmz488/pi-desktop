@@ -1,3 +1,4 @@
+import { readClientPolicy } from "./client-policy.js";
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { createSubagentHistory } from "./subagent-history.js";
 import {
@@ -79,14 +80,12 @@ export function createBranchTreePanel({
     }
     context = next;
     owner = String(next.sessionId ?? "");
+    const policy = readClientPolicy(next);
     const changed = loader.setContext({
       owner,
       sessionId: target || owner,
-      enabled: next.capabilities?.sessionTree === true,
-      canManage:
-        next.sessionCommands === true &&
-        next.capabilities?.readOnly !== true &&
-        next.capabilities?.remote !== true,
+      enabled: policy.canReadBranches,
+      canManage: policy.canManageBranches,
     });
     history.update(next, target || owner);
     return changed;

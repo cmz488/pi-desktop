@@ -3,6 +3,7 @@
 ## 位置与职责
 
 - `src/ui/shared/task-vocabulary.js`：任务标签、种类、投递失败与回执提示的纯展示规则，不拥有任务状态或 worker 生命周期。
+- `src/ui/shared/client-policy.js`：共享读取／管理、只读、远程与就绪规则；见[客户端策略](client-policy.md)。
 - `src/ui/shared/session-panel-loader.js`：两面板共用的会话身份、只读加载与资源生命周期，不拥有 Durable 状态。
 - `src/ui/shared/branch-tree-panel.js`、`task-panel.js`：分别展示分支树与任务读模型，业务动作沿用既有命令路径。
 - `src/ui/shared/extension-workbench.js`：为所有内置页更新上下文，包括当前未选中的页；只列可用入口。
@@ -46,7 +47,7 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 
 同 owner、同内置页的更新复用已挂载容器，其他扩展卡片变化不重挂当前输入节点；身份变化仍先清空旧展示并使旧回调失效。内置页可为可重建控件声明稳定的 `data-workbench-focus` 键；工作台仅在同页、同 owner 的同步重绘后恢复该控件，不覆盖 renderer 已明确设置的新焦点。分支图临时重挂历史区时，历史 controller 在同一挂载身份恢复后补回焦点；离开或换目标使该恢复失效。
 
-工作台 `update(rows, context)` 的 context 为 `{ sessionId, capabilities, sessionCommands, taskCommands? }`；`builtin.update(context)` 必须先于可用入口过滤与渲染。读取的 `owner` 是页面当前会话，`sessionId` 是显示目标：任务面板跟随 owner，分支树可显式查看另一个目标。只读 loader 的调用方在 `setContext` 后负责同步重画；其返回值表示身份是否改变。
+工作台 `update(rows, context)` 的 context 为 `{ sessionId, ready?, capabilities, sessionCommands, taskCommands? }`；`builtin.update(context)` 必须先于可用入口过滤与渲染。读取的 `owner` 是页面当前会话，`sessionId` 是显示目标：任务面板跟随 owner，分支树可显式查看另一个目标。只读 loader 的调用方在 `setContext` 后负责同步重画；其返回值表示身份是否改变。
 
 ## 不变量
 
@@ -75,6 +76,8 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 详情优先展示不可变首次回答；尚无首次回答时展示当前输出或委托内容，完整的本次过程预览收在原生披露组件中。过程披露及焦点在同任务更新时保持，切任务不继承另一任务的展开状态。消息失败与预算原因保持可见，失败消息默认展开，但不因定时补刷强行重开用户已收起的区域。终态记录采用同一详情展示规则；没有可展示输出时明确说明已结束，不再提示等待或承诺自动更新。过程与消息裁剪仍明确标注，不把预览当作全量。
 
 ## 能力与权限
+
+聊天入口与面板通过同一 `readClientPolicy` 投影资格；切换期间明确传 `ready:false`，保留模式事实而不读取旧目标。策略只收敛公共规则，loader 的可见性、数据身份与业务确认继续额外收窄。
 
 - `/api/state` 和 chat 视图的 `capabilities.sessionTree`／`tasks`／`taskDetails` 明确来自 Host 声明，不信任 snapshot 自填字段或方法是否存在；没有声明时为 false。
 - `taskDetails` 额外控制内嵌实时详情、发起区与终态记录；不依据 fetch 回调存在推断。未提供该能力的兼容宿主仍可展示基础任务读模型。只读能力不授予 spawn／cancel。
@@ -105,6 +108,7 @@ createTaskPanel({ fetchTasks, fetchDetail?, command, toast, currentSession? });
 
 ## 可执行证据
 
+- `test/client-policy.test.mjs`：声明／只读／远程／未就绪／unsupported 与显式 taskCommands 收窄；真实面板另验证门控、恢复与详情 unsupported 不再探测。
 - `test/task-vocabulary.test.mjs`：任务／终态／投递的不同词域、种类、未知值、首次结果与后续失败、预算、marked／旧回执及旧导出的兼容；面板与真实 Host 浏览器回归继续验证调用路径。
 
 - `test/session-panel-loader.test.mjs`：9 条有界时钟／迟到响应回归，覆盖能力、A/B/A、权限、节流／补刷、暂停／销毁和错误。
