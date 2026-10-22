@@ -442,3 +442,114 @@ test(
     });
   },
 );
+
+test(
+  "既有分支的原生自动输入也使用当前 Host 权限，不依赖先打开分支页面",
+  { timeout: 60000 },
+  async (t) => {
+    const { f, actor, prefix, parent } = await setup(t, {
+      noExtensions: false,
+      beforeAgent: async (f) => {
+        const extension = join(f.cwd, "native-policy-probe.mjs");
+        await writeFile(
+          extension,
+          `import {watch} from "node:fs"; export default pi => {
+        let watcher;
+        pi.registerCommand("arm-policy-probe", {handler: async (_args, ctx) => {
+          watcher = watch(ctx.cwd, (_event, name) => {
+            if (name !== "native-policy-trigger" || !watcher) return;
+            watcher.close(); watcher = undefined;
+            void Promise.resolve().then(() => pi.sendUserMessage("NATIVE_BRANCH_WRITE")).catch(console.error);
+          });
+        }});
+        pi.on("session_shutdown", () => watcher?.close());
+      };`,
+        );
+        const path = join(f.agentDir, "settings.json");
+        const settings = JSON.parse(await readFile(path, "utf8"));
+        await writeFile(
+          path,
+          JSON.stringify({ ...settings, extensions: [extension] }),
+        );
+      },
+      modelReply: async (input) =>
+        input.messages.at(-1)?.content === "NATIVE_BRANCH_WRITE"
+          ? {
+              toolCalls: [
+                {
+                  id: "native-policy-write",
+                  type: "function",
+                  function: {
+                    name: "write",
+                    arguments: JSON.stringify({
+                      path: "native-policy-proof.txt",
+                      content: "不应越过当前审批",
+                    }),
+                  },
+                },
+              ],
+            }
+          : { text: "DONE" },
+    });
+    await f.call(`${prefix}/api/prompt?sessionId=${parent}`, {
+      sessionId: parent,
+      message: "原生自动输入的分叉来源",
+    });
+    await until(
+      () => f.call(`${prefix}/api/state?sessionId=${parent}`),
+      (value) =>
+        value.idle && value.messages.some((row) => row.text === "DONE"),
+    );
+    const branch = await f.legacyFork(actor.id, parent, { mode: "tail" });
+    const sessionId = branch.sessionId;
+    await f.call(`${prefix}/api/prompt?sessionId=${sessionId}`, {
+      sessionId,
+      message: "/arm-policy-probe",
+    });
+    await f.command("agent.policy", { id: actor.id, mode: "ask-all" });
+    const initial = (
+      await f.call(`${prefix}/api/revision?sessionId=${sessionId}`)
+    ).interactions;
+    await writeFile(join(f.cwd, "native-policy-trigger"), "开始原生自动输入");
+    const observed = await until(
+      async () => {
+        let written = false;
+        try {
+          await readFile(join(f.cwd, "native-policy-proof.txt"));
+          written = true;
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        return {
+          written,
+          revision: (
+            await f.call(`${prefix}/api/revision?sessionId=${sessionId}`)
+          ).interactions,
+        };
+      },
+      (value) => value.written || value.revision !== initial,
+    );
+    assert.equal(
+      observed.written,
+      false,
+      "工具执行不能依赖旧资源宿主缓存的审批策略",
+    );
+    const job = (
+      await f.call(`${prefix}/api/interactions?sessionId=${sessionId}`)
+    ).rows.find((row) => row.prompt);
+    assert.ok(job);
+    await f.call(`${prefix}/api/interaction-reply?sessionId=${sessionId}`, {
+      id: job.id,
+      promptId: job.prompt.id,
+      value: job.prompt.options.find((row) => row.label === "取消").id,
+    });
+    await until(
+      () => f.call(`${prefix}/api/state?sessionId=${sessionId}`),
+      (value) =>
+        value.idle && value.messages.some((row) => row.toolName === "write"),
+    );
+    await assert.rejects(readFile(join(f.cwd, "native-policy-proof.txt")), {
+      code: "ENOENT",
+    });
+  },
+);

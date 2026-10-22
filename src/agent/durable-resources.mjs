@@ -396,6 +396,11 @@ export function createDurableResources({
                 )
                   throw new DeskError(409, "工具运行环境不属于当前 Agent");
                 await ready(context);
+                // 原生自动输入不经过 HTTP ensure；工具边界必须读取当前策略，不能依赖页面刷新。
+                approvalPolicy.mode = validateApprovalMode(
+                  (await workspace.agent(active.id)).approvalMode ??
+                    approvalMode,
+                );
                 const agent = await api.agent(context);
                 // Durable 内置工具不属于资源 Session，不能借同步选择将它们交给另一执行循环。
                 const chosen = agent.tools
