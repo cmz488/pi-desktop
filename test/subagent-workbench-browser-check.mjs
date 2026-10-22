@@ -158,6 +158,71 @@ try {
     true,
     "实时任务行使用原生 owned 子会话名称，而不只显示种类",
   );
+  await chat("d.querySelector('[data-task-filter=agents]').click();");
+  assert.deepEqual(
+    await chat(
+      "return [...d.querySelectorAll('[data-task-id]')].filter(row=>row.getClientRects().length).map(row=>Number(row.dataset.taskId));",
+    ),
+    [launched.taskId],
+    "子代理筛选只改变当前清单的展示",
+  );
+  await chat("d.querySelector('[data-task-filter=execution]').click();");
+  assert.ok(
+    await chat(
+      `const rows=[...d.querySelectorAll('[data-task-id]')].filter(row=>row.getClientRects().length);return rows.length>0&&rows.every(row=>Number(row.dataset.taskId)!==${launched.taskId});`,
+    ),
+    "其他任务仍可独立管理",
+  );
+  await chat("d.querySelector('[data-task-filter=all]').click();");
+  await chat(`const w=d.defaultView,input=d.querySelector('.task-panel-search input');
+    w.searchProbe={input,reads:0,fetch:w.fetch};const original=w.fetch.bind(w);
+    w.fetch=async(...args)=>{const response=await original(...args);if(String(args[0]).includes('/api/tasks?'))w.searchProbe.reads++;return response;};
+    input.focus();input.dispatchEvent(new w.CompositionEvent('compositionstart'));
+    input.value='工作台子代理';input.dispatchEvent(new w.InputEvent('input',{isComposing:true}));
+    d.querySelector('[data-task-refresh]').click();`);
+  await ready(`(${frame}).defaultView.searchProbe.reads>0`);
+  assert.equal(
+    await chat(
+      "const probe=d.defaultView.searchProbe;return probe.input===d.querySelector('.task-panel-search input')&&d.activeElement===probe.input&&probe.input.value==='工作台子代理';",
+    ),
+    true,
+    "中文输入组合与后台补刷并存时，不替换输入节点或打断输入法",
+  );
+  await chat(
+    "const w=d.defaultView;d.querySelector('.task-panel-search input').dispatchEvent(new w.CompositionEvent('compositionend'));w.fetch=w.searchProbe.fetch;delete w.searchProbe;",
+  );
+  await chat(
+    "const input=d.querySelector('.task-panel-search input');input.value='不存在的委托';input.dispatchEvent(new d.defaultView.Event('input'));",
+  );
+  assert.equal(
+    await chat("return d.querySelector('.task-panel-filter-empty').hidden;"),
+    false,
+    "搜索未命中不冒充原生任务空态",
+  );
+  assert.equal(
+    await chat("return !!d.querySelector('.task-panel-empty');"),
+    false,
+  );
+  await chat(
+    `const input=d.querySelector('.task-panel-search input');input.value='#${launched.taskId}';input.dispatchEvent(new d.defaultView.Event('input'));`,
+  );
+  assert.deepEqual(
+    await chat(
+      "return [...d.querySelectorAll('[data-task-id]')].filter(row=>row.getClientRects().length).map(row=>Number(row.dataset.taskId));",
+    ),
+    [launched.taskId],
+    "支持按任务编号查找",
+  );
+  await chat(
+    "const input=d.querySelector('.task-panel-search input');input.value='';input.dispatchEvent(new d.defaultView.Event('input'));",
+  );
+  assert.equal(
+    await chat(
+      `return !!d.querySelector('[data-child-id="${launched.conversationId}"]');`,
+    ),
+    false,
+    "已由委托行展示的子会话不重复成为第二张卡片",
+  );
   await chat(
     `d.querySelector('[data-task-id="${launched.taskId}"] [data-task-inspect]').focus();`,
   );
@@ -202,6 +267,14 @@ try {
     1,
     "只保留一个任务与子代理面板，不叠加另一套监控 UI",
   );
+  assert.equal(
+    await chat("return d.querySelector('.host-task-activity').open;"),
+    false,
+    "委托内容可直接阅读，执行明细默认折叠",
+  );
+  await chat(
+    "const activity=d.querySelector('.host-task-activity');activity.open=true;activity.querySelector('summary').focus();",
+  );
   await evaluate(
     `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);w.detailShapeFetch=original;w.detailShapeMutated=false;w.fetch=async(...args)=>{const detail=String(args[0]).includes('/api/task-detail');const init={...args[1],headers:new w.Headers(args[1]?.headers)};if(detail)init.headers.delete('if-none-match');const response=await original(args[0],init);if(detail){const data=await response.json();data.hasMoreChildren=true;w.detailShapeMutated=true;return new w.Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});}return response;};})()`,
   );
@@ -212,6 +285,18 @@ try {
   await ready(
     `(()=>{const d=${frame};return d.querySelector('.task-panel-detail')?.textContent.includes('部分子会话未显示');})()`,
   );
+  assert.equal(
+    await chat("return d.querySelector('.host-task-activity').open;"),
+    true,
+    "实时内容变化不收起正在阅读的明细",
+  );
+  assert.equal(
+    await chat(
+      "return d.activeElement===d.querySelector('.host-task-activity > summary');",
+    ),
+    true,
+    "详情补刷保留披露控件的键盘焦点",
+  );
   await evaluate(
     `(()=>{const w=(${frame}).defaultView;w.fetch=w.detailShapeFetch;delete w.detailShapeFetch;})()`,
   );
@@ -221,6 +306,7 @@ try {
   await ready(
     `(()=>{const d=${frame};return !d.querySelector('.task-panel-detail')?.textContent.includes('部分子会话未显示');})()`,
   );
+  await chat("d.querySelector('.host-task-activity').open=false;");
   await evaluate(
     `(()=>{const w=(${frame}).defaultView;const original=w.fetch.bind(w);let release;const gate=new Promise(resolve=>release=resolve);const probe={original,release,started:false};w.uiStatusProbe=probe;w.fetch=async(...args)=>{const response=await original(...args);if(String(args[0]).includes('/api/tasks?')&&!probe.started){probe.started=true;await gate;return new w.Response(JSON.stringify({error:'工作台读取测试中断'}),{status:503,headers:{'content-type':'application/json'}});}return response;};})()`,
   );
@@ -267,11 +353,11 @@ try {
     const result = await call("Runtime.evaluate", {
       contextId: world.executionContextId,
       returnByValue: true,
-      expression: `(${measureSurfaceContrast.toString()})(['.task-panel-label','.task-panel-meta','.task-panel-management h3','.host-task-result-heading small','.host-task-message > small','.host-task-message-body'],${frame})`,
+      expression: `(${measureSurfaceContrast.toString()})(['.task-panel-label','.task-panel-meta','.task-panel-management h3','.host-task-result-heading small','.host-task-message > small','.host-task-message-body','.task-panel-filter','.task-panel-state','.task-panel-count','.task-panel-create'],${frame})`,
     });
     assert.equal(result.exceptionDetails, undefined);
     const contrast = result.result.value;
-    assert.equal(contrast.length, 6);
+    assert.equal(contrast.length, 10);
     assert.ok(
       contrast.every((row) => row.ratio >= 4.5),
       `${theme} 整合详情文本对比度：${JSON.stringify(contrast)}`,
@@ -343,6 +429,13 @@ try {
       "return d.querySelector('[data-task-compose-toggle]').getAttribute('aria-expanded');",
     ),
     "true",
+  );
+  assert.equal(
+    await chat(
+      "const toggle=d.querySelector('[data-task-compose-toggle]'),form=d.querySelector('[data-task-compose]');return d.getElementById(toggle.getAttribute('aria-controls')).contains(form)&&form.getBoundingClientRect().top<d.querySelector('.task-panel-body').getBoundingClientRect().top;",
+    ),
+    true,
+    "新建表单在清单之前展开，不埋在详情或长清单后面",
   );
   await chat(
     "d.querySelector('[data-task-compose] button[type=button]').click();",
@@ -462,14 +555,14 @@ try {
     "390px 实时详情与表单不横向溢出",
   );
   const layout = await chat(
-    "return {panel:d.querySelector('.task-panel').getBoundingClientRect().width,detail:d.querySelector('.task-panel-management').getBoundingClientRect().width};",
+    "return {panel:d.querySelector('.task-panel-body').clientWidth,detail:d.querySelector('.task-panel-management').getBoundingClientRect().width};",
   );
   assert.ok(
     layout.detail >= layout.panel - 1,
     `窄屏详情与表单应占满可用栏宽：${JSON.stringify(layout)}`,
   );
   const targets = await chat(
-    "return [...d.querySelectorAll('.task-panel .outline-button')].map(node=>{const r=node.getBoundingClientRect();return {label:node.textContent,height:r.height,width:r.width};});",
+    "return [...d.querySelectorAll('.task-panel .outline-button,.task-panel-filter,.task-panel-search input,.task-panel-select,.task-panel-detail .host-task-disclosure > summary')].map(node=>{const r=node.getBoundingClientRect();return {label:node.textContent,height:r.height,width:r.width};});",
   );
   assert.ok(
     targets.every((row) => row.height >= 44 && row.width >= 44),
@@ -492,6 +585,24 @@ try {
     fields.length > 0 && fields.every((height) => height >= 44),
     "触屏表单与高级配置披露同样保留 44px 触达目标",
   );
+  for (const [width, height] of [
+    [375, 812],
+    [844, 390],
+  ]) {
+    await call("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: true,
+    });
+    assert.equal(
+      await chat(
+        "return d.documentElement.scrollWidth<=d.defaultView.innerWidth;",
+      ),
+      true,
+      `${width}×${height} 下搜索、筛选与表单不横向溢出`,
+    );
+  }
   gate.resolve();
   await until(
     () => f.call(`${prefix}/api/tasks?sessionId=${parent}`),
@@ -506,6 +617,11 @@ try {
     ),
     "false",
     "原生工作真正结束后才展示稳定空态",
+  );
+  assert.equal(
+    await chat("return d.querySelector('.task-panel-management').hidden;"),
+    true,
+    "没有实时任务时只显示一个空态，不再并列无用的详情占位",
   );
   // 后台确认必须走现有父会话交互 UI，不能要求用户猜测子会话 URL。
   await f.command("agent.policy", { id: actor.id, mode: "ask-all" });
@@ -602,6 +718,19 @@ try {
     ),
     "详情必须标明原生消息未回答，不能只显示任务已完成",
   );
+  assert.ok(
+    await chat(
+      "const primary=d.querySelector('.subagent-history-detail .host-task-result > .host-task-message');return primary?.getClientRects().length&&primary.textContent.includes('BROWSER_FIRST_ANSWER');",
+    ),
+    "首次回答直接展示，不能只留在折叠的过程记录中",
+  );
+  assert.equal(
+    await chat(
+      "return d.querySelector('.subagent-history-detail [data-message-submission]').closest('details').open;",
+    ),
+    true,
+    "失败消息默认展开，不隐藏预算失败",
+  );
   assert.equal(
     await chat(
       "return d.documentElement.scrollWidth<=d.defaultView.innerWidth;",
@@ -610,7 +739,7 @@ try {
   );
   assert.deepEqual(driver.errors, []);
   console.log(
-    "Subagent workbench passed: one embedded panel, owned live/history split, visibility cleanup, accessible composer, two themes and narrow touch layout.",
+    "Subagent workbench passed: compact master-detail layout, native scope and controls, filters/search/IME, output-first disclosures, top composer, two themes and responsive touch layout.",
   );
 } finally {
   gate.resolve();

@@ -185,7 +185,7 @@ try {
       `document.body.classList.toggle('dark',${theme === "dark"});document.documentElement.dataset.theme=${JSON.stringify(theme)}`,
     );
     const contrast = await evaluate(
-      `(${measureSurfaceContrast.toString()})(['.task-panel-heading strong','.task-panel-heading small','.task-panel-label','.task-panel-state','.task-panel-meta','[data-task-action="wait:101"]'])`,
+      `(${measureSurfaceContrast.toString()})(['.task-panel-heading h2','.task-panel-heading small','.task-panel-label','.task-panel-state','.task-panel-meta','[data-task-action="wait:101"]'])`,
     );
     assert.equal(contrast.length, 6);
     assert.ok(
@@ -698,6 +698,26 @@ try {
     ),
     false,
     "只读可查看，不把管理按钮伪装为可用",
+  );
+  const readonlyCommands = await evaluate("panelFixture.commands.length");
+  await evaluate("document.querySelector('[data-task-filter=agents]').click()");
+  assert.equal(
+    await evaluate("document.querySelector('.task-panel-filter-empty').hidden"),
+    false,
+    "只读仍可使用类型筛选",
+  );
+  await evaluate(
+    "document.querySelector('[data-task-filter=all]').click();const input=document.querySelector('.task-panel-search input');input.value='后台资料';input.dispatchEvent(new Event('input'));",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('[data-task-id=\"401\"]').hidden"),
+    false,
+    "只读仍可搜索已有任务",
+  );
+  assert.equal(
+    await evaluate("panelFixture.commands.length"),
+    readonlyCommands,
+    "筛选与搜索不提交管理命令",
   );
   await evaluate("panelFixture.select('tree')");
   await until("!!document.querySelector('[data-node-id=n439]')");

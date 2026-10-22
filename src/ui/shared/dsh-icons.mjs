@@ -1,5 +1,11 @@
 // SVG artwork adapted from DeepSeek Harness (MIT). See NOTICE.
 const artwork = {
+  // 工作台控制图标沿用现有描边，避免为少量原生按钮引入整套图标依赖。
+  clock:
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 1.5"/></svg>',
+  stop: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>',
+  refresh:
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 5.5A5.5 5.5 0 1 0 13.4 9M13 2v3.5H9.5"/></svg>',
   tasks:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m6 11 3 3 4-5m2 0h3m-3 6h3"/></svg>',
   // Original workbench glyph, matched to the existing 1.5px stroke system.

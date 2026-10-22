@@ -1,5 +1,6 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
 import { renderTaskDetail } from "./task-detail-view.js";
+import { dshIcon } from "./dsh-icons.mjs";
 
 /**
  * 内置任务面板管理区：当前会话的发起草稿与实时详情，不是另一个任务监控窗口。
@@ -32,6 +33,7 @@ export function createTaskPanelManagement({
     enabled = false,
     root,
     detail,
+    composeSlot,
     timer,
     active = true;
   let model,
@@ -60,19 +62,41 @@ export function createTaskPanelManagement({
   function paint() {
     if (!detail) return;
     syncSelection();
+    root.hidden = !selected && !model?.tasks?.length;
     const data = inspector.data;
     detail.setAttribute("aria-busy", String(inspector.loading));
-    if (inspector.error) detail.textContent = inspector.error;
-    else if (data?.task.status === "terminal") {
+    detail.querySelector(".task-panel-detail-error")?.remove();
+    if (inspector.error) {
+      const error = element(
+        "p",
+        "task-panel-detail-error host-task-error",
+        inspector.error,
+      );
+      error.setAttribute("role", "alert");
+      detail.prepend(error);
+    } else if (data?.task.status === "terminal") {
       selected = "";
       retarget();
       detail.textContent = "任务已离开实时清单，已提交内容可在对话分支查看。";
       void refresh({ force: true });
     } else if (data) renderTaskDetail(detail, data, { statusLabel });
-    else
-      detail.textContent = selected
-        ? "正在读取任务详情…"
-        : "选择任务，查看子代理消息与实时输出。";
+    else {
+      const empty = element("div", "task-panel-detail-empty");
+      const mark = element("span", "task-panel-empty-mark");
+      mark.innerHTML = dshIcon("tasks");
+      empty.append(
+        mark,
+        element("strong", "", selected ? "正在读取任务详情…" : "选择一项任务"),
+        element(
+          "p",
+          "",
+          selected
+            ? "执行状态与输出将在这里更新。"
+            : "点击任务名称，查看委托内容与实时输出。",
+        ),
+      );
+      detail.replaceChildren(empty);
+    }
   }
   function retarget() {
     inspector.setContext({
@@ -117,17 +141,27 @@ export function createTaskPanelManagement({
     const node = element("form", "task-panel-composer");
     node.dataset.taskCompose = "true";
     const fields = element("fieldset");
-    fields.append(element("legend", "", "创建后台子代理"));
-    const name = field(fields, "name", "名称");
+    fields.append(
+      element("legend", "", "新建子代理"),
+      element(
+        "p",
+        "task-panel-composer-hint",
+        "描述任务后即可创建，默认继承当前模型与工具。",
+      ),
+    );
+    const name = field(fields, "name", "名称（可选）");
     name.maxLength = 120;
     name.placeholder = "子代理";
     const prompt = field(fields, "prompt", "委托任务", "textarea");
     prompt.required = true;
     prompt.maxLength = 512000;
-    prompt.rows = 4;
+    prompt.rows = 3;
+    prompt.placeholder = "希望子代理完成什么？补充目标、范围与期望结果。";
     const advanced = element("details", "task-panel-advanced");
-    advanced.append(element("summary", "", "高级配置"));
-    const models = field(advanced, "model", "模型", "select");
+    advanced.append(element("summary", "", "模型、工具与回合预算"));
+    const advancedFields = element("div", "task-panel-config-grid");
+    advanced.append(advancedFields);
+    const models = field(advancedFields, "model", "模型", "select");
     models.append(new Option("继承当前模型", ""));
     for (const row of model?.models ?? [])
       models.append(
@@ -136,7 +170,12 @@ export function createTaskPanelManagement({
           JSON.stringify({ provider: row.provider, modelId: row.modelId }),
         ),
       );
-    const thinking = field(advanced, "thinkingLevel", "思考等级", "select");
+    const thinking = field(
+      advancedFields,
+      "thinkingLevel",
+      "思考等级",
+      "select",
+    );
     thinking.append(new Option("继承当前设置", ""));
     for (const level of [
       "off",
@@ -149,15 +188,19 @@ export function createTaskPanelManagement({
     ])
       thinking.append(new Option(level, level));
     const instructions = field(
-      advanced,
+      advancedFields,
       "instructions",
       "额外指令",
       "textarea",
     );
     instructions.maxLength = 64000;
     instructions.rows = 2;
-    field(advanced, "tools", "工具名称（逗号分隔；留空继承）");
-    const turns = field(advanced, "maxTurns", "最大模型回合（留空为 64）");
+    field(advancedFields, "tools", "工具名称（逗号分隔；留空继承）");
+    const turns = field(
+      advancedFields,
+      "maxTurns",
+      "最大模型回合（留空为 64）",
+    );
     turns.type = "number";
     turns.min = "1";
     turns.max = "256";
@@ -177,7 +220,9 @@ export function createTaskPanelManagement({
     };
     actions.append(submit, close);
     fields.append(actions);
-    node.append(fields, element("p", "task-panel-note"));
+    const note = element("p", "task-panel-note");
+    note.setAttribute("role", "status");
+    node.append(fields, note);
     for (const [key, value] of Object.entries(drafts.get(owner)?.values ?? {}))
       node.elements.namedItem(key).value = value;
     node.oninput = saveDraft;
@@ -258,11 +303,18 @@ export function createTaskPanelManagement({
       ?.closest(".task-panel")
       ?.querySelector("[data-task-compose-toggle]");
     toggle?.setAttribute("aria-expanded", String(composeOpen));
+    if (composeSlot) {
+      composeSlot.id = `task-panel-compose-${owner}`;
+      toggle?.setAttribute("aria-controls", composeSlot.id);
+    }
+    const label = toggle?.querySelector("span");
+    if (label) label.textContent = composeOpen ? "收起表单" : "新建子代理";
     return toggle;
   }
   function select(id) {
     if (!enabled) return;
     inspectionEpoch++;
+    if (selected !== String(id) && detail) detail.scrollTop = 0;
     selected = String(id);
     retarget();
     paint();
@@ -290,19 +342,20 @@ export function createTaskPanelManagement({
       if (!enabled) return;
       if (!root) {
         root = element("aside", "task-panel-management");
-        root.append(element("h3", "", "实时详情"));
+        root.append(element("h3", "", "任务详情"));
         detail = element("div", "task-panel-detail");
         detail.setAttribute("role", "region");
         detail.setAttribute("aria-label", "实时任务详情");
         detail.setAttribute("aria-live", "polite");
         root.append(detail);
       }
+      composeSlot = node.querySelector(".task-panel-compose-slot");
       if (form) {
         form.hidden = !composeOpen;
-        root.prepend(form);
+        composeSlot.append(form);
       }
       detail.id = `task-panel-detail-${owner}`;
-      node.append(root);
+      node.querySelector(".task-panel-body").append(root);
       syncComposeToggle();
       paint();
       if (active && !timer)
@@ -320,7 +373,7 @@ export function createTaskPanelManagement({
       syncComposeToggle();
       if (composeOpen && !form) {
         form = makeComposer(identity);
-        root.prepend(form);
+        composeSlot.append(form);
       }
       if (form) {
         form.hidden = !composeOpen;
@@ -337,7 +390,7 @@ export function createTaskPanelManagement({
       selected = "";
       stop();
       retarget();
-      root = detail = form = undefined;
+      root = detail = form = composeSlot = undefined;
     },
     setActive(value) {
       if (active === value) return;

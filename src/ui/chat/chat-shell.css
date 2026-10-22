@@ -704,6 +704,44 @@ body.chat-shell.desktop-embedded {
 .extension-page-detail.is-builtin {
   padding: 18px 20px;
 }
+/* 任务页已有自己的标题与工具栏，外层返回操作与页签同排，避免重复标题挤占执行区。 */
+.extension-workbench:has(.extension-page-detail .task-panel-workbench) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.extension-workbench:has(.extension-page-detail .task-panel-workbench)
+  > .extension-workbench-header {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0;
+}
+.extension-workbench:has(.extension-page-detail .task-panel-workbench)
+  > .extension-workbench-header
+  h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.extension-workbench:has(.extension-page-detail .task-panel-workbench)
+  > .extension-workbench-layout {
+  display: contents;
+}
+.extension-workbench:has(.extension-page-detail .task-panel-workbench)
+  .extension-page-list {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  padding-bottom: 2px;
+}
+.extension-workbench:has(.extension-page-detail .task-panel-workbench)
+  .extension-page-detail {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
 .extension-page-choice > small {
   font-size: var(--text-ui-xs);
   color: var(--customMessageLabel);

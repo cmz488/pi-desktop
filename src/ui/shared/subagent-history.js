@@ -1,5 +1,10 @@
 import { createSessionPanelLoader } from "./session-panel-loader.js";
-import { renderTaskDetail, taskReceiptLabel } from "./task-detail-view.js";
+import {
+  renderTaskDetail,
+  taskReceiptLabel,
+  hasMessageFailure,
+} from "./task-detail-view.js";
+import { dshIcon } from "./dsh-icons.mjs";
 
 /**
  * 对话分支中的子代理历史：只读查看原生终态委托，不把 owned 会话冒充历史 fork。
@@ -95,11 +100,19 @@ export function createSubagentHistory({ fetchHistory, fetchDetail }) {
       ...pages.flatMap((page) => page.records),
     ];
     for (const record of records.filter((row) => row.status === "terminal")) {
-      const button = element(
-        "button",
-        "subagent-history-record",
-        `${record.name} · #${record.id} · ${taskReceiptLabel(record)}`,
+      const button = element("button", "subagent-history-record");
+      const icon = element("span", "task-panel-marker");
+      icon.innerHTML = dshIcon("branch");
+      const name = element("span", "subagent-history-name", record.name);
+      const status = element(
+        "span",
+        "subagent-history-status",
+        taskReceiptLabel(record),
       );
+      const reference = element("small", "", `#${record.id}`);
+      button.append(icon, name, reference, status);
+      button.dataset.outcome = record.outcome?.status ?? "";
+      button.dataset.messageFailure = String(hasMessageFailure(record));
       button.type = "button";
       button.dataset.subagentRecord = String(record.id);
       button.dataset.workbenchFocus = `record:${record.id}`;

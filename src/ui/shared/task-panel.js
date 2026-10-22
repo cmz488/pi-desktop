@@ -67,6 +67,9 @@ export function createTaskPanel({
   let container;
   let repaint;
   let panelContext = {};
+  let filter = "all",
+    query = "",
+    composing = false;
   let active = true,
     visible = true;
   const management = createTaskPanelManagement({
@@ -90,7 +93,12 @@ export function createTaskPanel({
   const loader = createSessionPanelLoader({
     read: fetchTasks,
     onChange: render,
-    onReset: () => {
+    onReset: (reason) => {
+      composing = false;
+      if (reason === "identity") {
+        filter = "all";
+        query = "";
+      }
       disarm();
       cancelWaiting();
       management.reset();
@@ -132,9 +140,13 @@ export function createTaskPanel({
     const confirming = armed?.key === key && armed.identity === identity;
     const button = element(
       "button",
-      "outline-button",
-      confirming ? "确认中止" : label,
+      key.startsWith("cancel:") && !confirming
+        ? "outline-button task-panel-icon-button task-panel-stop"
+        : "outline-button task-panel-stop",
+      confirming ? "确认中止" : key.startsWith("cancel:") ? undefined : label,
     );
+    if (key.startsWith("cancel:") && !confirming)
+      button.innerHTML = dshIcon("stop");
     button.type = "button";
     button.dataset.taskAction = key;
     const targetLabel = key.startsWith("cancel:")
@@ -253,7 +265,19 @@ export function createTaskPanel({
     const focusedElement = container.contains(document.activeElement)
       ? document.activeElement
       : undefined;
+    // 输入法组合期间不替换搜索框；后台读模型仍更新，结束组合后再呈现最新快照。
+    if (composing && focusedElement?.type === "search") {
+      container
+        .querySelector(".task-panel")
+        ?.setAttribute("aria-busy", String(loader.loading));
+      return;
+    }
     const focused = focusedElement?.dataset.taskAction;
+    const focusedBuiltin = focusedElement?.dataset.workbenchFocus;
+    const selection =
+      focusedElement?.type === "search"
+        ? [focusedElement.selectionStart, focusedElement.selectionEnd]
+        : undefined;
     const { data, error, loading } = loader;
     const sessionId = loader.context.sessionId;
     const identity = loader.capture();
@@ -273,16 +297,43 @@ export function createTaskPanel({
         activeConversations.has(child.id),
     );
     const detailed = management.update(panelContext, data);
+    const delegates = tasks.filter((task) => task.kind === "desk.subagent-run");
+    const entries = [];
+    let filterEmpty;
+    function applyFilter() {
+      const term = query.trim().toLocaleLowerCase();
+      for (const { node, task, depth, haystack } of entries) {
+        const matchesKind =
+          filter === "all" ||
+          (filter === "agents") === (task.kind === "desk.subagent-run");
+        node.hidden = !matchesKind || !haystack.includes(term);
+        node.style.setProperty(
+          "--task-depth",
+          String(filter === "all" && !term ? depth : 0),
+        );
+      }
+      for (const button of root.querySelectorAll("[data-task-filter]"))
+        button.setAttribute(
+          "aria-pressed",
+          String(button.dataset.taskFilter === filter),
+        );
+      if (filterEmpty)
+        filterEmpty.hidden = entries.some(({ node }) => !node.hidden);
+    }
     root.classList.toggle("task-panel-workbench", detailed);
     const header = element("header", "task-panel-header");
     const heading = element("div", "task-panel-heading");
     heading.append(
-      element("strong", "", "任务与子代理"),
+      element("h2", "", "任务与子代理"),
       element(
         "small",
         "",
         data
-          ? `${tasks.length} 项任务 · ${tools.length} 个工具 · ${children.length} 个子会话`
+          ? tasks.length
+            ? `${delegates.length} 个子代理，${tasks.length} 项任务进行中`
+            : tools.length
+              ? "正在执行工具"
+              : "当前没有进行中的任务"
           : loading
             ? "读取中…"
             : "",
@@ -290,15 +341,22 @@ export function createTaskPanel({
     );
     header.append(heading);
     const actions = element("span", "task-panel-actions");
-    const refresh = element("button", "outline-button", "刷新");
+    const refresh = element("button", "outline-button task-panel-icon-button");
+    refresh.innerHTML = dshIcon("refresh");
+    refresh.setAttribute("aria-label", "刷新任务");
+    refresh.title = "刷新任务";
     refresh.type = "button";
     refresh.dataset.taskRefresh = "true";
+    refresh.dataset.workbenchFocus = "task-refresh";
     refresh.onclick = () => void loader.refresh({ force: true });
     actions.append(refresh);
     if (detailed) {
-      const compose = element("button", "outline-button", "新建子代理");
+      const compose = element("button", "outline-button task-panel-create");
+      compose.innerHTML = dshIcon("plus");
+      compose.append(element("span", "", "新建子代理"));
       compose.type = "button";
       compose.dataset.taskComposeToggle = "true";
+      compose.dataset.workbenchFocus = "task-compose-toggle";
       compose.disabled = !identity || !loader.canManage;
       if (compose.disabled)
         compose.title = "当前会话只提供查看，不提供子代理管理";
@@ -308,40 +366,84 @@ export function createTaskPanel({
       };
       actions.append(compose);
     }
-    if (tasks.some((task) => task.background))
-      actions.append(
-        confirmButton(
-          "background",
-          "中止后台",
-          "只取消带后台标记的任务，不影响前台工作",
-          () =>
-            act(
-              {
-                command: "cancel",
-                id: Number(sessionId),
-                sessionId,
-                background: true,
-              },
-              "已提交后台任务中止请求",
-              identity,
-            ),
-          identity,
-        ),
-      );
     header.append(actions);
-    root.append(header, content);
+    root.append(header);
+    const composer = element("div", "task-panel-compose-slot");
+    root.append(composer);
+    if (tasks.length) {
+      const toolbar = element("div", "task-panel-toolbar");
+      const filters = element("div", "task-panel-filters");
+      filters.setAttribute("role", "group");
+      filters.setAttribute("aria-label", "任务类型");
+      for (const [key, label, count] of [
+        ["all", "全部", tasks.length],
+        ["agents", "子代理", delegates.length],
+        ["execution", "其他任务", tasks.length - delegates.length],
+      ]) {
+        const button = element("button", "task-panel-filter");
+        button.type = "button";
+        button.dataset.taskFilter = key;
+        button.dataset.workbenchFocus = `task-filter:${key}`;
+        button.setAttribute("aria-pressed", String(filter === key));
+        button.append(
+          element("span", "", label),
+          element("span", "task-panel-count", String(count)),
+        );
+        button.onclick = () => {
+          if (!button.isConnected || !loader.isCurrent(identity)) return;
+          filter = key;
+          applyFilter();
+        };
+        filters.append(button);
+      }
+      const search = element("label", "task-panel-search");
+      search.innerHTML = dshIcon("search");
+      const input = element("input");
+      input.type = "search";
+      input.setAttribute("aria-label", "搜索任务");
+      input.placeholder = "搜索名称或编号";
+      input.value = query;
+      input.dataset.workbenchFocus = "task-search";
+      input.oninput = () => {
+        if (!input.isConnected || !loader.isCurrent(identity)) return;
+        query = input.value;
+        applyFilter();
+      };
+      input.addEventListener("compositionstart", () => {
+        if (input.isConnected && loader.isCurrent(identity)) composing = true;
+      });
+      input.addEventListener("compositionend", () => {
+        if (!input.isConnected || !loader.isCurrent(identity)) return;
+        composing = false;
+        query = input.value;
+        render();
+      });
+      search.append(input);
+      toolbar.append(filters, search);
+      root.append(toolbar);
+    }
+    const body = element("div", "task-panel-body");
+    body.append(content);
+    root.append(body);
     if (error)
       content.append(element("p", "task-panel-note task-panel-error", error));
-    if (data && !tasks.length && !tools.length && !children.length)
-      content.append(
+    if (data && !tasks.length && !tools.length && !children.length) {
+      const empty = element("div", "task-panel-empty");
+      const mark = element("span", "task-panel-empty-mark");
+      mark.innerHTML = dshIcon("tasks");
+      empty.append(
+        mark,
+        element("strong", "", "当前会话暂无进行中的任务"),
         element(
           "p",
-          "task-panel-empty",
+          "",
           detailed
-            ? "当前会话暂无进行中的任务。已结束的子代理可在「对话分支」查看。"
-            : "暂无运行中的任务。发送提问后，可在这里查看执行进度。",
+            ? "新建子代理开始委托；已结束的记录可在「对话分支」查看。"
+            : "发送提问后，可在这里查看执行进度。",
         ),
       );
+      content.append(empty);
+    }
 
     if (tasks.length) {
       const byId = new Map(tasks.map((task) => [String(task.id), task]));
@@ -353,13 +455,39 @@ export function createTaskPanel({
         node.dataset.taskId = String(task.id);
         node.dataset.kind = task.kind;
         node.dataset.status = task.status;
-        node.style.setProperty("--task-depth", String(depth));
+        const haystack = [
+          task.id,
+          `#${task.id}`,
+          task.name,
+          kindLabel(task.kind),
+          taskStatusLabel(task.status),
+          children.find(
+            (child) =>
+              child.owner?.taskId === taskId ||
+              child.id === task.conversationId,
+          )?.name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLocaleLowerCase();
+        entries.push({ node, task, depth, haystack });
         const marker = element("span", "task-panel-marker");
         marker.innerHTML = dshIcon(
           task.kind === "desk.subagent-run" ? "branch" : "tasks",
         );
-        const copy = element("div", "task-panel-copy");
-        const title = element("div", "task-panel-title");
+        const copy = element(detailed ? "button" : "div", "task-panel-copy");
+        if (detailed) {
+          copy.type = "button";
+          copy.classList.add("task-panel-select");
+          copy.dataset.taskInspect = String(task.id);
+          copy.dataset.taskAction = `inspect:${task.id}`;
+          copy.setAttribute("aria-label", `查看任务 #${task.id} 的实时详情`);
+          copy.onclick = () => {
+            if (copy.isConnected && loader.isCurrent(identity))
+              management.select(task.id);
+          };
+        }
+        const title = element("span", "task-panel-title");
         title.append(
           element(
             "span",
@@ -377,8 +505,12 @@ export function createTaskPanel({
           note.title = task.blockedReason ?? "";
           title.append(note);
         }
+        const child = children.find((row) => row.id === task.conversationId);
         const metadata = [
           `#${task.id}`,
+          ...(task.kind !== "desk.subagent-run" && child?.name
+            ? [child.name]
+            : []),
           ...(task.background ? ["后台"] : []),
           ...(task.owner === null || task.owner === undefined
             ? []
@@ -393,18 +525,6 @@ export function createTaskPanel({
         );
         node.append(marker, copy);
         const rowActions = element("span", "task-panel-row-actions");
-        if (detailed) {
-          const inspect = element("button", "outline-button", "查看");
-          inspect.type = "button";
-          inspect.dataset.taskInspect = String(task.id);
-          inspect.dataset.taskAction = `inspect:${task.id}`;
-          inspect.setAttribute("aria-label", `查看任务 #${task.id} 的实时详情`);
-          inspect.onclick = () => {
-            if (inspect.isConnected && loader.isCurrent(identity))
-              management.select(task.id);
-          };
-          rowActions.append(inspect);
-        }
         const pending = waiting;
         const isWaiting =
           !!pending &&
@@ -412,9 +532,12 @@ export function createTaskPanel({
           pending.input.taskId === taskId;
         const wait = element(
           "button",
-          "outline-button",
-          isWaiting ? "取消等待" : "等待",
+          isWaiting
+            ? "outline-button"
+            : "outline-button task-panel-icon-button",
+          isWaiting ? "取消等待" : undefined,
         );
+        if (!isWaiting) wait.innerHTML = dshIcon("clock");
         wait.type = "button";
         wait.dataset.taskAction = `wait:${task.id}`;
         wait.dataset.waiting = String(isWaiting);
@@ -486,64 +609,91 @@ export function createTaskPanel({
         )
           tree.append(row(task, 0));
       content.append(tree);
+      filterEmpty = element(
+        "p",
+        "task-panel-filter-empty",
+        "没有符合条件的任务，请调整筛选或搜索。",
+      );
+      filterEmpty.setAttribute("role", "status");
+      content.append(filterEmpty);
+      applyFilter();
     }
 
-    if (tools.length) {
-      const list = element("section", "task-panel-list");
-      list.append(element("strong", "", "在跑工具"));
+    const extraChildren = children.filter(
+      (child) =>
+        !delegates.some(
+          (task) => String(task.id) === String(child.owner?.taskId),
+        ),
+    );
+    if (tools.length || extraChildren.length) {
+      const activity = element("details", "task-panel-activity");
+      const previous = container.querySelector(".task-panel-activity");
+      activity.open = previous?.open ?? false;
+      activity.append(
+        element(
+          "summary",
+          "",
+          `执行活动（${tools.length + extraChildren.length}）`,
+        ),
+      );
       for (const tool of tools) {
         const node = element("div", "task-panel-row");
         node.dataset.toolName = tool.name;
-        const copy = element("div", "task-panel-copy");
-        const title = element("div", "task-panel-title");
-        title.append(
+        node.append(
           element("span", "task-panel-label", tool.name),
           element("span", "task-panel-state", taskStatusLabel(tool.status)),
-        );
-        copy.append(
-          title,
           element("small", "task-panel-meta", `会话 #${tool.conversationId}`),
         );
-        node.append(copy);
-        list.append(node);
+        activity.append(node);
       }
-      content.append(list);
-    }
-
-    if (children.length) {
-      const list = element("section", "task-panel-list");
-      list.append(element("strong", "", "子代理会话"));
-      for (const child of children) {
+      for (const child of extraChildren) {
         const node = element("div", "task-panel-row");
         node.dataset.childId = String(child.id);
-        const copy = element("div", "task-panel-copy");
-        const title = element("div", "task-panel-title");
-        title.append(
+        node.append(
           element("span", "task-panel-label", child.name ?? `会话 ${child.id}`),
           element("span", "task-panel-state", child.idle ? "空闲" : "运行中"),
+          element("small", "task-panel-meta", `会话 #${child.id}`),
         );
-        copy.append(
-          title,
-          element(
-            "small",
-            "task-panel-meta",
-            child.owner?.taskId === undefined
-              ? `会话 #${child.id}`
-              : `会话 #${child.id} · 任务 #${child.owner.taskId}`,
-          ),
-        );
-        node.append(copy);
-        list.append(node);
+        activity.append(node);
       }
-      content.append(list);
+      content.append(activity);
+    }
+    if (tasks.some((task) => task.background)) {
+      const footer = element("footer", "task-panel-footer");
+      footer.append(
+        confirmButton(
+          "background",
+          "中止后台",
+          "只取消带后台标记的任务，不影响前台工作",
+          () =>
+            act(
+              {
+                command: "cancel",
+                id: Number(sessionId),
+                sessionId,
+                background: true,
+              },
+              "已提交后台任务中止请求",
+              identity,
+            ),
+          identity,
+        ),
+      );
+      content.append(footer);
     }
     management.render(root);
     container.replaceChildren(root);
-    if (focused)
-      [...root.querySelectorAll("[data-task-action]")]
-        .find((node) => node.dataset.taskAction === focused && !node.disabled)
-        ?.focus({ preventScroll: true });
-    else if (focusedElement?.isConnected)
+    if (focused || focusedBuiltin) {
+      const key = focused ? "taskAction" : "workbenchFocus";
+      const target = [
+        ...root.querySelectorAll("[data-task-action],[data-workbench-focus]"),
+      ].find(
+        (node) =>
+          node.dataset[key] === (focused ?? focusedBuiltin) && !node.disabled,
+      );
+      target?.focus({ preventScroll: true });
+      if (target && selection) target.setSelectionRange(...selection);
+    } else if (focusedElement?.isConnected)
       focusedElement.focus({ preventScroll: true });
   }
 
