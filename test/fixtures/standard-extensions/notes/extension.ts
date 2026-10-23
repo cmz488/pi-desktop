@@ -5,6 +5,9 @@ import { Type } from "typebox";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ToolExecutionStartEvent,
+  ToolExecutionUpdateEvent,
+  ToolExecutionEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -177,6 +180,16 @@ export default function (pi: ExtensionAPI) {
       ),
     });
     if (
+      event.message.role === "toolResult" &&
+      text(event.message.content).includes("TOOL_MESSAGE_REPLACEMENT_PROBE")
+    )
+      return {
+        message: {
+          ...event.message,
+          content: [{ type: "text", text: "TOOL_MESSAGE_REPLACED" }],
+        },
+      };
+    if (
       event.message.role === "assistant" &&
       text(event.message.content) === "REPLACE_THIS_ANSWER"
     )
@@ -188,21 +201,32 @@ export default function (pi: ExtensionAPI) {
       };
   });
   const traceTool = async (
-    event: {
-      type: string;
-      toolName: string;
-      toolCallId: string;
-      parentToolCallId?: string;
-    },
+    event:
+      | ToolExecutionStartEvent
+      | ToolExecutionUpdateEvent
+      | ToolExecutionEndEvent,
     ctx: ExtensionContext,
   ) =>
     trace(ctx, event.type, {
       toolName: event.toolName,
       callId: event.toolCallId,
       parent: event.parentToolCallId,
+      args: "args" in event ? event.args : undefined,
+      partial:
+        "partialResult" in event
+          ? text(event.partialResult.content)
+          : undefined,
+      resultText: "result" in event ? text(event.result.content) : undefined,
+      resultHasRole: "result" in event ? "role" in event.result : undefined,
+      structuredContent:
+        "result" in event ? event.result.structuredContent : undefined,
+      isError: "isError" in event ? event.isError : undefined,
     });
   pi.on("tool_execution_start", traceTool);
-  pi.on("tool_execution_update", traceTool);
+  pi.on("tool_execution_update", async (event, ctx) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await traceTool(event, ctx);
+  });
   pi.on("tool_execution_end", traceTool);
   pi.on("turn_end", async (event, ctx) => {
     await trace(ctx, event.type, {
@@ -417,6 +441,10 @@ export default function (pi: ExtensionAPI) {
         Type.Literal("stream"),
         Type.Literal("ping"),
         Type.Literal("block"),
+        Type.Literal("throw"),
+        Type.Literal("nested"),
+        Type.Literal("usage"),
+        Type.Literal("late"),
       ]),
       text: Type.String(),
     }),
@@ -442,12 +470,50 @@ export default function (pi: ExtensionAPI) {
           content: [{ type: "text", text: "NOTES_PARTIAL_OUTPUT" }],
           details: { calls },
         });
+      if (args.op === "throw") throw new Error("EXPECTED_NATIVE_TOOL_FAILURE");
+      if (args.op === "nested") {
+        const nested = await ctx.executeTool("compat_check", {
+          target: args.text,
+        });
+        return {
+          content: nested.result.content,
+          details: { calls },
+          structuredContent: { text: text(nested.result.content), calls },
+        };
+      }
+      if (args.op === "late")
+        setTimeout(() => {
+          void trace(ctx, "late-update-attempt").then(() =>
+            onUpdate?.({
+              content: [{ type: "text", text: "FORBIDDEN_LATE_UPDATE" }],
+              details: {},
+            }),
+          );
+        }, 80);
       pi.appendEntry("notes-state", { calls });
       const value = `NOTES_RESULT:${args.text}`;
       return {
         content: [{ type: "text", text: value }],
         details: { calls, pings, instance },
         structuredContent: { text: value, calls },
+        ...(args.op === "usage"
+          ? {
+              usage: {
+                input: 7,
+                output: 3,
+                totalTokens: 10,
+                cacheRead: 0,
+                cacheWrite: 0,
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0,
+                },
+              },
+            }
+          : {}),
       };
     },
   });

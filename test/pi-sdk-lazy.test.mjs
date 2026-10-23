@@ -48,4 +48,7 @@ test("startup-critical submodules load on their own", async () => {
   assert.equal(typeof sessions.parseSessionEntries, "function");
   assert.equal(typeof messages.convertToLlm, "function");
   assert.equal(sdk.loadPiMessages(), sdk.loadPiMessages());
+  const pipeline = sdk.loadPiToolPipeline();
+  assert.equal(sdk.loadPiToolPipeline(), pipeline);
+  assert.equal(typeof (await pipeline).runToolCall, "function");
 });

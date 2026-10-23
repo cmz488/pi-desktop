@@ -5,10 +5,32 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startWebSlot } from "../src/server/web.mjs";
 import { until } from "./desktop-fixture.mjs";
+import { createNativeModelRuntime } from "../src/agent/native-model-runtime.mjs";
 import {
   standardExtensionFixture,
   readExtensionTrace,
 } from "./standard-extension-fixture.mjs";
+
+test("请求准备异常构成符合 Pi Usage interface 的错误消息", async () => {
+  const models = createNativeModelRuntime(
+    { modelRuntime: {}, agent: {} },
+    { scope: (_signal, run) => run(), event: async () => {}, abort: () => {} },
+    () => {
+      throw new Error("EXPECTED_TRANSPORT_SETUP_FAILURE");
+    },
+  );
+  const stream = models.streamSimple(
+    { api: "fixture", provider: "fixture", id: "error" },
+    { messages: [] },
+    {},
+  );
+  const events = [];
+  for await (const event of stream) events.push(event);
+  const result = await stream.result();
+  assert.equal(result.stopReason, "error");
+  assert.equal(result.usage.totalTokens, 0);
+  assert.equal(events.at(-1).type, "error");
+});
 
 test("标准 provider 请求／响应／原始流 hooks 经过实际 Durable 模型请求", async (t) => {
   const f = await standardExtensionFixture();

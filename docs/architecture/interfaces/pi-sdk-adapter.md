@@ -23,6 +23,7 @@ export function loadEmbeddedPiSdk();        // -> Promise<namespace>（内嵌入
 export function loadPiSettingsManager(entry = embeddedSdkEntry); // -> Promise<{ SettingsManager, ... }>
 export function loadPiSessionManager(entry = embeddedSdkEntry);  // -> Promise<{ SessionManager, buildSessionProjection, ... }>
 export function loadPiMessages(entry = embeddedSdkEntry);        // -> Promise<{ convertToLlm, ... }>
+export function loadPiToolPipeline(entry = embeddedSdkEntry);    // -> Promise<{ runToolCall, ... }>
 
 export const piSdk;         // 懒命名空间：PATH 入口优先，未加载时任何访问都抛可执行错误
 export const embeddedPiSdk; // 懒命名空间：内嵌入口
@@ -48,6 +49,8 @@ export async function scopedMcpCredentials(agentDir, entry = sdkEntry, sdk);    
 | `./core/http-dispatcher.js`  | 代理与超时（`applyHttpProxySettings`／`configureHttpDispatcher`） |
 | `./core/auth-storage.js`     | 作用域 MCP 凭据后端                                               |
 | `./extensions/mcp/oauth.js`  | MCP OAuth 凭据存储                                                |
+
+工具 pipeline 使用 coding SDK 依赖的 `@earendil-works/pi-agent-core` 公开 `runToolCall`。先从 SDK 位置解析其公开 package.json，再使用公开 import 导出，兼容 ESM-only，不依赖顶层 node_modules 提升；不新增依赖或访问另一版本的 core。它只在实际工具执行时加载，不使用 agentLoop。
 
 ## 不变量
 

@@ -1,13 +1,14 @@
 import { realpath, readFile } from "node:fs/promises";
 import { dirname, join, delimiter } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 
 const packageName = "@earendil-works/pi-coding-agent";
 
 /**
  * Desktop 与 `@earendil-works/pi-coding-agent` 之间的唯一适配层。
  *
- * 接口：`resolvePiSdk`／`sdkEntry`／`embeddedSdkEntry`、`checkPiSdk`、五个 memoized
+ * 接口：`resolvePiSdk`／`sdkEntry`／`embeddedSdkEntry`、`checkPiSdk`、六个 memoized
  *   loader、两个懒命名空间与四个窄兼容函数；深路径表、顺序与错误模式见
  *   docs/architecture/interfaces/pi-sdk-adapter.md。
  * 不变量：按需且 memoize；未加载时读取得到可失败的占位函数，调用或构造才报错；
@@ -146,7 +147,8 @@ let loadedPiSdk,
   embeddedSdkPromise,
   settingsManagerPromise,
   sessionManagerPromise,
-  messagesPromise;
+  messagesPromise,
+  toolPipelinePromise;
 
 export function loadPiSdk() {
   if (loadedPiSdk) return Promise.resolve(loadedPiSdk);
@@ -178,6 +180,23 @@ export function loadPiSessionManager(entry = embeddedSdkEntry) {
 export function loadPiMessages(entry = embeddedSdkEntry) {
   messagesPromise ??= import(new URL("./core/messages.js", entry));
   return messagesPromise;
+}
+
+// 按 coding SDK 自己的依赖解析公开 core 工具 helper，不依赖 npm 的顶层提升布局。
+// core 为 ESM-only；package.json 是公开入口，读取其 import 导出而非用 require 条件解析主入口。
+export function loadPiToolPipeline(entry = embeddedSdkEntry) {
+  toolPipelinePromise ??= (async () => {
+    const path = createRequire(entry).resolve(
+      "@earendil-works/pi-agent-core/package.json",
+    );
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    const root = manifest.exports?.["."];
+    const file = typeof root === "string" ? root : root?.import;
+    if (typeof file !== "string")
+      throw new Error("Pi core 未提供标准 ESM 工具接口");
+    return import(new URL(file, pathToFileURL(path)).href);
+  })();
+  return toolPipelinePromise;
 }
 
 export const piSdk = lazyNamespace(() => loadedPiSdk ?? loadedEmbeddedPiSdk);

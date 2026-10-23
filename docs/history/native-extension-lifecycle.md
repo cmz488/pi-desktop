@@ -105,4 +105,14 @@ Pi 的 turn／settle 现在消费同一 GenerationTask 已提交边界：先由�
 
 最终 **501／501**、check（115 源文件）、两包独立 TypeScript、扩展工作台／只读面板 Chromium及解包 **231 文件**通过。日志 `/tmp/pi-plugins07-native-boundaries-{green,test-final,check,browser,package}.log`。中途一次并发全套出现浏览器工具请求 socket 关闭及 Host 已完成委托状态断言失败；定向两项和后续两次全套通过，未将重跑表述成根因修复，原 `/tmp/pi-plugins07-native-boundaries-test-current.log` 保留，Host 断言追加原生 outcome 作为失败证据。
 
-阶段 07 仍须完成用户／工具消息修改和工具增量、流取消收尾／partial 接入、模型目录与动态配置、会话动作及忙时／nextTurn 投递等完整矩阵；阶段 08／09 仍未交付。
+阶段 07 的其余生命周期继续分项实现，不能以本节的已提交边界专项代替。
+
+## 标准工具 pipeline 子阶段
+
+资源工具不再手写 tool_call／tool_result 决策链：按 coding SDK 的依赖位置加载公开 pi-agent-core runToolCall，继续由 Pi 完成准备／验证、门禁、执行、等待 update、结果与图像规范化。adapter 在实际操作上衔接 start／update／end 和工具消息；完整字段和 structuredContent 保留在事件中，tool message_end 替换及 usage 在唯一 Durable ToolTask 提交前消费。工具 context 先获得已发布助手记录及真实操作信号，嵌套调用沿原 SDK 的 callable tools 和父 ID；旧 afterTools 不再重复投递 end。SDK accepting-updates fence 继续丢弃已经结束执行的迟到 update，不污染下一活动。
+
+七项真实安装包／Host 测试覆盖有序增量与字段、block／throw、工具消息替换、usage、嵌套的实际结果和父身份、迟到 update。最初五项红测 `/tmp/pi-plugins07-tools-red.log` 保留。ESM-only core 的 loader 使用公开 package.json 与 import 导出，不修改依赖或依赖顶层提升；懒加载／契约覆盖此入口。独立 tsc 还拦住了夹具的 nested outcome／usage 字段错误，已按真实类型修复并加强结果断言；同时补齐请求准备异常 DTO 必需的 totalTokens，并增加单元断言。
+
+最终完整 **509／509**、check、两包独立 TypeScript、扩展工作台／只读面板 Chromium、解包 **231 文件／965 KiB** 通过；日志 `/tmp/pi-plugins07-tools-{green,test-final,check,browser,package}.log`。
+
+阶段 07 仍须完成用户／system／custom 消息修改、流取消收尾／partial、会话模型目录与动态配置、会话动作和忙时／nextTurn 投递；阶段 08／09 仍未交付。

@@ -70,6 +70,7 @@ export function createNativeModelRuntime(
           usage: {
             input: 0,
             output: 0,
+            totalTokens: 0,
             cacheRead: 0,
             cacheWrite: 0,
             cost: {

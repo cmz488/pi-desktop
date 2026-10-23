@@ -101,7 +101,8 @@ export function standardModelReply(input) {
       .slice(lastUser + 1)
       .some((message) => message.role === "tool")
   ) {
-    const notes = /^RUN_NOTES_(STREAM|PING|BLOCK)$/.exec(prompt);
+    const notes =
+      /^RUN_NOTES_(STREAM|PING|BLOCK|THROW|NESTED|USAGE|LATE)$/.exec(prompt);
     if (notes)
       return {
         toolCalls: [

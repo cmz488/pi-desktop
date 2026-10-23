@@ -63,6 +63,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 `test/native-extension-boundary.test.mjs` 对真实 Host 的 turn／settle 返回值、原生发布身份、header 稳定、custom／编辑／两种压缩、原任务取消与观察不重放进行验收；连续无状态工具锁定原生检查点不得回灌为扩展状态。
 
+`test/native-extension-tools.test.mjs` 验证真实 Pi pipeline 的工具字段／增量等待／单次结束与消息、block／throw、tool message_end 替换、usage、嵌套父身份与迟到 update fence。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。

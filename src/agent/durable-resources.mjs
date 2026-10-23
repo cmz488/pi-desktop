@@ -3,7 +3,6 @@ import {
   defineExtension,
   defineTool,
   section,
-  AssistantEntry,
   configure,
   hook,
   GenerationTask,
@@ -137,7 +136,7 @@ export function createDurableResources({
         mode: validateApprovalMode(active.approvalMode ?? approvalMode),
       };
       let capabilities;
-      let invocation, lastAssistant;
+      let invocation;
       const bound = Promise.withResolvers();
       void bound.promise.catch(() => {});
       let installed;
@@ -441,15 +440,6 @@ export function createDurableResources({
                 )
                   session.setActiveToolsByName(chosen);
                 const nativeBefore = session.getActiveToolNames();
-                const task = await api.getTask(api.taskId, context);
-                if (task?.input?.assistant !== lastAssistant) {
-                  const entry = await api.commit(
-                    (tx) => tx.entry(AssistantEntry, task.input.assistant),
-                    context,
-                  );
-                  nativeRuntime.record(entry?.model ?? []);
-                  lastAssistant = task.input.assistant;
-                }
                 context.abortSignal?.throwIfAborted();
                 invocation = { api, context };
                 const cancel = () => capabilities.interactions.cancelAll();
@@ -458,15 +448,17 @@ export function createDurableResources({
                 });
                 let result;
                 try {
-                  result = await app.executeTool(
-                    tool.name,
-                    api.callId,
-                    args,
-                    context.abortSignal,
-                    (update) => {
-                      for (const block of update.content ?? [])
-                        if (block.type === "text") api.output(block.text);
-                    },
+                  result = await nativeRuntime.withToolContext(context, () =>
+                    app.executeTool(
+                      tool.name,
+                      api.callId,
+                      args,
+                      context.abortSignal,
+                      (update) => {
+                        for (const block of update.content ?? [])
+                          if (block.type === "text") api.output(block.text);
+                      },
+                    ),
                   );
                 } finally {
                   context.abortSignal?.removeEventListener("abort", cancel);
@@ -498,6 +490,9 @@ export function createDurableResources({
                 }, context);
                 return {
                   content: result.content,
+                  ...(result.usage === undefined
+                    ? {}
+                    : { usage: result.usage }),
                   ...(result.terminate ? { control: { terminate: true } } : {}),
                   ...(result.details === undefined
                     ? {}

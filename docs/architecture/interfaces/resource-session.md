@@ -64,7 +64,7 @@ native 桥：
 
 ```js
 export function createNativeRuntime({ workspace, id, nativeSnapshot, ready, syncTools, onError });
-// -> { record, stateEntries, initialize, input, systemPrompt, modelRuntime, bind, flush,
+// -> { record, stateEntries, withToolContext, initialize, input, systemPrompt, modelRuntime, bind, flush,
 //      beforeRequest, afterResponse, afterTools, afterTurn, beforeSettle, dispose }
 ```
 
@@ -83,6 +83,8 @@ export function createNativeRuntime({ workspace, id, nativeSnapshot, ready, sync
 `src/agent/native-boundary.mjs` 把 SDK 已校验的四种 draft 转换成原提交的 EntryDraft：private custom、custom_message、context_edit 和 compaction。上下文内容由 Pi preview 推导，来源由持久映射解析；编辑不覆盖原记录，压缩复用 Durable head，null 的自保留语义由 SDK 规范化。返回的继续决策须满足原生 runnable context；取消后迟到的 draft／continue 仍被原任务拒绝。每个 handler 后由同一原生 dispatcher 重新构建 preview：先完成此前 handler 的消息准入，再读取 Durable inbox 和已发布上下文，后续 handler 不会看到旧 pending 列表。
 
 `stateEntries()` 是扩展 custom 状态的唯一提取 interface。工具事务与消息／生命周期保存都复用它，排除 Desktop 的配置、来源和导出检查点，不能把 canonical 转录元数据回灌成扩展状态。
+
+`withToolContext(context, execute)` 在 SDK 执行前载入已经提交的助手／调用记录，并把当前 Durable 工具信号绑定到原生 context。资源工具复用同 SDK core 的 runToolCall：参数准备／验证、tool_call 门禁、执行、等待在途 update、tool_result 与图像规范化均由原生 pipeline 拥有。adapter 只按真实操作发出 start／update／end 和 toolResult 消息；message_end 同 role 替换先消费，再回到唯一 ToolTask 提交，usage 不丢失。嵌套调用保持原生父 ID 和 callable tools；SDK 的迟到 update fence 保持，不从网页观察重发工具。
 
 ## 不变量
 

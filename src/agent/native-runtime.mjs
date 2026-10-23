@@ -15,7 +15,7 @@ import {
  * 原生资源会话与 Durable 回合之间的桥（边界文档 seam B 的内侧）。
  *
  * 接口：`createNativeRuntime({ workspace, id, nativeSnapshot, ready, syncTools, onError })` 返回
- *   `{ record, stateEntries, initialize, input, systemPrompt, modelRuntime, bind, flush,
+ *   `{ record, stateEntries, withToolContext, initialize, input, systemPrompt, modelRuntime, bind, flush,
  *      beforeRequest, afterResponse, afterTools, afterTurn, beforeSettle, dispose }`；
  *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
  * 不变量：Pi 拥有扩展状态与 handler 顺序，Durable 拥有被接受的模型回合；资源会话不跑
@@ -49,7 +49,6 @@ export function createNativeRuntime({
   let queue = [],
     draining,
     saved,
-    assistant,
     promptUpdate,
     models,
     assistantStarted = false,
@@ -57,8 +56,7 @@ export function createNativeRuntime({
     turnIndex = -1,
     runInput;
   const signals = new AsyncLocalStorage();
-  let messages = [],
-    toolResults = [];
+  let messages = [];
   const mirrored = new Map();
   const boundRunners = new WeakSet();
   let stopReady;
@@ -353,6 +351,11 @@ export function createNativeRuntime({
   return {
     record: mirror,
     stateEntries,
+    withToolContext: (context, execute) =>
+      signals.run(context.abortSignal, async () => {
+        if (nativeSnapshot) await canonical();
+        return execute();
+      }),
     async initialize() {
       if (!nativeSnapshot) return;
       await canonical();
@@ -491,7 +494,6 @@ export function createNativeRuntime({
           loop = true;
           turnIndex = -1;
           messages = [];
-          toolResults = [];
           const user = request.messages.findLast(
             (message) => message.role === "user",
           );
@@ -578,32 +580,18 @@ export function createNativeRuntime({
         if (!assistantStarted)
           await runner().emit({ type: "message_start", message });
         await session._emitExtensionEvent({ type: "message_end", message });
-        assistant = message;
         messages.push(message);
         if (!nativeSnapshot) mirror([message]);
         await save();
       });
     },
-    async afterTools(assistantId, resultIds) {
+    async afterTools(_assistantId, resultIds) {
       const entries = (await workspace.transcript(id)).entries;
-      assistant =
-        entries
-          .find((entry) => entry.id === assistantId)
-          ?.model?.find((message) => message.role === "assistant") ?? assistant;
-      toolResults = entries
+      const toolResults = entries
         .filter((entry) => resultIds.includes(entry.id))
         .flatMap((entry) => entry.model ?? [])
         .filter((message) => message.role === "toolResult");
-      mirror(toolResults);
       messages.push(...toolResults);
-      for (const result of toolResults)
-        await runner().emit({
-          type: "tool_execution_end",
-          toolCallId: result.toolCallId,
-          toolName: result.toolName,
-          result,
-          isError: !!result.isError,
-        });
       await save();
     },
     async dispose() {

@@ -185,8 +185,12 @@ test("the pi-sdk adapter keeps its deep compatibility paths and exports", async 
       `${path} exists`,
     );
   }
-  const { loadPiSettingsManager, loadPiSessionManager, loadPiMessages } =
-    await import("../src/agent/pi-sdk.mjs");
+  const {
+    loadPiSettingsManager,
+    loadPiSessionManager,
+    loadPiMessages,
+    loadPiToolPipeline,
+  } = await import("../src/agent/pi-sdk.mjs");
   const settings = await loadPiSettingsManager();
   assert.equal(typeof settings.SettingsManager, "function");
   const sessions = await loadPiSessionManager();
@@ -194,6 +198,7 @@ test("the pi-sdk adapter keeps its deep compatibility paths and exports", async 
   assert.equal(typeof sessions.buildSessionProjection, "function");
   const messages = await loadPiMessages();
   assert.equal(typeof messages.convertToLlm, "function");
+  assert.equal(typeof (await loadPiToolPipeline()).runToolCall, "function");
   for (const name of [
     "SettingsManager",
     "SessionManager",

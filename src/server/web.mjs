@@ -16,6 +16,7 @@ import { commandCatalog, webCommands } from "../shared/pi-commands.mjs";
 import {
   checkPiSdk,
   loadEmbeddedPiSdk,
+  loadPiToolPipeline,
   webTerminalTheme,
   configurePiNetwork,
   scopedMcpCredentials,
@@ -1138,37 +1139,76 @@ export async function startWebSlot(options = {}) {
           runner = current.extensionRunner;
         const definition = current.getToolDefinition(name);
         if (!definition) throw new DeskError(409, "工具已变化，请重载资源");
+        const { runToolCall } = await loadPiToolPipeline(options.sdkEntry);
+        const tool = sdk.wrapRegisteredTool(
+          { definition, extensionPath: "pi-durable-desktop" },
+          runner,
+        );
+        const toolCall = { id: callId, name, arguments: args };
+        await current._emitExtensionEvent({
+          type: "tool_execution_start",
+          toolCallId: callId,
+          toolName: name,
+          args,
+        });
         try {
-          const decision = await runner.emitToolCall({
-            type: "tool_call",
-            toolName: name,
-            toolCallId: callId,
-            input: args,
-          });
-          if (decision?.block)
-            throw new DeskError(403, decision.reason ?? "扩展阻止了工具调用");
-          if (name === "ask_user_question")
-            askQuestions = (decision?.input ?? args).questions;
-          const tool = sdk.wrapRegisteredTool(
-            { definition, extensionPath: "pi-durable-desktop" },
-            runner,
-          );
-          let result = await tool.execute(
-            callId,
-            decision?.input ?? args,
+          const finalized = await runToolCall(toolCall, {
+            tools: [tool],
+            assistantMessage: current._findLastAssistantMessage(),
+            context: {
+              messages: current.agent.state.messages,
+              tools: current.agent.state.tools,
+            },
             signal,
-            update,
-          );
-          const changed = await runner.emitToolResult({
-            type: "tool_result",
-            toolName: name,
-            toolCallId: callId,
-            input: args,
-            ...result,
-            isError: !!result.isError,
+            beforeToolCall: async (context) => {
+              const decision = await current.agent.beforeToolCall(
+                context,
+                signal,
+              );
+              if (name === "ask_user_question")
+                askQuestions = context.args.questions;
+              return decision;
+            },
+            afterToolCall: (context) =>
+              current.agent.afterToolCall(context, signal),
+            onUpdate: async (partialResult) => {
+              await current._emitExtensionEvent({
+                type: "tool_execution_update",
+                toolCallId: callId,
+                toolName: name,
+                args,
+                partialResult,
+              });
+              await update?.(partialResult);
+            },
           });
-          if (changed) result = { ...result, ...changed };
-          options.onToolResult?.(name, result);
+          await current._emitExtensionEvent({
+            type: "tool_execution_end",
+            toolCallId: callId,
+            toolName: name,
+            result: finalized.result,
+            isError: finalized.isError,
+          });
+          const message = {
+            role: "toolResult",
+            toolCallId: callId,
+            toolName: name,
+            content: finalized.result.content ?? [],
+            details: finalized.result.details,
+            usage: finalized.result.usage,
+            isError: finalized.isError,
+            timestamp: Date.now(),
+          };
+          await current._emitExtensionEvent({ type: "message_start", message });
+          await current._emitExtensionEvent({ type: "message_end", message });
+          const result = {
+            ...finalized.result,
+            content: message.content,
+            details: message.details,
+            usage: message.usage,
+            isError: message.isError,
+          };
+          await options.onToolResult?.(name, result);
           return result;
         } finally {
           if (name === "ask_user_question") askQuestions = undefined;
