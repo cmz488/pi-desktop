@@ -61,6 +61,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 `test/native-extension-model.test.mjs` 验证真实模型请求经过标准 provider headers／payload／response／raw stream hooks、assistant 流顺序与单次提交、取消信号、重载无重复 handler，另直接验证资源 Agent 守卫未被撤销。
 
+`test/native-extension-boundary.test.mjs` 对真实 Host 的 turn／settle 返回值、原生发布身份、header 稳定、custom／编辑／两种压缩、原任务取消与观察不重放进行验收；连续无状态工具锁定原生检查点不得回灌为扩展状态。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。

@@ -107,13 +107,19 @@ Host capability: sessionTree      // 未声明时返回 { supported: false }（H
 
 `src/session/native-transcript-family.mjs` 的接口：
 
-- `openNativeTranscriptFamily({ workspace, agentDir, directory, owner, agents, branches, resumePath?, pathHint? })` 返回 `sync(agents?)`、`get(id)`、`check()`、幂等 `close()` 与根 `metadata`；`get(id)` 句柄的 `forkSnapshot` 初始化能力见[独立会话契约](independent-sessions.md)。根元数据兼容原来的 `path`／`nativeSessionId`／`digest`，追加 `family`；分支模式只绑定根的历史后代，不绑定工具拥有的子会话。`sync` 串行执行，工作量随族成员及其转录长度增长，不调度新任务。
+- `openNativeTranscriptFamily({ workspace, agentDir, directory, owner, nativeId?, agents, branches, resumePath?, pathHint? })` 返回 `sync(agents?)`、`get(id)`、内部 `snapshot(id)`、`check()`、幂等 `close()` 与根 `metadata`；`get(id)` 句柄的 `forkSnapshot` 初始化能力见[独立会话契约](independent-sessions.md)。根元数据兼容原来的 `path`／`nativeSessionId`／`digest`，追加 `family`；分支模式只绑定根的历史后代，不绑定工具拥有的子会话。`sync` 串行执行，工作量随族成员及其转录长度增长，不调度新任务。
 - `nativeBranchIdentity(owner, id)` 给出稳定、独立的原生身份；重启不重新分配，且不与根复用同一个原生 id。
 - `readNativeTranscriptFamily(directory)` 返回原子发布的清单 `{ version: 1, root, members: [{ id, path, nativeSessionId, name?, forkOf? }] }`，文件名为 `native-sessions.json`；`name` 与 `forkOf: { conversationId, entryId } | null` 是原生记录的导航摘要；旧清单可省略，缺少成员的较旧读取不会清空已绑定分支的摘要。旧宿主无清单返回 `null`，损坏／重复成员或新增摘要类型无效返回 409。
 - 原生 `pi-desktop-family` 条目的 `{ owner, conversationId }` 是只读互操作归属，供发现器处理文件与清单之间的发布窗口。清单和标记都不是第二份会话真相；分支与上下文始终以 Durable 为准。
 - 同步失败向调用者抛出；关闭会尝试释放全部转录锁，不能因一个分支失败就留下其他分支的 writer。
 
 Host 的整族忙闲、归档恢复及单文件接管限制见 [生命周期契约](lifecycle.md)。
+
+### 生命周期的已发布快照
+
+`family.snapshot(id)` 只供已绑定资源 scope 使用；原生句柄的 `snapshot()` 在自身同步队列内完成发布，再返回独立副本 `{header,entries,leafId,mapping,origins}`。mapping 是 Durable → 首个原生 entry，origins 补全同一贡献里的其余原生消息。Pi 事件的身份由这里读取，不使用临时镜像 ID。请求之间的 `check()` 与导出使用同一队列，仍拒绝真正的 TUI／外部文件修改。
+
+owned 及非历史族的内部会话可有独立私有快照，但不进入 `family.members`、`branches`、导航或管理目标；普通客户端读取／owned 门禁不变。独立 SDK 宿主为这种原生资源能力建立真实持久 UUID，不把文件所有权命名空间当成原生会话 ID。原先 JSONL 的消息格式与 system 排除规则保持；model 的完整 system／context 另沿请求 seam 处理。
 
 ## 退回上下文与来源
 

@@ -19,7 +19,10 @@ export default function (pi: ExtensionAPI) {
   let calls = 0,
     pings = 0,
     boundaryContinued = false,
-    settleContinued = false;
+    settleContinued = false,
+    edited = false,
+    compacted = false,
+    queued = false;
   let userPrompt = "";
   const trace = (
     ctx: ExtensionContext,
@@ -35,6 +38,7 @@ export default function (pi: ExtensionAPI) {
         idle: ctx.isIdle(),
         hasSignal: !!ctx.signal,
         signalAborted: !!ctx.signal?.aborted,
+        sessionId: ctx.sessionManager.getSessionId(),
         ...data,
       }) + "\n",
     );
@@ -206,7 +210,112 @@ export default function (pi: ExtensionAPI) {
       messageEntryId: event.messageEntryId,
       toolResultEntryIds: event.toolResultEntryIds,
       boundary: !!event.context,
+      persistedRole:
+        event.messageEntryId &&
+        ctx.sessionManager.getEntry(event.messageEntryId)?.type === "message"
+          ? (
+              ctx.sessionManager.getEntry(event.messageEntryId) as {
+                message: { role: string };
+              }
+            ).message.role
+          : null,
+      canContinue: event.context?.canContinue,
+      resultRoles: event.toolResultEntryIds?.map((id) => {
+        const entry = ctx.sessionManager.getEntry(id);
+        return entry?.type === "message" ? entry.message.role : null;
+      }),
     });
+    if (userPrompt === "QUEUED_BOUNDARY_PROBE" && !queued) {
+      queued = true;
+      pi.sendUserMessage("EXPLICIT_BOUNDARY_INPUT", { deliverAs: "followUp" });
+      return { continue: true };
+    }
+    if (userPrompt === "PRIVATE_DRAFT_PROBE")
+      return {
+        entries: [
+          ...event.entries,
+          {
+            type: "custom",
+            customType: "notes-boundary-private",
+            data: { saved: true },
+          },
+        ],
+      };
+    if (userPrompt === "WAIT_BOUNDARY_PROBE") {
+      const signal = ctx.signal;
+      if (!signal) throw new Error("测试没有取消信号");
+      if (!signal.aborted)
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      return {
+        entries: [
+          ...event.entries,
+          {
+            type: "custom_message",
+            customType: "notes-cancelled-boundary",
+            content: "FORBIDDEN_CANCEL_CONTINUATION",
+            display: true,
+          },
+        ],
+        continue: true,
+      };
+    }
+    if (userPrompt === "CONTEXT_EDIT_BOUNDARY_PROBE" && !edited) {
+      edited = true;
+      const source = event.context.contextEntries.find(
+        (entry) =>
+          entry.sourceEntry.type === "message" &&
+          entry.sourceEntry.message.role === "user",
+      );
+      if (!source) throw new Error("测试没有用户 entry");
+      return {
+        entries: [
+          ...event.entries,
+          {
+            type: "context_edit",
+            targetId: source.sourceEntry.id,
+            replacement: {
+              content: [{ type: "text", text: "EDITED_INPUT_CONTEXT" }],
+            },
+          },
+          {
+            type: "custom_message",
+            customType: "notes-edit-follow",
+            content: "EDIT_FOLLOW_CONTEXT",
+            display: true,
+          },
+        ],
+        continue: true,
+      };
+    }
+    if (userPrompt.startsWith("COMPACTION_BOUNDARY_") && !compacted) {
+      compacted = true;
+      const source = event.context.contextEntries.find(
+        (entry) =>
+          entry.sourceEntry.type === "message" &&
+          entry.sourceEntry.message.role === "user",
+      );
+      return {
+        entries: [
+          ...event.entries,
+          {
+            type: "compaction",
+            summary: "BOUNDARY_SUMMARY",
+            firstKeptEntryId: userPrompt.endsWith("NULL")
+              ? null
+              : (source?.sourceEntry.id ?? null),
+          },
+          {
+            type: "custom_message",
+            customType: "notes-compaction-follow",
+            content: "COMPACTION_FOLLOW_CONTEXT",
+            display: true,
+          },
+        ],
+        continue: true,
+      };
+    }
     if (userPrompt === "TURN_BOUNDARY_PROBE" && !boundaryContinued) {
       boundaryContinued = true;
       return {
@@ -230,6 +339,13 @@ export default function (pi: ExtensionAPI) {
     await trace(ctx, event.type, {
       outcome: event.outcome,
       boundary: !!event.context,
+      privateEntryId: ctx.sessionManager
+        .getBranch()
+        .find(
+          (entry) =>
+            entry.type === "custom" &&
+            entry.customType === "notes-boundary-private",
+        )?.id,
     });
     if (userPrompt === "SETTLE_BOUNDARY_PROBE" && !settleContinued) {
       settleContinued = true;

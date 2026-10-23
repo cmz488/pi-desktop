@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createNativeModelRuntime } from "./native-model-runtime.mjs";
+import { compileNativeBoundary } from "./native-boundary.mjs";
+import { InboxDoc, LiveDoc } from "@earendil-works/pi-durable";
 import { contentText } from "../shared/conversation.mjs";
 import {
   loadPiMessages,
@@ -12,8 +14,9 @@ import {
 /**
  * 原生资源会话与 Durable 回合之间的桥（边界文档 seam B 的内侧）。
  *
- * 接口：`createNativeRuntime({ workspace, id, ready, syncTools, onError })` 返回
- *   `{ record, input, systemPrompt, modelRuntime, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
+ * 接口：`createNativeRuntime({ workspace, id, nativeSnapshot, ready, syncTools, onError })` 返回
+ *   `{ record, stateEntries, initialize, input, systemPrompt, modelRuntime, bind, flush,
+ *      beforeRequest, afterResponse, afterTools, afterTurn, beforeSettle, dispose }`；
  *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
  * 不变量：Pi 拥有扩展状态与 handler 顺序，Durable 拥有被接受的模型回合；资源会话不跑
  *   第二个模型循环；原生输入经准入进入 Durable，观察与事件回放不重新触发执行。
@@ -32,6 +35,7 @@ const signature = (message) =>
 export function createNativeRuntime({
   workspace,
   id,
+  nativeSnapshot,
   ready,
   syncTools,
   onError,
@@ -48,7 +52,10 @@ export function createNativeRuntime({
     assistant,
     promptUpdate,
     models,
-    assistantStarted = false;
+    assistantStarted = false,
+    loop = false,
+    turnIndex = -1,
+    runInput;
   const signals = new AsyncLocalStorage();
   let messages = [],
     toolResults = [];
@@ -82,19 +89,26 @@ export function createNativeRuntime({
     if (!disposed) onError(error);
   };
   const runner = () => session.extensionRunner;
-  async function save(extra = []) {
-    if (disposed) return;
-    const entries = JSON.parse(
+  function stateEntries() {
+    return JSON.parse(
       JSON.stringify(
         session.sessionManager
           .getBranch()
-          .filter((entry) => entry.type === "custom")
+          .filter(
+            (entry) =>
+              entry.type === "custom" &&
+              !entry.customType.startsWith("pi-desktop-"),
+          )
           .map(({ customType, data }) => ({
             customType,
             ...(data === undefined ? {} : { data }),
           })),
       ),
     );
+  }
+  async function save(extra = []) {
+    if (disposed) return;
+    const entries = stateEntries();
     const next = JSON.stringify(entries);
     if (saved === next && !extra.length) return;
     await workspace.persistNative(id, entries, extra);
@@ -216,6 +230,99 @@ export function createNativeRuntime({
     }
     session.refreshContext();
   }
+  async function canonical() {
+    await save();
+    const snapshot = await nativeSnapshot(id);
+    session.sessionManager._loadEntries([snapshot.header, ...snapshot.entries]);
+    if (snapshot.leafId) session.sessionManager.branch(snapshot.leafId);
+    else session.sessionManager.resetLeaf();
+    session.refreshContext();
+    mirrored.clear();
+    for (const entry of session.sessionManager.getBranch())
+      if (entry.type === "message") {
+        const key = signature(entry.message);
+        mirrored.set(key, (mirrored.get(key) ?? 0) + 1);
+      }
+    return snapshot;
+  }
+  async function endLoop() {
+    if (!loop) return;
+    loop = false;
+    await runner().emit({ type: "agent_end", messages });
+  }
+  async function boundary(type, event, api, context) {
+    return signals.run(context.abortSignal, async () => {
+      if (type === "agent_before_settle") await endLoop();
+      await flush();
+      let snapshot = await canonical();
+      const mapping = new Map(snapshot.mapping);
+      const entries = new Map(
+        snapshot.entries.map((entry) => [entry.id, entry]),
+      );
+      const messageEntryId = mapping.get(event.assistant);
+      const toolResultEntryIds = event.results.map((id) => mapping.get(id));
+      if (!messageEntryId || toolResultEntryIds.some((id) => !id))
+        throw new Error("原生边界缺少已发布的消息身份");
+      const result = await runner().emitBoundary(
+        {
+          type,
+          outcome: event.outcome,
+          ...(type === "turn_end"
+            ? {
+                turnIndex,
+                message: entries.get(messageEntryId).message,
+                toolResults: toolResultEntryIds.map(
+                  (id) => entries.get(id).message,
+                ),
+                messageEntryId,
+                toolResultEntryIds,
+              }
+            : {}),
+        },
+        async (drafts) => {
+          await flush();
+          snapshot = await canonical();
+          const pending =
+            (await api.snapshot(InboxDoc, id, context))?.items.flatMap(
+              (item) =>
+                item.mode === "write"
+                  ? []
+                  : item.entry?.data?.nativeMessage
+                    ? [item.entry.data.nativeMessage]
+                    : (item.entry?.model ?? [
+                        {
+                          role: "user",
+                          content: item.content,
+                          timestamp: Date.now(),
+                        },
+                      ]),
+            ) ?? [];
+          const preview = session._buildBoundaryContext(drafts, type);
+          preview.pendingMessages.push(...pending);
+          if (pending.length) preview.canContinue = true;
+          return preview;
+        },
+      );
+      let continuation = result.continue;
+      if (continuation && !result.context.canContinue) {
+        session._reportInvalidBoundaryContinuation(type);
+        continuation = false;
+      }
+      const drafts = await compileNativeBoundary(
+        session,
+        result.entries,
+        snapshot,
+      );
+      if (
+        type === "turn_end" &&
+        event.automatic &&
+        event.outcome !== "completed"
+      )
+        await endLoop();
+      await save();
+      return { entries: drafts, continue: continuation };
+    });
+  }
   async function settle() {
     if (disposed || settling || !session) return;
     const active = await workspace.agent(id);
@@ -225,7 +332,7 @@ export function createNativeRuntime({
     settling = true;
     try {
       run = false;
-      await runner().emit({ type: "agent_end", messages });
+      await endLoop();
       const previousController = controller;
       await flush();
       if (
@@ -245,6 +352,27 @@ export function createNativeRuntime({
   }
   return {
     record: mirror,
+    stateEntries,
+    async initialize() {
+      if (!nativeSnapshot) return;
+      await canonical();
+      const active = await workspace.agent(id);
+      const model =
+        active.model &&
+        session.modelRuntime.getModel(
+          active.model.provider,
+          active.model.modelId,
+        );
+      // 只恢复已有配置，不把绑定前的投影同步伪装成用户 setModel／model_select 操作。
+      if (model) session.agent.state.model = model;
+      session.setThinkingLevel(active.thinkingLevel);
+      if (active.nativeInitialized || !active.nativeDefaults) {
+        const loaded = new Set(session.getAllTools().map((tool) => tool.name));
+        session.setActiveToolsByName(
+          active.tools.filter((name) => loaded.has(name)),
+        );
+      }
+    },
     input: processInput,
     // force 仅属于 provider 请求，不能被 Durable 的 section renderer 记录进历史。
     systemPrompt: () =>
@@ -333,13 +461,25 @@ export function createNativeRuntime({
       await flush();
       await save();
     },
-    async beforeRequest(request, context) {
+    afterTurn: (event, api, context) =>
+      boundary("turn_end", event, api, context),
+    beforeSettle: (event, api, context) =>
+      boundary("agent_before_settle", event, api, context),
+    async beforeRequest(request, context, api) {
       return signals.run(context.abortSignal, async () => {
         await waitReady(context);
         context.abortSignal?.throwIfAborted();
         idle = false;
-        mirror(request.messages);
-        let pending = [];
+        if (nativeSnapshot) await canonical();
+        else mirror(request.messages);
+        const inputRun =
+          api && (await api.snapshot(LiveDoc, id, context))?.run?.inputs[0];
+        if (run && inputRun !== runInput) {
+          await endLoop();
+          run = false;
+        }
+        let pending = [],
+          inputMessage;
         if (!run) {
           session._runSystemPromptOptions = undefined;
           promptUpdate = undefined;
@@ -347,6 +487,9 @@ export function createNativeRuntime({
             (await workspace.transcript(id)).entries.at(-1)?.id ?? 0;
           controller = new AbortController();
           run = true;
+          runInput = inputRun;
+          loop = true;
+          turnIndex = -1;
           messages = [];
           toolResults = [];
           const user = request.messages.findLast(
@@ -355,7 +498,7 @@ export function createNativeRuntime({
           const origin = request.entries?.findLast((entry) =>
             entry.model?.some((message) => message.role === "user"),
           );
-          const input = origin?.data?.nativeMessage ?? user;
+          inputMessage = origin?.data?.nativeMessage ?? user;
           const promptOptions = runner()
             .createCommandContext()
             .getSystemPromptOptions();
@@ -391,14 +534,25 @@ export function createNativeRuntime({
             await workspace.transcript(id, { since: prior })
           ).entries.flatMap((entry) => entry.model ?? []);
           await runner().emit({ type: "agent_start" });
-          if (input) {
-            messages.push(input);
-            await runner().emit({ type: "message_start", message: input });
-            await runner().emit({ type: "message_end", message: input });
-          }
-          controller.signal.throwIfAborted();
         }
-        await runner().emit({ type: "turn_start" });
+        if (!loop) {
+          messages = [];
+          loop = true;
+          turnIndex = -1;
+          await runner().emit({ type: "agent_start" });
+        }
+        turnIndex++;
+        await runner().emit({
+          type: "turn_start",
+          turnIndex,
+          timestamp: Date.now(),
+        });
+        if (inputMessage) {
+          messages.push(inputMessage);
+          await runner().emit({ type: "message_start", message: inputMessage });
+          await runner().emit({ type: "message_end", message: inputMessage });
+        }
+        controller.signal.throwIfAborted();
         assistantStarted = false;
         const incoming = [...request.messages, ...pending];
         const firstSystem = incoming.findIndex(
@@ -426,9 +580,7 @@ export function createNativeRuntime({
         await session._emitExtensionEvent({ type: "message_end", message });
         assistant = message;
         messages.push(message);
-        mirror([message]);
-        if (message.stopReason !== "toolUse")
-          await runner().emit({ type: "turn_end", message, toolResults: [] });
+        if (!nativeSnapshot) mirror([message]);
         await save();
       });
     },
@@ -452,11 +604,6 @@ export function createNativeRuntime({
           result,
           isError: !!result.isError,
         });
-      await runner().emit({
-        type: "turn_end",
-        message: assistant,
-        toolResults,
-      });
       await save();
     },
     async dispose() {

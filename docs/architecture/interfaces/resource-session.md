@@ -17,6 +17,7 @@ export function createDurableResources({
   noExtensions = false,// 可选；不加载用户扩展（受限场景）
   readOnly = false,    // 可选；只读 Agent
   nativeResources = {},// 可选；宿主注入的原生资源实现
+  nativeSnapshot,      // 内部；async id -> 同作用域、已经发布的原生转录快照
   durableTools = [],   // 可选；要暴露的 Durable 工具名
   approvalMode = "yolo", // 可选；必须通过 validateApprovalMode
   providers,           // 可选；模型 provider 注册表
@@ -62,8 +63,9 @@ facade.execute(action, ...args);
 native 桥：
 
 ```js
-export function createNativeRuntime({ workspace, id, ready, syncTools, onError });
-// -> { record, input, systemPrompt, modelRuntime, bind, flush, beforeRequest, afterResponse, afterTools, dispose }
+export function createNativeRuntime({ workspace, id, nativeSnapshot, ready, syncTools, onError });
+// -> { record, stateEntries, initialize, input, systemPrompt, modelRuntime, bind, flush,
+//      beforeRequest, afterResponse, afterTools, afterTurn, beforeSettle, dispose }
 ```
 
 `facade.execute("input", message, {original?,requestId?,images?,source?,mode?})` 在模型准入前处理标准 input：注册命令先于 input，普通输入的 transform／handled 等待 Pi runner，再走既有技能／模板展开。Desktop 的公开技能包装格式保留，模板继续由 Pi 展开；显式请求展开的程序输入走 SDK 的原生技能／模板路径。默认 source 为 rpc；程序用户消息为 extension。返回 `{message,images}` 或 `{handled:true}`。旧 `expandPrompt` 仍保留只展开／命令的兼容 interface；当前 HTTP 输入使用新的完整预处理路径。
@@ -75,6 +77,12 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 `modelRuntime(api, context)` 等待同会话资源后选择 Pi Models；未注册该模型时保持 Durable 默认集合。generation 与 compaction 均在原任务内使用该 resolver。`src/agent/native-model-runtime.mjs` 的 adapter 只借用绑定的 SDK 请求 transport，保留资源 Agent 的 streamFunction 守卫与关闭的 cache warming，不调用资源 prompt／continue。provider headers、payload 变换、响应和原始流 callback 由原 SDK 链路等待；assistant 标准 stream 事件按序投影，不重复 message_start。
 
 `bind(session, {stream})` 的 transport 仅由资源宿主内部传入，不成为浏览器能力或 Pi 扩展的另一执行入口。异步 signal scope 让请求 callback 使用当前 Durable 操作信号，SDK 自身的工具 signal 与 stale guard 继续保留；关闭时清理 scope。
+
+`afterTurn`／`beforeSettle` 在原 GenerationTask 的已提交边界内等待 `runner.emitBoundary`。`messageEntryId`、`toolResultEntryIds` 来自同一原生导出器已经发布的记录与映射；上下文 manager 使用 SDK 的 in-memory load／projection，不以镜像临时 ID 冒充边界身份。turn_start 提供真实顺序的索引和时间；agent_end 先于 agent_before_settle，turn continuation 与 settle continuation 保留各自的 agent loop 事件，不重复 before_agent_start。
+
+`src/agent/native-boundary.mjs` 把 SDK 已校验的四种 draft 转换成原提交的 EntryDraft：private custom、custom_message、context_edit 和 compaction。上下文内容由 Pi preview 推导，来源由持久映射解析；编辑不覆盖原记录，压缩复用 Durable head，null 的自保留语义由 SDK 规范化。返回的继续决策须满足原生 runnable context；取消后迟到的 draft／continue 仍被原任务拒绝。每个 handler 后由同一原生 dispatcher 重新构建 preview：先完成此前 handler 的消息准入，再读取 Durable inbox 和已发布上下文，后续 handler 不会看到旧 pending 列表。
+
+`stateEntries()` 是扩展 custom 状态的唯一提取 interface。工具事务与消息／生命周期保存都复用它，排除 Desktop 的配置、来源和导出检查点，不能把 canonical 转录元数据回灌成扩展状态。
 
 ## 不变量
 
@@ -96,7 +104,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 2. 新建或切换会话后调用 `selectTools(active, { defaults: true })`；只在需要补齐新工具时用 `newOnly: true`（它会在扩展缺失时提前返回）。
 3. `reload(active)` 之后必须重新 `selectTools(..., { defaults: true, newOnly: true })`，否则新加载的工具不会进入会话 agent 文档。
 4. `close()` 在 worker 停止路径上调用；之后任何 `ensure` 调用都不再返回宿主。
-5. `nativeRuntime.bind(session)` 必须在 Pi 会话创建之后、首次 `beforeRequest` 之前调用（`bind` 会接管 `sendUserMessage`／`sendCustomMessage` 并包装 `createContext`）。重载使用 SDK 的 `beforeSessionStart` seam，先失效旧 runner，再清理旧展示并给 fresh runner 绑定，最后才让新的 `session_start` handler 运行；不额外调用一次 `bindExtensions()` 来制造重复启动事件。标准 command context 的 `reload()` 与宿主重载共用该路径。
+5. `nativeRuntime.bind(session)` 与 `initialize()` 必须在 Pi 会话创建之后、session_start 之前完成；先注册 Durable 工具，再建立／导入 canonical 转录，最后给资源 manager 载入同一 header 和已提交记录。初始绑定可异步等待这一局部就绪，不等待插件可能打开的启动对话框。`bind` 必须在首次 `beforeRequest` 之前调用（`bind` 会接管 `sendUserMessage`／`sendCustomMessage` 并包装 `createContext`）。重载使用 SDK 的 `beforeSessionStart` seam，先失效旧 runner，再清理旧展示并给 fresh runner 绑定，最后才让新的 `session_start` handler 运行；不额外调用一次 `bindExtensions()` 来制造重复启动事件。标准 command context 的 `reload()` 与宿主重载共用该路径。
 6. 桥接的 `isIdle`、`hasPendingMessages`、`signal`、`abort` 保留 Pi 的 context 失效错误；旧 context 不能读取新回合 signal，或中止重载后的会话。重载／换会话清除旧状态、working／streaming 展示并释放旧 widget。
 
 ## 错误模式
@@ -118,6 +126,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 
 ## 可执行证据
 
+- `test/native-extension-boundary.test.mjs`：真实 Host 的已发布 ID／preview、turn／settle 继续、四种 draft、稳定会话 header、取消中的迟到决策，以及观察不重放；无状态工具不会把检查点回灌成扩展状态。
 - `test/native-runtime-lifecycle.test.mjs`：真实 SDK context 的 stale guard；原生安装包在新 `session_start` 前获得正确 signal／idle、标准命令重载路径、唯一命令和卸载状态清理。
 - `test/standard-extension-baseline.test.mjs`：真实 Pi 安装的两个普通扩展、发现／过滤／重载、工具／命令与原生对照；这是调查基线，不把事件／交互缺口列为已支持，详见[兼容矩阵](../../references/pi-extension-compatibility-baseline.md)。
 - `test/durable-features.test.mjs`：工具可用性、权限门控、ask_user／MCP 交互、启动对话框与 `agent_browser` 注册。

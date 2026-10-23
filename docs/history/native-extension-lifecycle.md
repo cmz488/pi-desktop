@@ -93,4 +93,16 @@
 
 首次全套出现一次来源会话文件摘要断言失败，原日志 `/tmp/pi-plugins07-model-hooks-test.log` 保留。一次实际场景文件对照、六个并行隔离复现、带仅诊断文件差异的全套及移除诊断后的最终全套均未重现；未修改原断言，未将重跑表述成根因修复，临时插桩已删除。
 
-阶段 07 尚须完成会话模型目录／动态模型配置、真实 turn／settle／partial 决策与身份、用户／工具消息及工具字段、会话变更和忙时投递等完整矩阵。
+阶段 07 的其他生命周期继续分项实现，不能以本节的模型流专项代替。
+
+## 原生已提交边界与快照子阶段
+
+Pi 的 turn／settle 现在消费同一 GenerationTask 已提交边界：先由既有原生转录导出器发布，再取真正的 Pi entry ID 与 Durable 来源映射。初始绑定在工具注册后、session_start 前载入同一 header；原生导入不再靠额外 reload 重放启动。owned／非历史族快照不进入族成员或导航。普通 JSONL 消息与 system 排除的兼容格式保持，文件检查与本 writer 的发布串行，外部 TUI 修改仍拒绝。
+
+原 SDK 负责 handler 顺序、draft 校验和 preview；adapter 只把 private custom／custom_message／context_edit／compaction 转成原边界事务的 EntryDraft。原始记录保留，编辑影响模型上下文；压缩复用原生投影与 Durable head，null 自保留按 SDK 写成自身 ID。每个 handler 后重新完成消息准入并读取 inbox，后续 handler 能看到显式新输入。turn_start 元数据及初始消息顺序、agent_end／before_settle 顺序、turn 与 settle 两种继续保持，取消后的迟到决策不会产生新请求。
+
+新增 **10 项**真实 Host 回归；最初三项与动态 pending preview 分别在 `/tmp/pi-plugins07-native-boundaries-red.log`、`/tmp/pi-plugins07-native-preview-red.log` 失败。无状态工具复现了另一真实责任错误：工具事务直接复制全部 custom，把 Desktop 检查点回灌进扩展状态，独立 MCP 场景累计到约 29 万条／72 MB。现工具与生命周期统一使用 stateEntries，原失败与最小无状态工具回归转绿，诊断插桩已删除；保留 `/tmp/pi-plugins07-native-{state-red,state-green,boundaries-growth}.log`。初始化导入早于工具注册、改变原 JSONL system 格式也由原断言拦住，均已修复而未删除断言。
+
+最终 **501／501**、check（115 源文件）、两包独立 TypeScript、扩展工作台／只读面板 Chromium及解包 **231 文件**通过。日志 `/tmp/pi-plugins07-native-boundaries-{green,test-final,check,browser,package}.log`。中途一次并发全套出现浏览器工具请求 socket 关闭及 Host 已完成委托状态断言失败；定向两项和后续两次全套通过，未将重跑表述成根因修复，原 `/tmp/pi-plugins07-native-boundaries-test-current.log` 保留，Host 断言追加原生 outcome 作为失败证据。
+
+阶段 07 仍须完成用户／工具消息修改和工具增量、流取消收尾／partial 接入、模型目录与动态配置、会话动作及忙时／nextTurn 投递等完整矩阵；阶段 08／09 仍未交付。

@@ -41,6 +41,7 @@ export function createDurableResources({
   noExtensions = false,
   readOnly = false,
   nativeResources = {},
+  nativeSnapshot,
   durableTools = [],
   approvalMode = "yolo",
   providers,
@@ -137,6 +138,8 @@ export function createDurableResources({
       };
       let capabilities;
       let invocation, lastAssistant;
+      const bound = Promise.withResolvers();
+      void bound.promise.catch(() => {});
       let installed;
       const installedReady = new Promise((resolve) => {
         installed = resolve;
@@ -144,6 +147,7 @@ export function createDurableResources({
       const nativeRuntime = (createdRuntime = createNativeRuntime({
         workspace,
         id: active.id,
+        nativeSnapshot,
         ready: async (context) => {
           await installedReady;
           if (context) await ready(context);
@@ -241,8 +245,17 @@ export function createDurableResources({
         approvalPolicy,
         customTools,
         resourcesOnly: true,
-        bindResourceSession: (current, transport) =>
-          nativeRuntime.bind(current, transport),
+        bindResourceSession: async (current, transport) => {
+          nativeRuntime.bind(current, transport);
+          await installedReady;
+          try {
+            await nativeRuntime.initialize();
+            bound.resolve();
+          } catch (error) {
+            bound.reject(error);
+            throw error;
+          }
+        },
         extensionFactories: browser
           ? [{ name: "desktop-browser", factory: (pi) => browser.factory(pi) }]
           : [],
@@ -353,6 +366,7 @@ export function createDurableResources({
           }
         });
       host.approvalPolicy = approvalPolicy;
+      host.bound = bound.promise;
       host.install = () => {
         const session = app.runtime.session;
         const tools = session
@@ -377,8 +391,12 @@ export function createDurableResources({
             hook(GenerationTask, {
               modelRuntime: (api, context) =>
                 nativeRuntime.modelRuntime(api, context),
-              beforeRequest: (request, _api, context) =>
-                nativeRuntime.beforeRequest(request, context),
+              beforeRequest: (request, api, context) =>
+                nativeRuntime.beforeRequest(request, context, api),
+              afterTurn: (event, api, context) =>
+                nativeRuntime.afterTurn(event, api, context),
+              beforeSettle: (event, api, context) =>
+                nativeRuntime.beforeSettle(event, api, context),
               afterResponse: (message, _api, context) =>
                 nativeRuntime.afterResponse(message, context),
               afterTools: (assistant, results) =>
@@ -476,17 +494,7 @@ export function createDurableResources({
                     DesktopResources,
                     api.conversationId,
                   );
-                  document.entries = JSON.parse(
-                    JSON.stringify(
-                      session.sessionManager
-                        .getBranch()
-                        .filter((entry) => entry.type === "custom")
-                        .map(({ customType, data }) => ({
-                          customType,
-                          ...(data === undefined ? {} : { data }),
-                        })),
-                    ),
-                  );
+                  document.entries = nativeRuntime.stateEntries();
                 }, context);
                 return {
                   content: result.content,
@@ -698,6 +706,7 @@ export function createDurableResources({
     { defaults = false, newOnly = false } = {},
   ) {
     const host = await ensureHost(active);
+    await host.bound;
     await host.update(async () => {
       const latest = await workspace.agent(active.id);
       if (newOnly && !latest.extensions.includes(host.scope)) return;

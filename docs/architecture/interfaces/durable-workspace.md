@@ -40,7 +40,7 @@ workspace.live(id?)        // async -> 流式期间的轻量视图；也可观�
 workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思考级别、扩展、工具、cwd）
 workspace.execute(command, input?, { signal, presentation } = {})  // async -> 命令结果；signal 只供 wait 观察者
 workspace.recordInput(id, original, requestId?) // 原生 passive write 的只展示命令，不发起模型
-workspace.transcript(id)   // async -> { entries, presentations, ... }：Pi 消息形状的投影
+workspace.transcript(id, {since?,allowOwned?} = {}) // 增量 journal／来源；默认仍不越过 owned 门禁
 workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生状态／消息；可预置初始化资源状态
 workspace.importNative(id, entries, {digest} = {})                   // 导入原生树并核对初始化摘要
 workspace.install(extension)                         // 运行期装入 Durable 扩展
@@ -53,6 +53,8 @@ workspace.taskDetail(id, taskId);                      // 同 owned 范围的持
 workspace.subagentHistory(id, {before?,limit?} = {});    // owned 终态记录，默认 20，范围 1–50
 workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，须先于 resume
 ```
+
+`transcript` 的内部 `allowOwned:true` 仅供已绑定的 owned 原生快照读取 journal，不改变 HTTP、任务管理或普通读接口的归属。默认 owned 校验保持；该参数不从客户端命令采纳。
 
 `persistNative` 的 messages 项为 `{message,triggerTurn?,requestId?,mode?}`：普通项保存原生消息和模型贡献；triggerTurn 项通过原生 entry input 接纳，消息与模型输入是同一个 entry，不生成额外 `pi.user`。mode 沿原生 steer／followUp，回执／取消／恢复仍由 Durable 拥有。
 

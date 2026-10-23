@@ -276,7 +276,11 @@ test(
       "原生已终态与中止标记分开",
     );
     assert.deepEqual(cancelled.body.task, waited.body.task);
-    assert.equal(cancelled.body.task.outcome.status, "completed");
+    assert.equal(
+      cancelled.body.task.outcome.status,
+      "completed",
+      JSON.stringify(cancelled.body.task.outcome),
+    );
   },
 );
 

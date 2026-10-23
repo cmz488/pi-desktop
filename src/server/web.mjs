@@ -534,7 +534,7 @@ export async function startWebSlot(options = {}) {
         changed();
       }
     });
-    options.bindResourceSession?.(current, {
+    await options.bindResourceSession?.(current, {
       stream: resourceStreams.get(current),
     });
     await current.bindExtensions({

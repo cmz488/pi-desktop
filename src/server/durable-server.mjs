@@ -135,6 +135,7 @@ export async function startDurableDesk(options = {}) {
     },
   };
   let bridge, workspace, root, stopPromise, transcripts;
+  let nativeOpening;
   const desktopBtw = createDesktopBtw();
   const browser =
     options.embeddedUI && options.agentBrowser !== false
@@ -163,9 +164,33 @@ export async function startDurableDesk(options = {}) {
           readOnly: options.readOnly,
           approvalMode: options.approvalMode,
           nativeResources: options.nativeResources,
+          nativeSnapshot: async (id) => {
+            await initializeNative(workspace);
+            if (!transcripts) throw new DeskError(503, "原生快照尚未建立");
+            return transcripts.snapshot(id);
+          },
           browser,
           onEvent: (kind, data) => bridge?.publish(kind, data),
         });
+  async function initializeNative(target) {
+    if (transcripts || (!options.nativeSessionOwner && !resources)) return;
+    const state = await target.read();
+    if (!state.agents[0]) return;
+    return (nativeOpening ??= (async () => {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      transcripts = await openNativeTranscriptFamily({
+        agentDir,
+        directory,
+        agents: state.agents,
+        owner: options.nativeSessionOwner ?? `workspace:${directory}`,
+        nativeId: options.nativeSessionOwner ? undefined : randomUUID(),
+        branches: !!options.singleAgent,
+        resumePath: options.nativeResumePath,
+        pathHint: options.nativeSessionPath,
+        workspace: target,
+      });
+    })());
+  }
   const auth = createInteractionStore(() =>
     bridge?.publish("interaction_changed", {}),
   );
@@ -182,7 +207,10 @@ export async function startDurableDesk(options = {}) {
         readOnly: options.readOnly,
         approvalMode: options.approvalMode,
         sharedApproval: options.singleAgent === true,
-        initialize: (target) => resources?.attach(target),
+        initialize: async (target) => {
+          workspace = target;
+          await resources?.attach(target);
+        },
       }));
     if (options.workspace) await resources?.attach(workspace);
     // Resource sessions (tool scope, extensions, interactions) need the SDK.
@@ -282,25 +310,8 @@ export async function startDurableDesk(options = {}) {
       });
       root = await workspace.read();
     }
-    if (options.nativeSessionOwner && root.agents[0]) {
-      // 原生转录（以及它的元数据）写在宿主目录里；注入 workspace 的宿主也必须能落盘。
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      transcripts = await openNativeTranscriptFamily({
-        agentDir,
-        directory,
-        agents: root.agents,
-        owner: options.nativeSessionOwner,
-        branches: !!options.singleAgent,
-        resumePath: options.nativeResumePath,
-        pathHint: options.nativeSessionPath,
-        workspace,
-      });
-      root = await workspace.read();
-      if (options.nativeResumePath)
-        await resources?.reload(
-          (await workspace.read(root.agents[0].id)).active,
-        );
-    }
+    await initializeNative(workspace);
+    root = await workspace.read();
     const target = () => {
       const ctx = requestState.getStore();
       if (!ctx?.active) throw new DeskError(422, "请选择 Agent");

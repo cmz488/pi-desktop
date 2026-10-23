@@ -8,9 +8,9 @@ import { openNativeTranscript } from "./pi-session-storage.mjs";
  * 原生转录族：同一 worker 的根会话与历史分支各有转录，仍由一个 Durable writer 导出。
  *
  * 接口：`openNativeTranscriptFamily(options)` 提供 `sync(agents?)`／`get(id)`／
- *   `check()`／`close()` 与根 `metadata`；`readNativeTranscriptFamily(directory)`
+ *   `snapshot(id)`／`check()`／`close()` 与根 `metadata`；`readNativeTranscriptFamily(directory)`
  *   读取给 Host 的原生文件归属清单。见 docs/architecture/interfaces/session-tree.md。
- * 不变量：只沿根会话的历史 `parent` 绑定分支，不绑定 owned 工具子会话；首次根转录
+ * 不变量：族成员只沿根的历史 `parent` 绑定；owned／独立 scope 的只读快照不进入族清单；首次根转录
  *   保留原路径，分支独立标识在重启后稳定；清单由同一个 writer 原子发布。
  * 错误：转录的锁／摘要冲突原样抛出；清单格式错误或关闭后同步为 DeskError(409)。
  */
@@ -72,13 +72,15 @@ export async function openNativeTranscriptFamily({
   agentDir,
   directory,
   owner,
+  nativeId,
   agents,
   branches = false,
   resumePath,
   pathHint,
 }) {
   const root = agents[0].id;
-  const handles = new Map();
+  const handles = new Map(),
+    scoped = new Map();
   let records = agents;
   const summaries = new Map(agents.map((record) => [record.id, record]));
   let queue = Promise.resolve();
@@ -137,7 +139,7 @@ export async function openNativeTranscriptFamily({
             cwd: record.cwd,
             owner: first ? owner : `${owner}:branch:${record.id}`,
             ...(first
-              ? { resumePath, pathHint }
+              ? { resumePath, pathHint, nativeId }
               : { nativeId: nativeBranchIdentity(owner, record.id) }),
             familyOwner: branches ? owner : undefined,
           }),
@@ -180,18 +182,55 @@ export async function openNativeTranscriptFamily({
     get(id) {
       return handles.get(Number(id));
     },
+    snapshot(id) {
+      if (closing) return Promise.reject(new DeskError(409, "会话族已关闭"));
+      return serial(async () => {
+        const record = await workspace.agent(id);
+        if (!record.owner) {
+          records = (await workspace.read()).agents;
+          for (const row of records) summaries.set(row.id, row);
+          await synchronize();
+        }
+        if (!handles.has(id) && !scoped.has(id)) {
+          // 非历史族快照只供同作用域事件使用，不成为族成员或导航目标。
+          const kind = record.owner ? "owned" : "scopes";
+          const location = join(directory, kind, String(id));
+          await mkdir(location, { recursive: true, mode: 0o700 });
+          scoped.set(
+            id,
+            await openNativeTranscript({
+              workspace,
+              id,
+              agentDir,
+              directory: location,
+              cwd: record.cwd,
+              owner: `${owner}:${kind}:${id}`,
+              nativeId: nativeBranchIdentity(`${owner}:${kind}`, id),
+              familyOwner: owner,
+              allowOwned: !!record.owner,
+            }),
+          );
+        }
+        const handle = handles.get(id) ?? scoped.get(id);
+        if (!handle) throw new DeskError(404, "会话不属于当前原生作用域");
+        return handle.snapshot();
+      });
+    },
     get metadata() {
       return { ...handles.get(root)?.metadata, family: manifest() };
     },
     async check() {
-      for (const handle of handles.values()) await handle.check();
+      for (const handle of [...handles.values(), ...scoped.values()])
+        await handle.check();
     },
     close() {
       if (closed) return closed;
       closing = true;
       closed = serial(async () => {
         const results = await Promise.allSettled(
-          [...handles.values()].map((handle) => handle.close()),
+          [...handles.values(), ...scoped.values()].map((handle) =>
+            handle.close(),
+          ),
         );
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw failed.reason;

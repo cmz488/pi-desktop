@@ -1828,9 +1828,9 @@ export async function openAgentWorkspace(options) {
             context,
           );
     },
-    async transcript(id, { since } = {}) {
+    async transcript(id, { since, allowOwned = false } = {}) {
       guard();
-      const selected = await conversation(id),
+      const selected = await conversation(id, { allowOwned }),
         entries = [];
       // 增量读取：`since` 是调用方已经处理到的条目水位。导出循环在每个流式窗口都要
       // 跑一次，读整段历史会让每次同步的成本随会话长度线性增长直到占满事件循环；

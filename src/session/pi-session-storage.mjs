@@ -210,6 +210,7 @@ export async function openNativeTranscript({
   pathHint,
   nativeId,
   familyOwner,
+  allowOwned = false,
   workspace,
   id,
 }) {
@@ -360,11 +361,12 @@ export async function openNativeTranscript({
         [manager.getHeader(), ...manager.getEntries()]
           .map((row) => JSON.stringify(row))
           .join("\n") + "\n";
-      if (Buffer.byteLength(raw) > MAX_NATIVE_RECORD_BYTES)
+      if (Buffer.byteLength(raw) > MAX_NATIVE_RECORD_BYTES) {
         throw new DeskError(
           413,
           "会话记录超过 64 MiB，请保留 SQLite 并在 Pi 中整理历史",
         );
+      }
       const temp = join(
         dirname(metadata.path),
         `.pi-desktop-${randomUUID()}.tmp`,
@@ -401,7 +403,7 @@ export async function openNativeTranscript({
         active,
         entries,
         presentations = {},
-      } = await workspace.transcript(id, { since: through });
+      } = await workspace.transcript(id, { since: through, allowOwned });
       synchronizedProfile = active;
       // 发现器只能识别原生文件，必须显式保留所属 Desktop Agent，不能把分支误认成另一个宿主。
       if (
@@ -473,6 +475,39 @@ export async function openNativeTranscript({
           const command = normalizeInputCommand(entry.data);
           if (command)
             first = manager.appendCustomEntry(INPUT_COMMAND_TYPE, command);
+        } else if (entry.data?.nativeBoundary) {
+          const draft = entry.data.nativeBoundary;
+          switch (draft.type) {
+            case "custom":
+              first = manager.appendCustomEntry(draft.customType, draft.data);
+              break;
+            case "custom_message":
+              first = manager.appendCustomMessageEntry(
+                draft.customType,
+                draft.content,
+                draft.display,
+                draft.details,
+              );
+              break;
+            case "context_edit":
+              first = manager.appendContextEdit(
+                draft.targetId,
+                draft.replacement,
+              );
+              break;
+            case "compaction":
+              first = manager.appendCompaction(
+                draft.summary,
+                draft.firstKeptEntryId,
+                entry.data.tokensBefore ?? 0,
+                draft.details,
+                true,
+                draft.usage,
+              );
+              break;
+            default:
+              throw new DeskError(422, "原生边界条目类型无效");
+          }
         } else if (entry.kind === "pi.compaction") {
           const summary = (entry.model ?? [])
             .map((m) =>
@@ -523,7 +558,9 @@ export async function openNativeTranscript({
             first ??= native;
           }
         }
-        for (const edit of entry.edits ?? []) {
+        for (const edit of entry.data?.nativeBoundary
+          ? []
+          : (entry.edits ?? [])) {
           const native = mapping.get(edit.target);
           if (native)
             manager.appendContextEdit(
@@ -586,17 +623,10 @@ export async function openNativeTranscript({
       }
       return metadata;
     }
-    const rewindContext = (entryId) => {
-      const native = mapping.get(entryId);
-      if (native === undefined || !manager.getEntry(native)) return undefined;
-      const entries = manager.getEntries();
-      const byId = new Map(entries.map((entry) => [entry.id, entry]));
-      const projection = sdk.buildSessionProjection(entries, native, byId);
+    const nativeOrigins = () => {
       const origins = new Map([...mapping].map(([id, key]) => [key, id]));
-      // mapping 保留每个 Durable 条目的首个原生条目；同一贡献里的后续消息由导出检查点归属。
-      // 这里仅补全来源，不重建活跃路径或上下文；压缩和编辑仍全部由 Pi 的 projection 决定。
       let through;
-      for (const entry of entries.toReversed()) {
+      for (const entry of manager.getEntries().toReversed()) {
         if (
           entry.customType === "pi-desktop-sync" &&
           entry.data?.owner === owner &&
@@ -606,6 +636,16 @@ export async function openNativeTranscript({
         else if (through !== undefined && !origins.has(entry.id))
           origins.set(entry.id, through);
       }
+      return origins;
+    };
+    const rewindContext = (entryId) => {
+      const native = mapping.get(entryId);
+      if (native === undefined || !manager.getEntry(native)) return undefined;
+      const entries = manager.getEntries();
+      const byId = new Map(entries.map((entry) => [entry.id, entry]));
+      const projection = sdk.buildSessionProjection(entries, native, byId);
+      // mapping 保留每个贡献的首个原生条目，后续消息由原有导出检查点归属。
+      const origins = nativeOrigins();
       const visibleOrigins = projection.entries.flatMap(
         ({ sourceEntry, messages }) =>
           messages
@@ -630,6 +670,22 @@ export async function openNativeTranscript({
     await sync();
     return {
       sync,
+      snapshot() {
+        const next = queue.then(async () => {
+          await synchronize();
+          return structuredClone({
+            header: manager.getHeader(),
+            entries: manager.getEntries(),
+            leafId: manager.getLeafId(),
+            mapping: [...mapping],
+            origins: [...nativeOrigins()],
+          });
+        });
+        queue = next.catch((error) => {
+          failure = error;
+        });
+        return next;
+      },
       async forkSnapshot({ nativeId, entryId, expectedEntryId }) {
         try {
           sdk.assertValidSessionId(nativeId);
@@ -792,14 +848,19 @@ export async function openNativeTranscript({
           })),
         };
       },
-      async check() {
-        if (failure) throw failure;
-        if (resumePath) await assertNoNativeTui(cwd);
-        if (
-          expected !== undefined &&
-          (await readNativeRecord(metadata.path, agentDir)).digest !== expected
-        )
-          throw new DeskError(409, "原会话已被 Pi TUI 修改，请重新接管");
+      check() {
+        const next = queue.then(async () => {
+          if (failure) throw failure;
+          if (resumePath) await assertNoNativeTui(cwd);
+          if (
+            expected !== undefined &&
+            (await readNativeRecord(metadata.path, agentDir)).digest !==
+              expected
+          )
+            throw new DeskError(409, "原会话已被 Pi TUI 修改，请重新接管");
+        });
+        queue = next.catch(() => {});
+        return next;
       },
       get metadata() {
         return metadata;

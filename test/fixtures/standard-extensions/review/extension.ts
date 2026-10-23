@@ -29,6 +29,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (event, ctx) =>
     trace(ctx, event.type, { reason: event.reason }),
   );
+  pi.on("turn_end", async (event, ctx) =>
+    trace(ctx, event.type, {
+      pending: event.context.pendingMessages.map((message) =>
+        "content" in message ? message.content : null,
+      ),
+    }),
+  );
   pi.on("tool_call", async (event, ctx) => {
     await trace(ctx, event.type, {
       name: event.toolName,
