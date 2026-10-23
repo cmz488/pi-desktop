@@ -378,7 +378,7 @@ export function createDurableResources({
           sections: [
             section("pi_project_resources", async (_input, context) => {
               await ready(context);
-              return session.systemPrompt;
+              return nativeRuntime.systemPrompt();
             }),
           ],
           tools: tools.map((tool) =>

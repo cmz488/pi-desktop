@@ -91,6 +91,9 @@ export default function (pi: ExtensionAPI) {
       prompt: event.prompt,
       images: event.images?.length ?? 0,
     });
+    if (event.prompt === "STRUCTURED_PROMPT_PROBE")
+      event.systemPromptOptions.sections.fixture_section =
+        "STRUCTURED_PROMPT_SECTION";
     if (event.prompt === "PROMPT_OVERRIDE_PROBE")
       return { systemPrompt: "FORCED_NATIVE_SYSTEM_PROMPT" };
     if (event.prompt === "BEFORE_MESSAGE_PROBE")
@@ -103,11 +106,26 @@ export default function (pi: ExtensionAPI) {
       };
   });
   pi.on("context", async (event, ctx) => {
+    if (userPrompt === "CONTEXT_MESSAGE_PROBE")
+      return {
+        messages: [
+          ...event.messages,
+          { role: "user", content: "CONTEXT_CHAIN_MARKER", timestamp: 1 },
+        ],
+      };
     await trace(ctx, event.type, {
       roles: event.messages.map((message) => message.role),
     });
   });
   pi.on("context_with_system", async (event, ctx) => {
+    if (
+      userPrompt === "SYSTEM_CONTEXT_PROBE" &&
+      event.messages[0]?.role === "system"
+    )
+      event.messages[0] = {
+        ...event.messages[0],
+        content: "CONTEXT_SYSTEM_SENTINEL",
+      };
     await trace(ctx, event.type, {
       leadingSystem: event.messages[0]?.role === "system",
     });

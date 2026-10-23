@@ -75,4 +75,12 @@
 
 原文／技能兼容与新 Host 专项共 **9 项**通过，最终完整 `npm test` **483／483**、check（113 源文件）、两包独立 TypeScript、扩展工作台／只读面板 Chromium 与真实解包 **229 文件／954 KiB** 通过，日志 `/tmp/pi-plugins07-input-{compat,green,test-final,check,browser,package}.log`。
 
-阶段 07 仍须接入完整 system／context、消息与流、turn／settle 决策、工具字段和会话变更／取消／关闭；busy custom 与 nextTurn 等程序投递语义也随该生命周期接入继续验收。
+阶段 07 的其他生命周期仍待后续分项验收，不能以这三项输入专项代替。
+
+## System／context 与助手最终消息子阶段
+
+原生 before-agent prompt options 现在交给 SDK 的 loadout／section helper；两阶段 context 使用 Pi Agent 已装配的 transform，保留 hidden declarations 与完整 force 投影。Durable 的请求给出真正 leading system，before-agent 返回的 custom 消息先提交再进入首次模型请求。单独的结构化 prompt 读取不包含 request-local force，避免在后续工具轮次中把临时覆盖记录进 canonical section。助手 message_end 由 SDK 验证同 role、规范化空内容并原位替换，修改后的消息才进入 Durable。
+
+新标准包的三项 Host 断言先在原实现失败，见 `/tmp/pi-plugins07-context-hooks-red.log`；修改后 system override／结构化 section／两阶段 context、before-agent 消息、助手持久替换与后续请求通过，原生对照和加载／重载保持。完整 `npm test` **486／486**、check（113 源文件）、两包独立 TypeScript、真实解包 **229 文件／955 KiB** 通过，日志 `/tmp/pi-plugins07-context-hooks-{green,test,check,package}.log`。
+
+阶段 07 尚须接入流和 provider、真实 turn／settle 决策、用户／工具消息与工具字段、动态配置及会话变更／取消／关闭；busy custom 与 nextTurn 仍须随完整生命周期验收。
