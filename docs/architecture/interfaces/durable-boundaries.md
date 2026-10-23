@@ -49,7 +49,7 @@ afterPartial(message, api, context): void;
 - `afterPartial`：节流后的 partial 已提交才调用；stream 收尾会等待在途回调，返回值不修改消息。它不承诺保留每个 provider token 的原始粒度。
 - `automatic`：已有工具后继、重试／恢复或旧 `onYield` continuation 将继续，不代表新建了另一执行循环。
 - `entries`：原生 Durable entry draft，在决策提交中追加。当前会话作用域、entry／edit 验证继续由原生 Tx 执行；边界不授予跨会话写入权限。
-- `continue:true`：调用方须给出可运行的上下文。没有选中排队输入／reset 时，交给原生下一 generation，**原 submission 保持未结束**，最终答案才归入首次回执；不伪造用户消息。
+- `continue:true`：调用方须给出可运行的上下文。没有选中排队输入／reset 时，交给原生下一 generation，**原 submission 保持未结束**，最终答案才归入首次回执；不伪造用户消息。`afterTurn` 不能覆盖工具的 `terminate`；该终止候选仍交给 `beforeSettle` 单独裁决。
 - 旧 `onYield` 的字符串 continuation、队列优先级、reset／handoff、工具控制及模型重试／压缩仍沿用原生裁决。选中的排队输入不因新 hook 被吞掉；已经结束的首次答案不会被后续 submission 改写。
 - handler 的普通异常仍由原生 HookRunner 报告；取消沿原生 signal／abort 传播。`entries` 的提交错误不会被当作成功。
 
@@ -57,7 +57,7 @@ afterPartial(message, api, context): void;
 
 补丁只扩展唯一内建 `pi.generation`，definition version 从 1 变为 **2**，保留原有 prepare／request／retry／poll／tools phase 与模型／工具 helper。v1 检查点采用原生 migration 进入 v2，不重建任务或队列。
 
-新增 `committedBoundary` phase：记录已提交 assistant／结果 ID、turn／settle 步骤和分发标记。副作用 handler 进入前先提交 `dispatched:true`。进程或宿主在其间中断，恢复时不能判断副作用是否执行过，因此**明确失败并要求显式继续，不重新调用 handler 或模型**。不宣称通用扩展副作用具有 exactly-once 契约。
+新增 `committedBoundary` phase：记录已提交 assistant／结果 ID、turn／settle 步骤和分发标记。实际有该步骤的 handler 时，进入前先提交 `dispatched:true`；空 hook 不写入此标记，其检查点可以正常恢复。进程或宿主在已分发 handler 期间中断，恢复时不能判断副作用是否执行过，因此**明确失败并要求显式继续，不重新调用 handler 或模型**。不宣称通用扩展副作用具有 exactly-once 契约。
 
 未来 SDK 宣告 v1 能力时，也必须能接管此 v2 检查点／migration 契约，才可以无损恢复已有任务。未宣告能力的新版不会被当前补丁无条件改写。
 
@@ -91,9 +91,9 @@ npm 元数据与固定提交的 MIT 许可已核对；版权和许可保留在 `
 `node --test test/durable-boundaries.test.mjs` 验证：
 
 - 已提交 ID、同一 submission 内 continuation、不制造用户输入、首次答案不变。
-- turn／settle 顺序，工具结果和 terminate 候选；原 `onYield` 与排队输入优先级。
+- turn／settle 顺序，工具结果和 terminate 候选；`afterTurn` 不绕过工具终止；原 `onYield` 与排队输入优先级。
 - 取消期间迟到的 continuation 不产生模型后继；原生重试及 message 分类修改不重复回调。
-- v1 migration；真实 SQLite 已进入边界检查点的关闭／恢复不重放未知副作用。
+- v1 migration；真实 SQLite 已进入边界检查点的关闭／恢复不重放未知副作用；未注册 turn／settle hook 时的中断恢复不会误判副作用。
 - 安装前后依赖文件摘要不变；不匹配内容明确拒绝；模拟原生 capability 时跳过补丁。最后一项只证明选择分支，真实新版的完整语义仍需本套测试。
 
 本页交付的是 SDK seam。Pi 生命周期消费这些返回值的完整集成及 UI 回退仍须阶段 07／08 验收，不能只以补丁测试通过完成整体目标。

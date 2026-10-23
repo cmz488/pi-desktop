@@ -38,3 +38,11 @@
 本 SDK 子阶段另通过 `npm run check`（111 源文件）、本次文件格式／diff 检查和真实解包 **225 文件／943 KiB**。Electron 自带 Node **24.18.0** 的一次性 RunAsNode 进程也实际安装并返回 `apiVersion:1 / implementation:patch`，未启动或重启用户桌面端。
 
 该子阶段提供 SDK seam；Pi 生命周期对新 hook 的消费仍在阶段 07 中继续，UI 通用适配和最终验收也尚未完成。
+
+## SDK 边界审查修复
+
+对 `ce9bcaa` 的只读审查实际复现了两项问题：`afterTurn.continue` 能绕过工具 `terminate` 并跳过终止候选的 `beforeSettle`；只注册另一种边界 hook 时，空步骤也被写入 `dispatched:true`，关闭后恢复会误判为未知副作用并失败。
+
+修复保留真实 handler 的中断保护，只在当前步骤确有 handler 时提交分发标记；标记提交仍在 HookRunner 的异常捕获之外，不能将引擎写入错误当作普通插件异常吞掉。工具终止候选不能被 `afterTurn` 覆盖，仍由 `beforeSettle` 决定是否继续。
+
+新增两项回归先在原实现失败，日志 `/tmp/pi-plugins07-review-fixes-red.log`。修改后 SDK 专项 **18／18**；真实 SQLite 分别验证缺失 turn／settle hook 的检查点关闭／恢复，已进入真实 handler 后不重放的旧断言保持。完整 `npm test` **466／466**、`npm run check`（111 源文件）及真实解包 **225 文件／943 KiB** 通过，日志为 `/tmp/pi-plugins07-review-fixes-{green,test,check,package}.log`。

@@ -33,9 +33,9 @@ const COMMITTED_BOUNDARY_SOURCE = String.raw`
 const COMMITTED_BOUNDARY_API_VERSION = 1;
 const LEGACY_GENERATION_VERSION = 1;
 const COMMITTED_GENERATION_VERSION = 2;
-async function hasCommittedBoundary(runtime) {
+async function hasCommittedBoundary(runtime, names = ["afterTurn", "beforeSettle"]) {
     let present = false;
-    for (const name of ["afterTurn", "beforeSettle"])
+    for (const name of names)
         await runtime.hooks.each(name, () => { present = true; });
     return present;
 }
@@ -102,11 +102,13 @@ async function committedBoundary(task, runtime, context) {
     const state = task.state.checkpoint;
     // 进程在副作用 handler 内退出时，不猜测它是否执行过；保守终止而不是重放未知副作用。
     if (state.dispatched) return failModelError(runtime, "扩展边界在上次运行中被中断，未重复执行；请显式继续会话", context);
-    await runtime.commit(() => ({ status: "running", checkpoint: { ...state, dispatched: true } }), context);
+    const event = state.step === "turn" ? "afterTurn" : "beforeSettle";
+    if (await hasCommittedBoundary(runtime, [event]))
+        await runtime.commit(() => ({ status: "running", checkpoint: { ...state, dispatched: true } }), context);
     const entries = [];
     let continuation = false;
     const automatic = !!state.recovery || state.continuation !== undefined || (state.kind === "tools" && !state.terminate && state.handoff === undefined);
-    await runtime.hooks.each(state.step === "turn" ? "afterTurn" : "beforeSettle", async (hook) => {
+    await runtime.hooks.each(event, async (hook) => {
         const result = await hook({ assistant: state.assistant, results: state.results, outcome: state.outcome ?? "completed", automatic }, runtime, context);
         if (result?.entries !== undefined) {
             if (!Array.isArray(result.entries)) throw new TypeError("边界 entries 无效");
@@ -154,7 +156,8 @@ async function committedBoundary(task, runtime, context) {
             return terminal;
         }
         const mayContinue = !reset && users.length === 0 && state.handoff === undefined && state.outcome !== "aborted";
-        if (mayContinue && (continuation || state.continuation !== undefined)) {
+        const turnTerminated = state.step === "turn" && state.kind === "tools" && state.terminate;
+        if (mayContinue && !turnTerminated && (continuation || state.continuation !== undefined)) {
             if (state.continuation !== undefined) await tx.appendEntry(UserEntry, id, { model: [{ role: "user", content: state.continuation, timestamp: runtime.now() }] });
             delete live.generation;
             delete live.tools;

@@ -593,6 +593,184 @@ test("工具终止候选也等待 beforeSettle，显式继续仍属于原 run", 
   assert.equal(count, 2);
 });
 
+test("afterTurn 不能绕过工具 terminate，终止候选仍交给 beforeSettle", async (t) => {
+  let turns = 0,
+    settles = 0;
+  const stop = defineTool({
+    name: "boundary_stop",
+    description: "stop",
+    parameters: Type.Object({}),
+    execute: async () => ({
+      content: [{ type: "text", text: "STOP_RESULT" }],
+      control: { terminate: true },
+    }),
+  });
+  const f = await fixture(
+    t,
+    {
+      afterTurn: () => {
+        if (++turns === 1)
+          return {
+            entries: [
+              {
+                kind: "test.turn-context",
+                model: [
+                  { role: "user", content: "TURN_CONTEXT", timestamp: 1 },
+                ],
+              },
+            ],
+            continue: true,
+          };
+      },
+      beforeSettle: (event) => {
+        settles++;
+        assert.equal(event.results.length, 1);
+      },
+    },
+    { tools: [stop] },
+  );
+  f.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        {
+          type: "toolCall",
+          id: "stop-once",
+          name: "boundary_stop",
+          arguments: {},
+        },
+      ],
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage("MUST_NOT_RUN"),
+  ]);
+  const result = await (
+    await f.root.submit({ type: "input", content: "stop" }, context)
+  ).wait(context);
+  assert.equal(result.status, "done");
+  assert.equal((await f.entry(result.answer)).model[0].stopReason, "toolUse");
+  assert.equal(turns, 1);
+  assert.equal(settles, 1);
+  assert.equal(
+    (await f.root.entries({}, 100, undefined, context)).items.filter(
+      (row) => row.kind === "pi.assistant",
+    ).length,
+    1,
+  );
+});
+
+test(
+  "未注册边界 hook 的检查点中断后正常恢复，不误判副作用",
+  { timeout: 10000 },
+  async (t) => {
+    for (const missing of ["turn", "settle"]) {
+      const directory = await mkdtemp(join(tmpdir(), "pi-empty-boundary-"));
+      let reopened;
+      t.after(async () => {
+        await reopened?.close(context);
+        await rm(directory, { recursive: true, force: true });
+      });
+      let reached,
+        interrupted = false,
+        callbackCalls = 0,
+        nextState;
+      const atCheckpoint = new Promise((resolve) => {
+        reached = resolve;
+      });
+      const hooks =
+        missing === "turn"
+          ? {
+              beforeSettle: () => {
+                callbackCalls++;
+              },
+            }
+          : {
+              afterTurn: () => {
+                callbackCalls++;
+              },
+            };
+      const f = await fixture(t, hooks, {
+        storage: await openNodeSqliteStorage(join(directory, "state.sqlite")),
+      });
+      const original = GenerationTask.definition.phases.committedBoundary;
+      // 在原生 commit 已完成、phase 尚未返回的确定位置中断，不伪造恢复检查点。
+      GenerationTask.definition.phases.committedBoundary = async (
+        task,
+        runtime,
+        ctx,
+      ) => {
+        if (task.state.checkpoint.step !== missing || interrupted)
+          return original(task, runtime, ctx);
+        const proxy = new Proxy(runtime, {
+          get(target, key) {
+            if (key === "commit")
+              return async (change, commitContext) => {
+                let next;
+                await target.commit(async (tx, current) => {
+                  next = await change(tx, current);
+                  return next;
+                }, commitContext);
+                if (interrupted) return;
+                interrupted = true;
+                nextState = structuredClone(next);
+                reached();
+                if (next?.status === "terminal") return;
+                await new Promise((resolve) => {
+                  if (ctx.abortSignal.aborted) resolve();
+                  else
+                    ctx.abortSignal.addEventListener("abort", resolve, {
+                      once: true,
+                    });
+                });
+                ctx.abortSignal.throwIfAborted();
+              };
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return original(task, proxy, ctx);
+      };
+      try {
+        f.faux.setResponses([
+          fauxAssistantMessage("ALREADY_COMMITTED"),
+          fauxAssistantMessage("MUST_NOT_REPEAT_MODEL"),
+        ]);
+        const first = await f.root.submit(
+          { type: "input", content: missing },
+          context,
+        );
+        await atCheckpoint;
+        await f.harness.close(context);
+        GenerationTask.definition.phases.committedBoundary = original;
+        reopened = await Harness.open(
+          await openNodeSqliteStorage(join(directory, "state.sqlite")),
+          { models: f.models, registry: f.registry },
+          context,
+        );
+        reopened.resume();
+        const result = await (
+          await reopened.submission(first.id)
+        ).wait(context);
+        assert.equal(
+          result.status,
+          "done",
+          JSON.stringify({ missing, nextState, result }),
+        );
+        assert.equal(callbackCalls, 1);
+        const root = await reopened.root(context);
+        const assistants = (
+          await root.entries({}, 100, undefined, context)
+        ).items.filter((row) => row.kind === "pi.assistant");
+        assert.equal(assistants.length, 1);
+        assert.equal(text(assistants[0].model[0]), "ALREADY_COMMITTED");
+        await reopened.close(context);
+      } finally {
+        GenerationTask.definition.phases.committedBoundary = original;
+        await f.harness.close(context);
+      }
+    }
+  },
+);
+
 test("v1 原生 generation 检查点通过迁移继续，不新建另一模型任务种类", async (t) => {
   const f = await fixture(t, { afterTurn: () => {} });
   f.faux.setResponses([fauxAssistantMessage("MIGRATED")]);
