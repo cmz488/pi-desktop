@@ -65,4 +65,14 @@
 
 两项核心行为先在旧实现失败，见 `/tmp/pi-plugins07-entry-input-red.log`。新增 **8 项**专项通过；真实 SQLite 子进程先以未补丁 SDK 创建 v1 排队输入，再迁移、排队 entry、关闭并二次恢复，验证三个原生回执和无伪用户消息。完整 `npm test` **480／480**、`npm run check`（113 源文件）、真实解包 **229 文件／951 KiB** 通过；Electron Node **24.18.0** 的独立 RunAsNode 进程实际完成安装，未启动桌面 GUI。日志为 `/tmp/pi-plugins07-entry-input-{green,test,check,package}.log`。
 
-当前契约见[entry 输入准入](../architecture/interfaces/durable-entry-inputs.md)。这仍是 SDK seam，接下来在阶段 07 中由 Pi 生命周期实际消费，不能当作通用扩展验收完成。
+当前契约见[entry 输入准入](../architecture/interfaces/durable-entry-inputs.md)。SDK seam 的交付不等于 Pi 生命周期或通用扩展验收完成。
+
+## 标准 input 与空闲 custom 消息接入子阶段
+
+真实 Host 的用户输入现在在模型准入前等待 Pi input handler，消费 transform／handled 和 images；注册命令仍先于 input，模板展开在其后，程序用户消息标明 extension 来源。普通 custom 消息不经过 input；空闲 triggerTurn 使用同一个 entry input 保存原始 custom 和模型贡献，不再额外投递伪用户正文。请求级 seam 同时提供已提交 entries，桥按真实来源识别 custom，不继续按正文猜身份。
+
+新增两个核心断言先在旧实现失败，见 `/tmp/pi-plugins07-input-red.log`。真实原生安装包的三项 Host 对照通过，涵盖输入变换／消费、程序来源、模板顺序、images 改写及 custom 无伪消息启动。首次完整回归暴露既有技能包装被新路径改变；保留失败日志 `/tmp/pi-plugins07-input-test.log`，修复调用方以复用原公开展开入口，未删改技能原文／模型正文的原断言。SDK 显式请求展开的程序路径仍使用其原生技能包装。
+
+原文／技能兼容与新 Host 专项共 **9 项**通过，最终完整 `npm test` **483／483**、check（113 源文件）、两包独立 TypeScript、扩展工作台／只读面板 Chromium 与真实解包 **229 文件／954 KiB** 通过，日志 `/tmp/pi-plugins07-input-{compat,green,test-final,check,browser,package}.log`。
+
+阶段 07 仍须接入完整 system／context、消息与流、turn／settle 决策、工具字段和会话变更／取消／关闭；busy custom 与 nextTurn 等程序投递语义也随该生命周期接入继续验收。

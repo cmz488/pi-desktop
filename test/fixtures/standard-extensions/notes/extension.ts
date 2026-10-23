@@ -65,7 +65,15 @@ export default function (pi: ExtensionAPI) {
     pi.appendEntry("notes-state", { calls, shutdown: event.reason });
   });
   pi.on("input", async (event, ctx) => {
-    await trace(ctx, event.type, { text: event.text, source: event.source });
+    await trace(ctx, event.type, {
+      text: event.text,
+      source: event.source,
+      images: event.images?.length ?? 0,
+    });
+    if (event.text === "TEMPLATE_ORDER_PROBE")
+      return { action: "transform", text: "/fixture-template INPUT_CHAIN" };
+    if (event.text === "IMAGE_INPUT_PROBE")
+      return { action: "transform", text: "IMAGE_INPUT_REWRITTEN", images: [] };
     if (event.text === "INPUT_TRANSFORM_PROBE")
       return { action: "transform", text: "INPUT_REWRITTEN" };
     if (event.text === "INPUT_HANDLED_PROBE") {
@@ -209,6 +217,32 @@ export default function (pi: ExtensionAPI) {
       await trace(ctx, "command", { calls, args });
       if (args === "reload") {
         await ctx.reload();
+        return;
+      }
+      if (args === "send-user") {
+        pi.sendUserMessage("INPUT_TRANSFORM_PROBE");
+        return;
+      }
+      if (args === "send-image") {
+        pi.sendUserMessage([
+          { type: "text", text: "IMAGE_INPUT_PROBE" },
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWe8AAAAASUVORK5CYII=",
+          },
+        ]);
+        return;
+      }
+      if (args === "start-custom") {
+        pi.sendMessage(
+          {
+            customType: "notes-trigger",
+            content: "CUSTOM_TRIGGER_CONTEXT",
+            display: true,
+          },
+          { triggerTurn: true },
+        );
         return;
       }
       ctx.ui.notify("NOTES_COMMAND_NOTICE", "info");

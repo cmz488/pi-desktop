@@ -21,7 +21,7 @@ modelRuntime(api: HookApi, context: Context): Models | undefined;
 
 // generation 的既有 beforeRequest 向后兼容，仅返回 messages 仍有效。
 beforeRequest(
-  request: { model: Model<Api>; messages: readonly Message[]; options: ModelsSimpleStreamOptions },
+  request: { model: Model<Api>; messages: readonly Message[]; entries: readonly EntryRecord[]; options: ModelsSimpleStreamOptions },
   api: HookApi,
   context: Context,
 ): {
@@ -31,7 +31,7 @@ beforeRequest(
 } | undefined;
 ```
 
-所有返回均可异步。`modelRuntime` 接收 Pi AI 的 `Models` interface，不是 provider 名称表或另一任务执行器。未提供 Models 时保持 SDK 默认集合。`beforeRequest` 的后续 handler 看到此前已修改的 model、messages 与 options；options 浅合并，函数形式的 provider callbacks 只用于当前请求。
+entries 是本次 cutoff 内的已提交原生上下文记录，供 adapter 按真实来源识别 custom 输入，不按正文猜身份。所有返回均可异步。`modelRuntime` 接收 Pi AI 的 `Models` interface，不是 provider 名称表或另一任务执行器。未提供 Models 时保持 SDK 默认集合。`beforeRequest` 的后续 handler 看到此前已修改的 model、messages 与 options；options 浅合并，函数形式的 provider callbacks 只用于当前请求。
 
 ## 不变量
 

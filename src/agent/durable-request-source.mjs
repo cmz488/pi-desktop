@@ -53,7 +53,7 @@ GenerationTask.definition.phases.request = async (task, runtime, context) => {
     const sessionId = await ensureProviderSessionId(runtime, context);
     let options = { ...streamOptions, signal: runtime.signal, sessionId, ...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }) };
     await runtime.hooks.each("beforeRequest", async (hook) => {
-        const changed = await hook({ model, messages, options }, runtime, context);
+        const changed = await hook({ model, messages, options, entries: view.entries }, runtime, context);
         if (changed === undefined) return;
         if (changed.messages !== undefined) messages = changed.messages;
         if (changed.model !== undefined) model = changed.model;

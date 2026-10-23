@@ -41,7 +41,7 @@ workspace.agent(id)        // async -> 该会话的 agent 配置（模型、思�
 workspace.execute(command, input?, { signal, presentation } = {})  // async -> 命令结果；signal 只供 wait 观察者
 workspace.recordInput(id, original, requestId?) // 原生 passive write 的只展示命令，不发起模型
 workspace.transcript(id)   // async -> { entries, presentations, ... }：Pi 消息形状的投影
-workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生回合；可预置初始化资源状态
+workspace.persistNative(id, entries, messages = [], {seedDigest} = {}) // 写回原生状态／消息；可预置初始化资源状态
 workspace.importNative(id, entries, {digest} = {})                   // 导入原生树并核对初始化摘要
 workspace.install(extension)                         // 运行期装入 Durable 扩展
 workspace.uninstall(extension)                       // 释放资源宿主后移除对应 scope
@@ -53,6 +53,8 @@ workspace.taskDetail(id, taskId);                      // 同 owned 范围的持
 workspace.subagentHistory(id, {before?,limit?} = {});    // owned 终态记录，默认 20，范围 1–50
 workspace.setOwnedPreparer(prepare);                   // 内部资源绑定，须先于 resume
 ```
+
+`persistNative` 的 messages 项为 `{message,triggerTurn?,requestId?,mode?}`：普通项保存原生消息和模型贡献；triggerTurn 项通过原生 entry input 接纳，消息与模型输入是同一个 entry，不生成额外 `pi.user`。mode 沿原生 steer／followUp，回执／取消／恢复仍由 Durable 拥有。
 
 输入的可信 `presentation` 只由宿主第三参数传入，不从命令 JSON 采纳；原文、自动来源、只展示命令、原生导出与继承见[输入展示契约](input-presentation.md)。
 

@@ -1137,12 +1137,19 @@ export async function startDurableDesk(options = {}) {
           if (name === "name") return configure({ name: args });
           if (name === "reload") return reload();
           if (!ctx.native) throw new DeskError(422, "未知 Pi 命令");
-          const expanded = await ctx.native.execute("expandPrompt", message, {
+        }
+        let images = attachments?.images;
+        if (ctx.native) {
+          const prepared = await ctx.native.execute("input", message, {
             original,
             requestId,
+            images,
+            source: "rpc",
+            mode: mode === "follow_up" ? "followUp" : "steer",
           });
-          if (expanded.handled) return;
-          message = expanded.message;
+          if (prepared.handled) return;
+          message = prepared.message;
+          images = prepared.images;
         }
         await applyDeferredConfiguration(ctx.active.id);
         await transcripts?.check();
@@ -1152,7 +1159,7 @@ export async function startDurableDesk(options = {}) {
             id: ctx.active.id,
             message:
               message + (attachments?.text ? "\n\n" + attachments.text : ""),
-            images: attachments?.images,
+            images,
             requestId,
             mode: mode === "follow_up" ? "followUp" : "steer",
           },

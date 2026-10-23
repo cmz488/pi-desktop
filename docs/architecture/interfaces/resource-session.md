@@ -63,8 +63,12 @@ native 桥：
 
 ```js
 export function createNativeRuntime({ workspace, id, ready, syncTools, onError });
-// -> { record, bind, flush, beforeRequest, afterResponse, afterTools, dispose }
+// -> { record, input, bind, flush, beforeRequest, afterResponse, afterTools, dispose }
 ```
+
+`facade.execute("input", message, {original?,requestId?,images?,source?,mode?})` 在模型准入前处理标准 input：注册命令先于 input，普通输入的 transform／handled 等待 Pi runner，再走既有技能／模板展开。Desktop 的公开技能包装格式保留，模板继续由 Pi 展开；显式请求展开的程序输入走 SDK 的原生技能／模板路径。默认 source 为 rpc；程序用户消息为 extension。返回 `{message,images}` 或 `{handled:true}`。旧 `expandPrompt` 仍保留只展开／命令的兼容 interface；当前 HTTP 输入使用新的完整预处理路径。
+
+`nativeRuntime.input(message, images, options)` 只做原生输入预处理，不接纳模型；原生 custom 消息绕过 input，并通过 workspace 的 entry input 触发 run，不合成用户占位。
 
 ## 不变量
 
@@ -73,7 +77,7 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 - **资源回收**：委托终态且子会话工作已结束后，先完成原生结束事件及状态写回，再释放宿主和其工具 scope。若结束事件产生新工作则暂不释放；重启只预热活跃／待恢复 owned 会话，历史详情不装载 SDK 资源。异步维护失败通过通知保留错误上下文，不静默吞掉。
 - **输入来源**：宿主在展开前捕获用户原文；原生程序发送标注为 automatic，注册命令的只展示记录与模型贡献分开。可靠关联、继承与兼容回退见[输入展示契约](input-presentation.md)。
 - **资源会话不跑模型循环**：它只提供工具与交互；所有被接受的模型回合都由 Durable 拥有（源码注释：`The resource Session never runs a second model loop`）。
-- **事件方向单向**：Durable 提交 → `record`／`beforeRequest`／`afterResponse`／`afterTools` → Pi 生命周期事件（`message_start`／`message_end`／`turn_end`／`tool_execution_end` 等）；Pi 事件不得反向驱动 Durable 状态。
+- **执行由 Durable 拥有**：原生 input 的返回只进入既有准入；已接受模型工作的生命周期来自 Durable 回调与提交。Pi 事件 handler 的修改通过定义的 seam 等待和消费，不能从页面观察、刷新或事件回放重新发起执行。
 - **`ensure(active)` 幂等且按会话缓存**：同一 `active.id` 在资源存活期间复用 facade；目录变化或资源已回收后，显式调用可按需重新创建。
 - **`attach(workspace)` 先于任何 `ensure`**：没有 workspace 时无法读取 agent 文档，`ensure` 也不会得到完整 facade。
 - **扩展名过滤**：写入会话文档的扩展名必须经 `normalizeExtensions`，`desk-native:*` 只保留当前 scope，避免跨 Agent 串用。

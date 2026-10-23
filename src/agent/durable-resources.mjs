@@ -571,6 +571,33 @@ export function createDurableResources({
       }
       throw new DeskError(422, "未知 Pi 命令");
     }
+    async function prepareInput(message, options = {}) {
+      const session = host.app.runtime.session;
+      const match = message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+      if (match && session.extensionRunner.getCommand(match[1]))
+        return expandPrompt(message, options);
+      const prepared = await host.nativeRuntime.input(message, options.images, {
+        source: options.source ?? "rpc",
+        mode: options.mode,
+        expandPromptTemplates: false,
+      });
+      if (prepared.handled) {
+        await workspace.recordInput(
+          host.id,
+          options.original ?? message,
+          options.requestId,
+        );
+        await host.nativeRuntime.flush();
+        return prepared;
+      }
+      const expandedName = /^\/([^\s]+)/.exec(prepared.message)?.[1];
+      if (expandedName && !session.extensionRunner.getCommand(expandedName))
+        return {
+          ...prepared,
+          ...(await expandPrompt(prepared.message, options)),
+        };
+      return prepared;
+    }
     return Object.freeze({
       read() {
         return {
@@ -605,6 +632,7 @@ export function createDurableResources({
           return;
         }
         if (action === "expandPrompt") return expandPrompt(...args);
+        if (action === "input") return prepareInput(...args);
         if (action === "packageAction")
           return capabilities.packageAction({
             ...args[0],

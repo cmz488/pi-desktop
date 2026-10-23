@@ -1,15 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import { contentText } from "../shared/conversation.mjs";
-import { loadPiMessages } from "./pi-sdk.mjs";
+import {
+  loadPiMessages,
+  expandNativePrompt,
+  embeddedSdkEntry,
+} from "./pi-sdk.mjs";
 
 /**
  * 原生资源会话与 Durable 回合之间的桥（边界文档 seam B 的内侧）。
  *
  * 接口：`createNativeRuntime({ workspace, id, ready, syncTools, onError })` 返回
- *   `{ record, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
+ *   `{ record, input, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
  *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
- * 不变量：Pi 拥有扩展状态与调度，Durable 拥有每一个被接受的模型回合；资源会话不跑
- *   第二个模型循环；消息与事件方向单向（Durable 提交 → Pi 生命周期）。
+ * 不变量：Pi 拥有扩展状态与 handler 顺序，Durable 拥有被接受的模型回合；资源会话不跑
+ *   第二个模型循环；原生输入经准入进入 Durable，观察与事件回放不重新触发执行。
  * 错误：初始化与工具同步的失败经 `onError` 上报；过期 context 保留 SDK 原生同步错误。
  */
 
@@ -42,7 +46,6 @@ export function createNativeRuntime({
   let messages = [],
     toolResults = [];
   const mirrored = new Map();
-  const nativeInputs = [];
   const boundRunners = new WeakSet();
   let stopReady;
   const stopped = new Promise((resolve) => {
@@ -92,7 +95,7 @@ export function createNativeRuntime({
   }
   function enqueue(item) {
     if (disposed) return Promise.reject(new Error("原生扩展运行时已关闭"));
-    queue.push(item);
+    queue.push({ ...item, requestId: `native:${randomUUID()}` });
     queueMicrotask(() => void flush().catch(report));
     return Promise.resolve();
   }
@@ -116,21 +119,37 @@ export function createNativeRuntime({
             message.details,
           );
           session.refreshContext();
-          await save([{ message, triggerTurn: !!item.options?.triggerTurn }]);
-          if (!item.options?.triggerTurn) continue;
-          nativeInputs.push(message);
-        } else await save();
-        const content = item.custom ? item.message.content : item.content;
+          await save([
+            {
+              message,
+              triggerTurn: !!item.options?.triggerTurn,
+              requestId: item.requestId,
+              mode: item.options?.deliverAs === "steer" ? "steer" : "followUp",
+            },
+          ]);
+          continue;
+        }
+        await save();
+        const prepared = await processInput(
+          contentText(item.content),
+          Array.isArray(item.content)
+            ? item.content.filter((block) => block.type === "image")
+            : undefined,
+          {
+            source: "extension",
+            mode: item.options?.deliverAs,
+            expandPromptTemplates: item.options?.expandPromptTemplates === true,
+          },
+        );
+        if (prepared.handled) continue;
         await workspace.execute(
           "send",
           {
             id,
-            message: contentText(content),
-            images: Array.isArray(content)
-              ? content.filter((block) => block.type === "image")
-              : undefined,
+            message: prepared.message,
+            images: prepared.images,
             mode: item.options?.deliverAs === "steer" ? "steer" : "followUp",
-            requestId: `native:${randomUUID()}`,
+            requestId: item.requestId,
           },
           { presentation: { source: "automatic" } },
         );
@@ -141,6 +160,41 @@ export function createNativeRuntime({
     } finally {
       draining = undefined;
     }
+  }
+  async function processInput(message, images, options = {}) {
+    await waitReady();
+    if (
+      options.expandPromptTemplates &&
+      message.startsWith("/") &&
+      (await session._tryExecuteExtensionCommand(message))
+    ) {
+      await save();
+      return { handled: true };
+    }
+    idle = (await workspace.agent(id)).idle;
+    if (idle && controller.signal.aborted) controller = new AbortController();
+    const result = await runner().emitInput(
+      message,
+      images,
+      options.source ?? "rpc",
+      idle ? undefined : options.mode,
+    );
+    if (result.action === "handled") {
+      await save();
+      return { handled: true };
+    }
+    message = result.action === "transform" ? result.text : message;
+    images = result.action === "transform" ? (result.images ?? images) : images;
+    if (options.expandPromptTemplates) {
+      message = session._expandSkillCommand(message);
+      message = await expandNativePrompt(
+        message,
+        session.promptTemplates,
+        embeddedSdkEntry,
+      );
+    }
+    await save();
+    return { message, images };
   }
   function mirror(input) {
     const counts = new Map();
@@ -175,6 +229,7 @@ export function createNativeRuntime({
   }
   return {
     record: mirror,
+    input: processInput,
     bind(current) {
       session = current;
       current.sendUserMessage = (content, options) =>
@@ -235,15 +290,15 @@ export function createNativeRuntime({
         const user = request.messages.findLast(
           (message) => message.role === "user",
         );
-        const nativeIndex = nativeInputs.findIndex(
-          (message) =>
-            contentText(message.content) === contentText(user?.content),
+        const origin = request.entries?.findLast((entry) =>
+          entry.model?.some((message) => message.role === "user"),
         );
-        const input =
-          nativeIndex < 0 ? user : nativeInputs.splice(nativeIndex, 1)[0];
+        const input = origin?.data?.nativeMessage ?? user;
         const result = await runner().emitBeforeAgentStart(
           contentText(user?.content),
-          undefined,
+          Array.isArray(user?.content)
+            ? user.content.filter((block) => block.type === "image")
+            : undefined,
           runner().createCommandContext().getSystemPromptOptions(),
         );
         for (const message of result.messages ?? [])
@@ -304,7 +359,6 @@ export function createNativeRuntime({
       stopReady();
       unsubscribe();
       queue = [];
-      nativeInputs.length = 0;
       if (draining) await draining.catch(() => {});
       if (observing) await observing;
     },

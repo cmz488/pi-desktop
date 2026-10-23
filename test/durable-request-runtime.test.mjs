@@ -125,22 +125,28 @@ test("请求运行时按会话选择 Models，同名 provider 不串用且仍是
 test("beforeRequest 消费请求级 model 与 options，Durable signal 和回执身份仍受保护", async (t) => {
   const native = collection(),
     foreign = new AbortController();
+  let origin;
   const f = await fixture(t, native.models, [
     {
       name: "request-options",
       hooks: [
         hook(GenerationTask, {
-          beforeRequest: (request) => ({
-            messages: request.messages,
-            model: native.models.getModel(provider, "alternate"),
-            options: {
-              ...request.options,
-              headers: { "x-pi-fixture": "native" },
-              signal: foreign.signal,
-              sessionId: "foreign-session",
-              onPayload: (payload) => payload,
-            },
-          }),
+          beforeRequest: (request) => {
+            origin = request.entries.findLast((entry) =>
+              entry.model?.some((message) => message.role === "user"),
+            )?.id;
+            return {
+              messages: request.messages,
+              model: native.models.getModel(provider, "alternate"),
+              options: {
+                ...request.options,
+                headers: { "x-pi-fixture": "native" },
+                signal: foreign.signal,
+                sessionId: "foreign-session",
+                onPayload: (payload) => payload,
+              },
+            };
+          },
         }),
       ],
     },
@@ -155,6 +161,7 @@ test("beforeRequest 消费请求级 model 与 options，Durable signal 和回执
   );
   const result = await submission.wait(context);
   assert.equal(result.status, "done");
+  assert.equal(origin, result.entry);
   assert.equal((await entry(root, result.answer)).model[0].model, "alternate");
   assert.equal(native.calls[0].model.id, "alternate");
   assert.equal(native.calls[0].options.headers["x-pi-fixture"], "native");

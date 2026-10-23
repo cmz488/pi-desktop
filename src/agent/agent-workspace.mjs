@@ -1799,18 +1799,34 @@ export async function openAgentWorkspace(options) {
     async persistNative(id, entries, messages = [], { seedDigest } = {}) {
       guard();
       const { convertToLlm } = await loadPiMessages();
-      await conversation(id);
+      const selected = await conversation(id);
       await harness.commit(async (tx) => {
         const document = await tx.doc(DesktopResources, id);
         document.entries = entries;
         if (seedDigest !== undefined) document.seedDigest = seedDigest;
         for (const { message, triggerTurn } of messages)
-          await tx.appendEntry(id, {
-            kind: "desk.native-message",
-            model: triggerTurn ? [] : convertToLlm([message]),
-            data: { nativeMessage: message },
-          });
+          if (!triggerTurn)
+            await tx.appendEntry(id, {
+              kind: "desk.native-message",
+              model: convertToLlm([message]),
+              data: { nativeMessage: message },
+            });
       }, context);
+      for (const { message, triggerTurn, requestId, mode } of messages)
+        if (triggerTurn)
+          await selected.submit(
+            {
+              type: "input",
+              entry: {
+                kind: "desk.native-message",
+                model: convertToLlm([message]),
+                data: { nativeMessage: message },
+              },
+              requestId,
+              whenBusy: mode ?? "followUp",
+            },
+            context,
+          );
     },
     async transcript(id, { since } = {}) {
       guard();
