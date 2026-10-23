@@ -1,5 +1,7 @@
+import { patchRequestSource } from "./durable-request-source.mjs";
+
 /**
- * Durable 1.0.2 的最小源码补丁：只增加提交后边界与已提交 partial 的 hook。
+ * Durable 1.0.2 的源码补丁：增加提交后边界、partial 与请求运行时的 hook。
  *
  * 接口：patchGenerationSource(source)；契约见 docs/architecture/interfaces/durable-boundaries.md。
  * 不变量：由版本／摘要门禁的 installer 调用；模型、工具、重试与调度仍使用原任务及其 helper。
@@ -24,7 +26,7 @@ export function patchGenerationSource(source) {
     'assignJson(live.generation, "message", message);\n                return undefined;\n            }, context);',
     'assignJson(live.generation, "message", message);\n                return undefined;\n            }, context);\n            await runtime.hooks.each("afterPartial", (hook) => hook(message, runtime, context));',
   );
-  return source + COMMITTED_BOUNDARY_SOURCE;
+  return patchRequestSource(source + COMMITTED_BOUNDARY_SOURCE);
 }
 
 // 在原模块词法作用域中使用原有 helper；不复制模型／工具循环或修改 node_modules。

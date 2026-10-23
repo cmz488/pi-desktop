@@ -46,3 +46,13 @@
 修复保留真实 handler 的中断保护，只在当前步骤确有 handler 时提交分发标记；标记提交仍在 HookRunner 的异常捕获之外，不能将引擎写入错误当作普通插件异常吞掉。工具终止候选不能被 `afterTurn` 覆盖，仍由 `beforeSettle` 决定是否继续。
 
 新增两项回归先在原实现失败，日志 `/tmp/pi-plugins07-review-fixes-red.log`。修改后 SDK 专项 **18／18**；真实 SQLite 分别验证缺失 turn／settle hook 的检查点关闭／恢复，已进入真实 handler 后不重放的旧断言保持。完整 `npm test` **466／466**、`npm run check`（111 源文件）及真实解包 **225 文件／943 KiB** 通过，日志为 `/tmp/pi-plugins07-review-fixes-{green,test,check,package}.log`。
+
+## Durable 会话模型与请求 seam 子阶段
+
+后续核实原生 `beforeRequest` 只能替换 messages，Harness 使用统一 Models；它不能直接承接每个 Pi 资源会话自己的 provider 注册与请求 callbacks。另一个独立缺口是空闲 custom 消息触发 run 时缺少无伪输入准入。用户已明确授权补齐这两类必要 SDK interface；本子阶段先交付请求运行时，不把后者记为已完成。
+
+`modelRuntime` 在原生 generation／compaction phase 内选择当前会话的 Pi AI Models，不合并全局 provider、不创建 Harness 或另一模型循环。解析异常必须向调度器传播。既有 `beforeRequest` 增补 model／options，旧 messages 返回保持兼容；函数 callbacks 只活在当前请求，Durable 的取消 signal 和持久 session ID 不可被覆盖。无 resolver 时保持原模型集合与原生 helper。
+
+新增请求专项的核心断言先在原实现失败，见 `/tmp/pi-plugins07-request-red.log`。请求 **6 项**和边界 **18 项**全部通过，并发同名 provider 走各自集合；原生 compaction、实际模型用量和完整／部分原生声明分支通过。完整 `npm test` **472／472**、`npm run check`（112 源文件）、真实解包 **227 文件／946 KiB** 通过，日志为 `/tmp/pi-plugins07-request-{green,test,check,package}.log`。
+
+当前契约见[请求运行时](../architecture/interfaces/durable-request-runtime.md)。Pi 资源会话尚未注册这些 resolver／callbacks；生命周期接入与无伪输入启动继续在阶段 07 内实施。

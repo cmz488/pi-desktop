@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
-import { GenerationTask } from "@earendil-works/pi-durable";
+import { GenerationTask, CompactionTask } from "@earendil-works/pi-durable";
 import { DeskError } from "../config/config-store.mjs";
 import { patchGenerationSource } from "./durable-boundary-source.mjs";
 
 /**
  * Durable 提交后边界的兼容入口：优先原生能力，否则安装已核实版本的进程内补丁。
  *
- * 接口：ensureDurableBoundaries() 在 Harness 创建／恢复之前 await；契约见
- *   docs/architecture/interfaces/durable-boundaries.md。
+ * 接口：ensureDurableBoundaries()／ensureDurableRequests() 在 Harness 创建／恢复前 await；
+ *   契约见 docs/architecture/interfaces/durable-boundaries.md 与 durable-request-runtime.md。
  * 不变量：不写 node_modules、不另建任务种类或执行循环；原生 API v1 出现后不再打补丁。
  * 错误：未知版本／摘要／能力抛 DeskError(501)，不对未知 SDK 猜测式修改。
  */
@@ -21,6 +21,18 @@ const SOURCE_HASH =
 let pending;
 export async function ensureDurableBoundaries() {
   return (pending ??= install());
+}
+export async function ensureDurableRequests() {
+  const support = await ensureDurableBoundaries();
+  if (
+    GenerationTask.definition.capabilities?.requestRuntime !== API_VERSION ||
+    CompactionTask.definition.capabilities?.requestRuntime !== API_VERSION
+  )
+    throw new DeskError(
+      501,
+      "当前 Durable SDK 缺少会话模型运行时与请求级适配接口",
+    );
+  return support;
 }
 async function install() {
   if (

@@ -45,7 +45,7 @@ import {
 import { loadPiMessages, loadPiSessionManager } from "./pi-sdk.mjs";
 
 import { readOnlyEnvironment, ReadOnlyWeb } from "./read-only-tools.mjs";
-import { ensureDurableBoundaries } from "./durable-boundaries.mjs";
+import { ensureDurableRequests } from "./durable-boundaries.mjs";
 
 /**
  * Durable workspace：把 Durable Harness 的会话、任务、文档与用量包成一个深 module。
@@ -209,7 +209,7 @@ export async function openAgentWorkspace(options) {
     typeof createRegistry !== "function"
   )
     throw new Error("Pi Durable 公开接口不兼容");
-  await ensureDurableBoundaries();
+  await ensureDurableRequests();
   const registry = options.registry ?? createRegistry();
   registry.install(
     options.readOnly

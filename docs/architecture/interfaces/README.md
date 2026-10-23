@@ -37,7 +37,7 @@
 
 用户原文与自动注入另见[输入展示契约](input-presentation.md)：可靠来源、原生接纳关联、默认折叠、未知历史回退及精确继承，不改模型贡献。
 
-Durable 的提交后生成边界另见[边界补丁契约](durable-boundaries.md)：同一原生任务内等待决策、真实 entry ID、取消／恢复，以及新 SDK 的能力优先选择。
+Durable 的提交后生成边界另见[边界补丁契约](durable-boundaries.md)：同一原生任务内等待决策、真实 entry ID、取消／恢复，以及新 SDK 的能力优先选择。会话 Models 与请求级 hook 另见[请求运行时契约](durable-request-runtime.md)：generation／compaction 的会话隔离、model／options 变换与原生取消身份。
 
 模型目录与认证读取另见[模型目录契约](model-catalog.md)：单次目录视图、并发认证与凭据修改隔离，不增加跨请求认证缓存。
 
