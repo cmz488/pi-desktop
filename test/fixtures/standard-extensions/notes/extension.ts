@@ -34,6 +34,7 @@ export default function (pi: ExtensionAPI) {
         mode: ctx.mode,
         idle: ctx.isIdle(),
         hasSignal: !!ctx.signal,
+        signalAborted: !!ctx.signal?.aborted,
         ...data,
       }) + "\n",
     );
@@ -130,6 +131,24 @@ export default function (pi: ExtensionAPI) {
       leadingSystem: event.messages[0]?.role === "system",
     });
   });
+  pi.on("before_provider_headers", async (event, ctx) => {
+    event.headers["x-standard-fixture"] = "enabled";
+    await trace(ctx, event.type);
+  });
+  pi.on("before_provider_request", async (event, ctx) => {
+    await trace(ctx, event.type);
+    if (userPrompt === "PROVIDER_PAYLOAD_PROBE")
+      return {
+        ...(event.payload as Record<string, unknown>),
+        temperature: 0.123,
+      };
+  });
+  pi.on("after_provider_response", async (event, ctx) =>
+    trace(ctx, event.type, { status: event.status }),
+  );
+  pi.on("provider_stream_event", async (event, ctx) =>
+    trace(ctx, event.type, { provider: event.provider, model: event.model }),
+  );
   pi.on("agent_start", async (event, ctx) => trace(ctx, event.type));
   pi.on("turn_start", async (event, ctx) =>
     trace(ctx, event.type, {

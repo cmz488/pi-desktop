@@ -83,4 +83,14 @@
 
 新标准包的三项 Host 断言先在原实现失败，见 `/tmp/pi-plugins07-context-hooks-red.log`；修改后 system override／结构化 section／两阶段 context、before-agent 消息、助手持久替换与后续请求通过，原生对照和加载／重载保持。完整 `npm test` **486／486**、check（113 源文件）、两包独立 TypeScript、真实解包 **229 文件／955 KiB** 通过，日志 `/tmp/pi-plugins07-context-hooks-{green,test,check,package}.log`。
 
-阶段 07 尚须接入流和 provider、真实 turn／settle 决策、用户／工具消息与工具字段、动态配置及会话变更／取消／关闭；busy custom 与 nextTurn 仍须随完整生命周期验收。
+阶段 07 的其余生命周期继续分项实现，不能以本节的 context／最终消息专项代替。
+
+## Provider callback 与标准模型流子阶段
+
+会话资源现在通过 generation／compaction 的 Models resolver 接入原生 Pi Models；只借用 SDK 请求 transport，资源 Agent 的主循环守卫和关闭的 cache warming 保持。headers、payload 修改、响应与 raw provider 事件由原 SDK 调度并等待；标准 assistant stream 传给同一 Durable 请求，message_end 仍在提交前应用 SDK 替换。请求的异步 signal scope 不覆盖工具自己的原生信号或旧 context guard。
+
+五项新增真实 Host／SDK 测试覆盖 headers 与 payload 的实际作用、响应／raw stream、assistant 流顺序和单次开始／提交、取消、重载及资源 Agent 守卫；最初两项红测在 `/tmp/pi-plugins07-model-hooks-red.log`，与原生命周期回归共 **7 项** 通过。最终未插桩全套 **491／491**、check（114 源文件）、两包独立 TypeScript、扩展工作台／只读面板 Chromium、解包 **230 文件／958 KiB** 通过，日志 `/tmp/pi-plugins07-model-hooks-{green,test-final,check,browser,package}.log`。浏览器专项仍不是阶段 08 的两个普通扩展通用交互验收。
+
+首次全套出现一次来源会话文件摘要断言失败，原日志 `/tmp/pi-plugins07-model-hooks-test.log` 保留。一次实际场景文件对照、六个并行隔离复现、带仅诊断文件差异的全套及移除诊断后的最终全套均未重现；未修改原断言，未将重跑表述成根因修复，临时插桩已删除。
+
+阶段 07 尚须完成会话模型目录／动态模型配置、真实 turn／settle／partial 决策与身份、用户／工具消息及工具字段、会话变更和忙时投递等完整矩阵。

@@ -63,7 +63,7 @@ native 桥：
 
 ```js
 export function createNativeRuntime({ workspace, id, ready, syncTools, onError });
-// -> { record, input, systemPrompt, bind, flush, beforeRequest, afterResponse, afterTools, dispose }
+// -> { record, input, systemPrompt, modelRuntime, bind, flush, beforeRequest, afterResponse, afterTools, dispose }
 ```
 
 `facade.execute("input", message, {original?,requestId?,images?,source?,mode?})` 在模型准入前处理标准 input：注册命令先于 input，普通输入的 transform／handled 等待 Pi runner，再走既有技能／模板展开。Desktop 的公开技能包装格式保留，模板继续由 Pi 展开；显式请求展开的程序输入走 SDK 的原生技能／模板路径。默认 source 为 rpc；程序用户消息为 extension。返回 `{message,images}` 或 `{handled:true}`。旧 `expandPrompt` 仍保留只展开／命令的兼容 interface；当前 HTTP 输入使用新的完整预处理路径。
@@ -71,6 +71,10 @@ export function createNativeRuntime({ workspace, id, ready, syncTools, onError }
 `nativeRuntime.input(message, images, options)` 只做原生输入预处理，不接纳模型；原生 custom 消息绕过 input，并通过 workspace 的 entry input 触发 run，不合成用户占位。
 
 `beforeRequest` 保留完整 leading system 并使用 Pi Agent 已装配的 context transform（含 force／hidden declarations），不另写 prompt 覆盖器。before-agent 消息先提交并进入首次请求，structured prompt 替换旧资源 section 而非重复追加基础提示。`systemPrompt()` 给 Durable section 提供不含 request-local force 的结构化文本，不能把临时 override 写回 canonical prompt。助手的 message_end 使用 SDK 同 role 替换与空内容规范化，返回模型消息进入 Durable 提交；旧活动的结束不能清除新活动的 prompt。
+
+`modelRuntime(api, context)` 等待同会话资源后选择 Pi Models；未注册该模型时保持 Durable 默认集合。generation 与 compaction 均在原任务内使用该 resolver。`src/agent/native-model-runtime.mjs` 的 adapter 只借用绑定的 SDK 请求 transport，保留资源 Agent 的 streamFunction 守卫与关闭的 cache warming，不调用资源 prompt／continue。provider headers、payload 变换、响应和原始流 callback 由原 SDK 链路等待；assistant 标准 stream 事件按序投影，不重复 message_start。
+
+`bind(session, {stream})` 的 transport 仅由资源宿主内部传入，不成为浏览器能力或 Pi 扩展的另一执行入口。异步 signal scope 让请求 callback 使用当前 Durable 操作信号，SDK 自身的工具 signal 与 stale guard 继续保留；关闭时清理 scope。
 
 ## 不变量
 

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getSystemMessageText } from "@earendil-works/pi-ai";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createNativeModelRuntime } from "./native-model-runtime.mjs";
 import { contentText } from "../shared/conversation.mjs";
 import {
   loadPiMessages,
@@ -11,7 +13,7 @@ import {
  * 原生资源会话与 Durable 回合之间的桥（边界文档 seam B 的内侧）。
  *
  * 接口：`createNativeRuntime({ workspace, id, ready, syncTools, onError })` 返回
- *   `{ record, input, systemPrompt, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
+ *   `{ record, input, systemPrompt, modelRuntime, bind, flush, beforeRequest, afterResponse, afterTools, dispose }`；
  *   字段与调用顺序见 docs/architecture/interfaces/resource-session.md。
  * 不变量：Pi 拥有扩展状态与 handler 顺序，Durable 拥有被接受的模型回合；资源会话不跑
  *   第二个模型循环；原生输入经准入进入 Durable，观察与事件回放不重新触发执行。
@@ -44,7 +46,10 @@ export function createNativeRuntime({
     draining,
     saved,
     assistant,
-    promptUpdate;
+    promptUpdate,
+    models,
+    assistantStarted = false;
+  const signals = new AsyncLocalStorage();
   let messages = [],
     toolResults = [];
   const mirrored = new Map();
@@ -53,7 +58,7 @@ export function createNativeRuntime({
   const stopped = new Promise((resolve) => {
     stopReady = resolve;
   });
-  const waitReady = () => Promise.race([ready(), stopped]);
+  const waitReady = (context) => Promise.race([ready(context), stopped]);
   let observing,
     dirty = false;
   const unsubscribe = workspace.subscribe((event) => {
@@ -244,8 +249,41 @@ export function createNativeRuntime({
     // force 仅属于 provider 请求，不能被 Durable 的 section renderer 记录进历史。
     systemPrompt: () =>
       promptUpdate ? getSystemMessageText(promptUpdate) : session.systemPrompt,
-    bind(current) {
+    async modelRuntime(_api, context) {
+      await waitReady(context);
+      context.abortSignal?.throwIfAborted();
+      if (disposed) throw new Error("原生扩展运行时已关闭");
+      const ref = (await workspace.agent(id)).model;
+      if (!ref || !session.modelRuntime.getModel(ref.provider, ref.modelId))
+        return undefined;
+      return models;
+    },
+    bind(current, { stream } = {}) {
       session = current;
+      models = createNativeModelRuntime(
+        current,
+        {
+          scope: (signal, action) => signals.run(signal, action),
+          abort: () => controller.abort(),
+          event: async (event) => {
+            if (disposed) return;
+            if (event.type === "start") {
+              assistantStarted = true;
+              await current._emitExtensionEvent({
+                type: "message_start",
+                message: event.partial,
+              });
+            } else if (event.type !== "done" && event.type !== "error") {
+              await current._emitExtensionEvent({
+                type: "message_update",
+                message: event.partial,
+                assistantMessageEvent: event,
+              });
+            }
+          },
+        },
+        stream,
+      );
       current.sendUserMessage = (content, options) =>
         enqueue({ content, options });
       current.sendCustomMessage = (message, options) =>
@@ -255,6 +293,10 @@ export function createNativeRuntime({
       const createContext = runner().createContext.bind(runner());
       runner().createContext = () => {
         const context = createContext();
+        const nativeSignal = Object.getOwnPropertyDescriptor(
+          context,
+          "signal",
+        ).get.bind(context);
         // 替换能力值但保留原生失效检查，不能让旧 runner 的 context 读到新回合或执行 abort。
         const assertActive = () => void context.mode;
         return Object.defineProperties(context, {
@@ -273,7 +315,7 @@ export function createNativeRuntime({
           signal: {
             get: () => {
               assertActive();
-              return controller.signal;
+              return signals.getStore() ?? nativeSignal() ?? controller.signal;
             },
           },
           abort: {
@@ -292,95 +334,103 @@ export function createNativeRuntime({
       await save();
     },
     async beforeRequest(request, context) {
-      await waitReady();
-      context.abortSignal?.throwIfAborted();
-      idle = false;
-      mirror(request.messages);
-      let pending = [];
-      if (!run) {
-        session._runSystemPromptOptions = undefined;
-        promptUpdate = undefined;
-        const prior = (await workspace.transcript(id)).entries.at(-1)?.id ?? 0;
-        controller = new AbortController();
-        run = true;
-        messages = [];
-        toolResults = [];
-        const user = request.messages.findLast(
-          (message) => message.role === "user",
-        );
-        const origin = request.entries?.findLast((entry) =>
-          entry.model?.some((message) => message.role === "user"),
-        );
-        const input = origin?.data?.nativeMessage ?? user;
-        const promptOptions = runner()
-          .createCommandContext()
-          .getSystemPromptOptions();
-        const selectedBefore = [...promptOptions.selectedTools];
-        const result = await runner().emitBeforeAgentStart(
-          contentText(user?.content),
-          Array.isArray(user?.content)
-            ? user.content.filter((block) => block.type === "image")
-            : undefined,
-          promptOptions,
-        );
-        const selected = result.systemPromptOptions.selectedTools;
-        if (
-          selected.length === selectedBefore.length &&
-          selected.every((name, index) => name === selectedBefore[index])
-        )
-          result.systemPromptOptions.selectedTools =
-            session.getActiveToolNames();
-        promptUpdate = session._preparePromptAndToolLoadout(
-          result.systemPromptOptions,
-          [],
-        ) ?? {
-          role: "system",
-          content: "",
-          sections: {},
-          timestamp: Date.now(),
-        };
-        session._runSystemPromptOptions = result.systemPromptOptions;
-        for (const message of result.messages ?? [])
-          await session.sendCustomMessage(message, { triggerTurn: false });
-        await flush();
-        pending = (
-          await workspace.transcript(id, { since: prior })
-        ).entries.flatMap((entry) => entry.model ?? []);
-        await runner().emit({ type: "agent_start" });
-        if (input) {
-          messages.push(input);
-          await runner().emit({ type: "message_start", message: input });
-          await runner().emit({ type: "message_end", message: input });
+      return signals.run(context.abortSignal, async () => {
+        await waitReady(context);
+        context.abortSignal?.throwIfAborted();
+        idle = false;
+        mirror(request.messages);
+        let pending = [];
+        if (!run) {
+          session._runSystemPromptOptions = undefined;
+          promptUpdate = undefined;
+          const prior =
+            (await workspace.transcript(id)).entries.at(-1)?.id ?? 0;
+          controller = new AbortController();
+          run = true;
+          messages = [];
+          toolResults = [];
+          const user = request.messages.findLast(
+            (message) => message.role === "user",
+          );
+          const origin = request.entries?.findLast((entry) =>
+            entry.model?.some((message) => message.role === "user"),
+          );
+          const input = origin?.data?.nativeMessage ?? user;
+          const promptOptions = runner()
+            .createCommandContext()
+            .getSystemPromptOptions();
+          const selectedBefore = [...promptOptions.selectedTools];
+          const result = await runner().emitBeforeAgentStart(
+            contentText(user?.content),
+            Array.isArray(user?.content)
+              ? user.content.filter((block) => block.type === "image")
+              : undefined,
+            promptOptions,
+          );
+          const selected = result.systemPromptOptions.selectedTools;
+          if (
+            selected.length === selectedBefore.length &&
+            selected.every((name, index) => name === selectedBefore[index])
+          )
+            result.systemPromptOptions.selectedTools =
+              session.getActiveToolNames();
+          promptUpdate = session._preparePromptAndToolLoadout(
+            result.systemPromptOptions,
+            [],
+          ) ?? {
+            role: "system",
+            content: "",
+            sections: {},
+            timestamp: Date.now(),
+          };
+          session._runSystemPromptOptions = result.systemPromptOptions;
+          for (const message of result.messages ?? [])
+            await session.sendCustomMessage(message, { triggerTurn: false });
+          await flush();
+          pending = (
+            await workspace.transcript(id, { since: prior })
+          ).entries.flatMap((entry) => entry.model ?? []);
+          await runner().emit({ type: "agent_start" });
+          if (input) {
+            messages.push(input);
+            await runner().emit({ type: "message_start", message: input });
+            await runner().emit({ type: "message_end", message: input });
+          }
+          controller.signal.throwIfAborted();
         }
-        controller.signal.throwIfAborted();
-      }
-      await runner().emit({ type: "turn_start" });
-      const incoming = [...request.messages, ...pending];
-      const firstSystem = incoming.findIndex(
-        (message) => message.role === "system",
-      );
-      if (firstSystem > 0) incoming.unshift(...incoming.splice(firstSystem, 1));
-      if (promptUpdate)
-        incoming.push({
-          ...promptUpdate,
-          sections: { ...promptUpdate.sections, pi_project_resources: null },
-        });
-      const projected = await session.agent.transformContext(
-        incoming,
-        controller.signal,
-      );
-      await save();
-      return { messages: (await loadPiMessages()).convertToLlm(projected) };
+        await runner().emit({ type: "turn_start" });
+        assistantStarted = false;
+        const incoming = [...request.messages, ...pending];
+        const firstSystem = incoming.findIndex(
+          (message) => message.role === "system",
+        );
+        if (firstSystem > 0)
+          incoming.unshift(...incoming.splice(firstSystem, 1));
+        if (promptUpdate)
+          incoming.push({
+            ...promptUpdate,
+            sections: { ...promptUpdate.sections, pi_project_resources: null },
+          });
+        const projected = await session.agent.transformContext(
+          incoming,
+          controller.signal,
+        );
+        await save();
+        return { messages: (await loadPiMessages()).convertToLlm(projected) };
+      });
     },
-    async afterResponse(message) {
-      await runner().emit({ type: "message_start", message });
-      await session._emitExtensionEvent({ type: "message_end", message });
-      assistant = message;
-      messages.push(message);
-      mirror([message]);
-      if (message.stopReason !== "toolUse")
-        await runner().emit({ type: "turn_end", message, toolResults: [] });
-      await save();
+    async afterResponse(message, context) {
+      return signals.run(context?.abortSignal, async () => {
+        if (!assistantStarted)
+          await runner().emit({ type: "message_start", message });
+        await session._emitExtensionEvent({ type: "message_end", message });
+        assistant = message;
+        messages.push(message);
+        mirror([message]);
+        if (message.stopReason !== "toolUse")
+          await runner().emit({ type: "turn_end", message, toolResults: [] });
+        await save();
+      });
     },
     async afterTools(assistantId, resultIds) {
       const entries = (await workspace.transcript(id)).entries;
@@ -417,6 +467,7 @@ export function createNativeRuntime({
       queue = [];
       if (draining) await draining.catch(() => {});
       if (observing) await observing;
+      signals.disable();
     },
   };
 }

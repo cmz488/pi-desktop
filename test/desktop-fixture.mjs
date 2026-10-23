@@ -21,12 +21,14 @@ export async function desktopFixture(options = {}) {
     cwd = join(root, "project"),
     other = join(root, "other");
   await Promise.all([agentDir, cwd, other].map((path) => mkdir(path)));
-  const requests = [];
+  const requests = [],
+    requestHeaders = [];
   const model = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const input = JSON.parse(Buffer.concat(chunks).toString());
     requests.push(input);
+    requestHeaders.push({ ...request.headers });
     await options.beforeModelResponse?.(input);
     // 只在本地 provider 边界编排工具回合，实际模型准入、工具执行与恢复仍走原生 SDK。
     const reply = await options.modelReply?.(input);
@@ -140,6 +142,7 @@ export async function desktopFixture(options = {}) {
     agentDir,
     directory,
     requests,
+    requestHeaders,
     call,
     command,
     get app() {

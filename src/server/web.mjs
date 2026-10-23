@@ -153,6 +153,7 @@ export async function startWebSlot(options = {}) {
   const mcpCredentials = options.noExtensions
     ? undefined
     : await scopedMcpCredentials(agentDir, options.sdkEntry, sdk);
+  const resourceStreams = new WeakMap();
   const createRuntime = async ({
     cwd,
     agentDir,
@@ -295,6 +296,8 @@ export async function startWebSlot(options = {}) {
         : {}),
     });
     if (options.resourcesOnly) {
+      // 仅给 Durable adapter 绑定请求 transport，资源 Agent 的主循环守卫不撤销。
+      resourceStreams.set(result.session, result.session.agent.streamFunction);
       result.session.setCacheWarmingMode("off");
       // Block this Session's model loop, not the shared provider runtime:
       // extensions may create independent Pi Agents (for example Goal's auditor).
@@ -531,7 +534,9 @@ export async function startWebSlot(options = {}) {
         changed();
       }
     });
-    options.bindResourceSession?.(current);
+    options.bindResourceSession?.(current, {
+      stream: resourceStreams.get(current),
+    });
     await current.bindExtensions({
       mode: "rpc",
       uiContext: ui,
@@ -751,7 +756,9 @@ export async function startWebSlot(options = {}) {
       // SDK 先结束并失效旧 runner；新 session_start 必须已经使用同一 Durable 资源 seam。
       beforeSessionStart: () => {
         resetSessionPresentation();
-        return options.bindResourceSession?.(current);
+        return options.bindResourceSession?.(current, {
+          stream: resourceStreams.get(current),
+        });
       },
     });
     changed();

@@ -7,6 +7,7 @@ import {
   configure,
   hook,
   GenerationTask,
+  CompactionTask,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { withAbortSignal } from "@earendil-works/chord/context";
@@ -143,9 +144,10 @@ export function createDurableResources({
       const nativeRuntime = (createdRuntime = createNativeRuntime({
         workspace,
         id: active.id,
-        ready: async () => {
+        ready: async (context) => {
           await installedReady;
-          await app.ready;
+          if (context) await ready(context);
+          else await app.ready;
         },
         onError: (error) =>
           onEvent("notification", {
@@ -239,7 +241,8 @@ export function createDurableResources({
         approvalPolicy,
         customTools,
         resourcesOnly: true,
-        bindResourceSession: (current) => nativeRuntime.bind(current),
+        bindResourceSession: (current, transport) =>
+          nativeRuntime.bind(current, transport),
         extensionFactories: browser
           ? [{ name: "desktop-browser", factory: (pi) => browser.factory(pi) }]
           : [],
@@ -367,10 +370,17 @@ export function createDurableResources({
         const extension = defineExtension({
           name: host.scope,
           hooks: [
+            hook(CompactionTask, {
+              modelRuntime: (api, context) =>
+                nativeRuntime.modelRuntime(api, context),
+            }),
             hook(GenerationTask, {
+              modelRuntime: (api, context) =>
+                nativeRuntime.modelRuntime(api, context),
               beforeRequest: (request, _api, context) =>
                 nativeRuntime.beforeRequest(request, context),
-              afterResponse: (message) => nativeRuntime.afterResponse(message),
+              afterResponse: (message, _api, context) =>
+                nativeRuntime.afterResponse(message, context),
               afterTools: (assistant, results) =>
                 nativeRuntime.afterTools(assistant, results),
             }),
