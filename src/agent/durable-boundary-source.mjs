@@ -7,7 +7,7 @@ import { patchRequestSource } from "./durable-request-source.mjs";
  * 不变量：由版本／摘要门禁的 installer 调用；模型、工具、重试与调度仍使用原任务及其 helper。
  * 错误：锚点不存在／重复时抛错，不尝试猜测新 SDK 的实现。
  */
-function replaceOnce(source, before, after) {
+export function replaceOnce(source, before, after) {
   const at = source.indexOf(before);
   if (at < 0 || source.indexOf(before, at + before.length) >= 0)
     throw new Error("Durable 边界补丁锚点不匹配");

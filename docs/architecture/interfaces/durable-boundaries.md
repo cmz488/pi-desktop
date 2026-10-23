@@ -18,7 +18,7 @@ await ensureDurableBoundaries();
 选择顺序：
 
 1. SDK 的 `GenerationTask.definition.capabilities.committedBoundary === 1`，且 generation version 至少为 2、提供 migration：直接使用原生实现，不变换源码、不覆盖其 phase。
-2. 否则仅对已核实的 **1.0.2** 和 `generation.js` 摘要应用仓库随包交付的补丁。
+2. 否则仅对已核实的 **1.0.2** 及全部受影响源码摘要应用仓库随包交付的补丁，文件清单见[entry 输入契约](durable-entry-inputs.md)。
 3. 其他版本／不同内容明确报 `DeskError(501)`，不猜测接口，不下载或升级依赖，不改 `node_modules`。
 
 “自动采用”依赖 SDK 宣告并实现下述 **同一 v1 契约**，不是假定任意未来版本都兼容。升级后仍须运行本页的语义测试，不能只以 capability 字段存在代替验证。此字段是本次补丁提出的接口契约，不声称当前官方 SDK 已提供。
@@ -84,7 +84,7 @@ npm 元数据与固定提交的 MIT 许可已核对；版权和许可保留在 `
 
 ## 性能特征
 
-兼容安装每进程一次，已知版本会读取并编译生成模块；后续复用同一 Promise。实际有新边界 hook 时增加持久化边界 phase／分发标记提交；没有新 hook 的路径保留原生决策。partial 继续使用原生节流，不改为每 token 写盘。不得为省去这些等待而把决策 hook 改成广播。
+兼容安装每进程一次，已知版本会读取并编译必要的原生 module graph；后续复用同一 Promise。实际有新边界 hook 时增加持久化边界 phase／分发标记提交；没有新 hook 的路径保留原生决策。partial 继续使用原生节流，不改为每 token 写盘。不得为省去这些等待而把决策 hook 改成广播。
 
 ## 可执行证据
 
@@ -96,6 +96,6 @@ npm 元数据与固定提交的 MIT 许可已核对；版权和许可保留在 `
 - v1 migration；真实 SQLite 已进入边界检查点的关闭／恢复不重放未知副作用；未注册 turn／settle hook 时的中断恢复不会误判副作用。
 - 安装前后依赖文件摘要不变；不匹配内容明确拒绝；模拟原生 capability 时跳过补丁。最后一项只证明选择分支，真实新版的完整语义仍需本套测试。
 
-会话模型与请求级变换使用同一兼容安装过程，调用者另通过 `ensureDurableRequests()` 检查完整能力，见[请求运行时契约](durable-request-runtime.md)。
+会话模型与请求级变换使用同一兼容安装过程，调用者另通过 `ensureDurableRequests()` 检查完整能力，见[请求运行时契约](durable-request-runtime.md)。无伪输入准入通过 `ensureDurableInputs()` 进一步检查，见[entry 输入契约](durable-entry-inputs.md)。
 
 本页交付的是 SDK seam。Pi 生命周期消费这些返回值的完整集成及 UI 回退仍须阶段 07／08 验收，不能只以补丁测试通过完成整体目标。

@@ -10,8 +10,6 @@ export function patchRequestSource(source) {
 }
 
 const REQUEST_RUNTIME_SOURCE = String.raw`
-import { CompactionTask as RequestCompactionTask } from "./compaction.js";
-
 async function selectRequestRuntime(runtime, context) {
     const selectors = [];
     await runtime.hooks.each("modelRuntime", (select) => { selectors.push(select); });
@@ -69,5 +67,5 @@ GenerationTask.definition.phases.request = async (task, runtime, context) => {
     await classify(runtime, request, message, context);
 };
 installRequestRuntime(GenerationTask);
-installRequestRuntime(RequestCompactionTask);
+export { installRequestRuntime };
 `;

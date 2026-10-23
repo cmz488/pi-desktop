@@ -55,6 +55,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 `test/durable-request-runtime.test.mjs` 验证会话 Models 选择、同名 provider 并发隔离、请求 model／options、Durable signal／session 身份与实际用量、原生 compaction、解析错误不退回和新 SDK 的完整能力选择，见[请求运行时契约](interfaces/durable-request-runtime.md)。
 
+`test/durable-entry-inputs.test.mjs` 验证无伪用户消息的原生 run 启动、幂等／首次答案、steer／followUp／reject／排队取消、真实 SQLite v1 inbox 迁移和 queued entry 恢复、token 与依赖内容不变，见[entry 输入契约](interfaces/durable-entry-inputs.md)。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。

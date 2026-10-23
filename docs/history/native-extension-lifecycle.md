@@ -55,4 +55,14 @@
 
 新增请求专项的核心断言先在原实现失败，见 `/tmp/pi-plugins07-request-red.log`。请求 **6 项**和边界 **18 项**全部通过，并发同名 provider 走各自集合；原生 compaction、实际模型用量和完整／部分原生声明分支通过。完整 `npm test` **472／472**、`npm run check`（112 源文件）、真实解包 **227 文件／946 KiB** 通过，日志为 `/tmp/pi-plugins07-request-{green,test,check,package}.log`。
 
-当前契约见[请求运行时](../architecture/interfaces/durable-request-runtime.md)。Pi 资源会话尚未注册这些 resolver／callbacks；生命周期接入与无伪输入启动继续在阶段 07 内实施。
+当前契约见[请求运行时](../architecture/interfaces/durable-request-runtime.md)。本子阶段当时尚未注册 Pi 资源 resolver／callbacks；完整生命周期仍待阶段 07 验收。
+
+## Durable entry input 子阶段
+
+已核实并补齐另一项获授权的缺口：原 `input` 只能附带用户正文，`write` 不启动 run。新 input 可直接携带 append-only entry，仍走原生 submission／inbox／generation；custom 的模型贡献与原始消息可以存在同一个真实 entry，不合成另一个 `pi.user`。steer／followUp／reject、排队取消、requestId 幂等和首次答案均沿用原生逻辑。
+
+为使准入与所有边界共享该语义，兼容 installer 校验五个原生发布文件的摘要，通过临时内存 module graph 保留其相互依赖，随后立即撤销 loader。公开 Harness 和内建 task／doc 的 token／definition 身份保持；不创建第二个 Harness、writer 或调度器，不写依赖目录。`pi.inbox` 升为 v2 并迁移 v1 排队内容，generation 保持此前的 v2。
+
+两项核心行为先在旧实现失败，见 `/tmp/pi-plugins07-entry-input-red.log`。新增 **8 项**专项通过；真实 SQLite 子进程先以未补丁 SDK 创建 v1 排队输入，再迁移、排队 entry、关闭并二次恢复，验证三个原生回执和无伪用户消息。完整 `npm test` **480／480**、`npm run check`（113 源文件）、真实解包 **229 文件／951 KiB** 通过；Electron Node **24.18.0** 的独立 RunAsNode 进程实际完成安装，未启动桌面 GUI。日志为 `/tmp/pi-plugins07-entry-input-{green,test,check,package}.log`。
+
+当前契约见[entry 输入准入](../architecture/interfaces/durable-entry-inputs.md)。这仍是 SDK seam，接下来在阶段 07 中由 Pi 生命周期实际消费，不能当作通用扩展验收完成。
