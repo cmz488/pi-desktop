@@ -72,7 +72,7 @@ flowchart TD
 
 **R3 事件方向单向。** Durable commit → 事件流 → `native-runtime` 镜像成 Pi 生命周期事件；反向不得驱动 Durable 状态。
 
-- 做法：新的流式更新加在 Durable 侧（如 `assistant_update`），由桥翻译；Pi 事件只用于扩展状态与调度。
+- 做法：新的流式更新加在 Durable 侧（如 `assistant_update`），由桥翻译；Pi 事件只用于扩展状态与调度。需要返回决策的 hook 由所属 Durable 任务等待，并在其原生事务内消费；不是让异步广播反向改写状态。提交后、原 run 内的决策走[生成边界 seam](interfaces/durable-boundaries.md)，仍只有同一 `pi.generation` 和模型循环。
 - 反例与后果：用 Pi 事件反向改写 Durable 状态 → 出现第二个模型循环、重复记账；`native-runtime.mjs` 注释里"resource Session never runs a second model loop"正是防止这一点。
 
 **R4 Host 不知道 Durable 内部。** `src/control-plane/supervisor.mjs` 只做 spawn／就绪／重启／归档／路由。

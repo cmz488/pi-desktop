@@ -5,6 +5,7 @@
 - [Herta 工作区源码研究](docs/references/herta-workspace.md)：固定提交、Git blob 校验与本轮设计取舍。
 - [完整源码适配记录](docs/references/source-notes.md)：保留各历史阶段的证据，不能将旧适配描述当成现行实现。
 - [历史验收目录](docs/history/README.md)：版本、环境、测量与限制。
+- [Durable 生成边界](docs/architecture/interfaces/durable-boundaries.md)：1.0.2 固定发布文件／提交、运行期兼容补丁与未来原生接口选择；许可保留在 `NOTICE` 与 `licenses/pi-durable-MIT.txt`。
 
 DeepSeek Harness、ZCode、Miyu 等仅按各记录中的范围提供参考或素材；Pi Agent 与 Pi Durable 保持模型执行链的所有权。扩展展示设计见 [当前架构](docs/architecture/README.md)和[卡片规范](docs/guides/extensions.md)。
 

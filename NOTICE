@@ -11,3 +11,10 @@ Source: https://github.com/PersonaCLI/Herta
 Revision: 1cd918d00181394f189b2463a9f6cef051a03cb9
 License and excluded third-party material: licenses/herta-MIT.txt
 The Pi Desktop implementation uses no Herta character artwork, persona or audio.
+
+src/agent/durable-boundary-source.mjs 中的运行期生成边界补丁
+改编自 @earendil-works/pi-durable 1.0.2（MIT）。
+来源：https://github.com/earendil-works/pi
+修订：cd32f7725fdbddbaecdff5b1e68491563394e0ca
+Copyright (c) 2025 Mario Zechner
+许可：licenses/pi-durable-MIT.txt

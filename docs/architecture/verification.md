@@ -51,6 +51,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 `test/native-runtime-lifecycle.test.mjs` 继续用真实 SDK 的旧 context 验证失效错误不会被桥绕过，并在真实安装包中验证 fresh runner 的启动前绑定、标准命令 reload、signal／idle、无重复命令和卸载状态清理。阶段 07 的分项进展与原始红／绿证据见[生命周期记录](../history/native-extension-lifecycle.md)。
 
+`test/durable-boundaries.test.mjs` 验证 SDK 的提交后边界 seam：真实 entry、原 run 内继续、原答案不被后续投递改写、工具／错误／重试／队列与取消、v1 migration、真实 SQLite 关闭／恢复不重放未知副作用、已提交 partial、摘要／原生能力选择。原生版本与补丁交付方式见[边界接口](interfaces/durable-boundaries.md)；它不代替 Pi 事件消费和 UI 验收。
+
 ## 原生压缩会话恢复回归
 
 模型消息通过 Pi 的 `convertToLlm` 规范化，原生 UI 消息元数据独立保留用于卡片展示；旧 SQLite 通过幂等上下文编辑兼容，不改写原始历史或向 JSONL 追加伪造的用户编辑。
