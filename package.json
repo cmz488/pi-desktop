@@ -26,7 +26,9 @@
         "CONTEXT.md",
         "CONTRIBUTING.md",
         "DESIGN.md",
-        "SOURCES.md"
+        "SOURCES.md",
+        "build/ui-next/**",
+        "src/ui-next/percho/LICENSE"
     ],
     "pi": {
         "extensions": [
@@ -54,7 +56,7 @@
         "start": "node launch-desktop.mjs",
         "dev": "node desk.mjs",
         "desktop": "node launch-desktop.mjs",
-        "prepack": "npm run check",
+        "prepack": "npm run check && npm run build:ui",
         "package:check": "node scripts/check-npm-package.mjs",
         "test:package": "npm run package:check",
         "check": "npm run typecheck && node scripts/check-source.mjs",
@@ -92,7 +94,8 @@
         "test:workspace:desktop": "node test/desktop-workspace-check.mjs --electron",
         "web:durable": "node desk.mjs --single-process",
         "desktop:durable": "node launch-desktop.mjs --single-process",
-        "test:remote:desktop": "node test/desktop-remote-browser-check.mjs"
+        "test:remote:desktop": "node test/desktop-remote-browser-check.mjs",
+        "build:ui": "node src/ui-next/build.mjs"
     },
     "allowScripts": {
         "electron@41.10.7": true

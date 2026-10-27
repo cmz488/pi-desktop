@@ -2,6 +2,8 @@ node_modules/
 .reference/
 .desktop-data/
 dist/
+# Percho 渲染层产物：由 npm run build:ui 生成，随 npm 包发布但不入库。
+build/ui-next/
 coverage/
 screenshots/
 .env
