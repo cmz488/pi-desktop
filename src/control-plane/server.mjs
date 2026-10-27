@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import { createUiStateStore } from "../server/ui-state-store.mjs";
 import { createServer, request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -142,7 +144,7 @@ export async function startDesktopHost(options = {}) {
   if (options.host && !["127.0.0.1", "localhost"].includes(options.host))
     throw new DeskError(
       422,
-      "多进程 Desktop MVP 仅监听本机；请通过设置中的 Tailscale 扫码访问",
+      "多进程 Desktop 仅监听本机；手机端请使用设置中的跨设备互联",
     );
   if (options.certPath || options.keyPath)
     throw new DeskError(422, "TLS 请使用单宿主模式");
@@ -154,6 +156,7 @@ export async function startDesktopHost(options = {}) {
   const directory = resolve(
     options.directory ?? join(agentDir, "desktop", "workspace"),
   );
+  const uiStateStore = createUiStateStore(directory);
   const store = await openDesktopStore(directory);
   const supervisor = createSupervisor(store, {
     ...options,
@@ -223,7 +226,13 @@ export async function startDesktopHost(options = {}) {
       port: server.address().port,
       lan: false,
       ...((await store.read()).agents.some((row) => row.id === agentId)
-        ? { qr: await QRCode.toDataURL(url, { width: 280, margin: 4, errorCorrectionLevel: "M" }) }
+        ? {
+            qr: await QRCode.toDataURL(url, {
+              width: 280,
+              margin: 4,
+              errorCorrectionLevel: "M",
+            }),
+          }
         : {}),
     };
   }
@@ -240,7 +249,7 @@ export async function startDesktopHost(options = {}) {
       }
       response.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
       );
       response.setHeader("X-Content-Type-Options", "nosniff");
       if (
@@ -317,6 +326,28 @@ export async function startDesktopHost(options = {}) {
           supported: true,
           ...(await supervisor.revision()),
         });
+        return;
+      }
+      if (
+        ["/api/ui-state", "/api/environment-ui-state"].includes(url.pathname)
+      ) {
+        const name =
+          url.pathname === "/api/ui-state" ? "uiState" : "environmentUiState";
+        if (request.method === "GET")
+          sendJson(response, 200, { value: await uiStateStore.read(name) });
+        else if (request.method === "POST") {
+          const input = await body(request);
+          sendJson(response, 200, {
+            value: await uiStateStore.write(name, input.value, {
+              merge: name === "uiState",
+            }),
+          });
+        } else throw new DeskError(405, "请求方式不支持");
+        return;
+      }
+      if (url.pathname === "/api/daily-dir" && request.method === "GET") {
+        await mkdir(uiStateStore.dailyDir(), { recursive: true });
+        sendJson(response, 200, { path: uiStateStore.dailyDir() });
         return;
       }
       if (await serve(request, response, url.pathname)) return;

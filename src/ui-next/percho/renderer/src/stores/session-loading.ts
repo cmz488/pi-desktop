@@ -19,6 +19,12 @@ import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
 
+const optionalList = <T,>(request: Promise<T[]>): Promise<T[]> =>
+  request.catch((error: unknown) => {
+    if (error && typeof error === "object" && "code" in error && error.code === "HOST_API_UNSUPPORTED") return [];
+    throw error;
+  });
+
 export interface SessionDataPorts {
 	isOpen(sessionId: string): boolean;
 	landMeta(meta: SessionMeta): void;
@@ -111,8 +117,8 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		const openingEpoch = historyOpenEpoch(sessionId);
 		const [history, followUpQueue, todos, permissionMode] = await Promise.all([
 			skipHistory ? Promise.resolve(null) : getExecutionApi(sessionId).getSessionMessages({ sessionId }),
-			getExecutionApi(sessionId).getFollowUpMessages({ sessionId }),
-			getExecutionApi(sessionId).getTodos({ sessionId }),
+			optionalList(getExecutionApi(sessionId).getFollowUpMessages({ sessionId })),
+			optionalList(getExecutionApi(sessionId).getTodos({ sessionId })),
 			getExecutionApi(sessionId).getPermissionMode({ sessionId }),
 		]);
 		// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，

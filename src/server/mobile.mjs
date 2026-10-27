@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { networkInterfaces } from "node:os";
@@ -11,6 +11,7 @@ import {
   createBackpressure,
   sanitizeTranscript,
 } from "./mobile-data.mjs";
+import { toSessionMessages } from "../ui-next/session-projection.mjs";
 import { deriveView, toTranscript } from "./mobile-projection.mjs";
 import { ensureCertificate, localHosts } from "./self-signed-cert.mjs";
 
@@ -37,6 +38,7 @@ const TRANSCRIPT = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const WRITE = /^\/api\/sessions\/([^/]+)\/(prompt|abort)$/;
 
 const MAX_BODY = 64 * 1024;
+const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 
 const digestOf = (token) => createHash("sha256").update(token).digest();
 
@@ -65,7 +67,9 @@ async function readBody(request) {
   if (!chunks.length) return {};
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
   } catch {
     throw new DeskError(422, "请求体不是有效 JSON");
   }
@@ -88,10 +92,15 @@ function sendJson(response, status, value) {
  * 脱敏与容量上限统一交给 `mobile-data.mjs`：出网的东西只能从一个地方裁剪。
  */
 function projectMessages(messages) {
-  const projected = (Array.isArray(messages) ? messages : []).map((message) => ({
-    ...message,
-    text: typeof message?.text === "string" ? message.text : contentText(message?.content),
-  }));
+  const projected = (Array.isArray(messages) ? messages : []).map(
+    (message) => ({
+      ...message,
+      text:
+        typeof message?.text === "string"
+          ? message.text
+          : contentText(message?.content),
+    }),
+  );
   return sanitizeTranscript(projected);
 }
 
@@ -104,7 +113,9 @@ const pwaManifest = JSON.stringify({
   display: "standalone",
   background_color: "#161d27",
   theme_color: "#161d27",
-  icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+  icons: [
+    { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+  ],
 });
 
 export async function startMobileServer({
@@ -123,26 +134,39 @@ export async function startMobileServer({
   const expectedDigest = digestOf(token);
   const tokenPath = join(directory, "mobile-token.json");
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(tokenPath, JSON.stringify({ createdAt: Date.now(), digest: expectedDigest.toString("hex") }), {
-    mode: 0o600,
-  });
+  await writeFile(
+    tokenPath,
+    JSON.stringify({
+      createdAt: Date.now(),
+      digest: expectedDigest.toString("hex"),
+    }),
+    {
+      mode: 0o600,
+    },
+  );
 
   // 出网数据面：容量上限与写操作审计。审计落盘到工作空间数据目录。
-/** 单个会话的投影素材：agent 行、运行态与已脱敏消息。 */
+  /** 单个会话的投影素材：agent 行、运行态与已脱敏消息。 */
   const readAgent = async (id) => {
+    const key = /^\d+$/.test(String(id)) ? Number(id) : id;
     const state = await workspace.read();
-    const agent = (state.agents ?? []).find((row) => row.id === id);
+    const agent = (state.agents ?? []).find(
+      (row) => String(row.id) === String(id),
+    );
     if (!agent) return undefined;
     const live =
       typeof workspace.live === "function"
-        ? await workspace.live(id).catch(() => undefined)
+        ? await workspace.live(key)
         : undefined;
-    const entries = (await workspace.transcript(id)).entries ?? [];
+    const entries = (await workspace.transcript(key)).entries ?? [];
     const messages = entries
       .flatMap((entry) => entry.model ?? [])
       .map((message) => ({
         ...message,
-        text: typeof message?.text === "string" ? message.text : contentText(message?.content),
+        text:
+          typeof message?.text === "string"
+            ? message.text
+            : contentText(message?.content),
       }));
     return { agent, live, messages };
   };
@@ -153,29 +177,43 @@ export async function startMobileServer({
     return sanitized;
   };
 
+  let stopped = false;
+  let refreshing;
+  let refreshTimer;
   const backpressure = createBackpressure();
-  /** 帧序号：手机端丢弃 seq ≤ snapshotSeq 的 event 帧，避免快照与增量双重应用。 */
   let seq = 0;
-  /** 已连接的 SSE 客户端（按响应对象），用于广播。 */
   const streams = new Set();
-  const broadcast = (name, data) => {
-    for (const response of streams) {
-      if (response.writableEnded) {
-        streams.delete(response);
-        continue;
-      }
-      response.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  const closeStream = (client) => {
+    if (!streams.delete(client)) return;
+    clearInterval(client.timer);
+    backpressure.drain(client.id);
+    backpressure.release();
+    client.response.destroy();
+  };
+  const writeFrame = (client, wire) => {
+    if (!streams.has(client)) return;
+    const bytes = Buffer.byteLength(wire);
+    if (
+      bytes + client.pendingBytes + client.response.writableLength >
+      MAX_STREAM_BYTES
+    ) {
+      closeStream(client);
+      return;
     }
+    if (client.blocked) {
+      if (!backpressure.enqueue(client.id, { wire }) || backpressure.overloaded)
+        closeStream(client);
+      else client.pendingBytes += bytes;
+      return;
+    }
+    client.blocked = !client.response.write(wire);
   };
-  /** 把一次已完成的写操作广播成 view 帧（状态是幂等的，客户端直接覆盖）。 */
-  const publishView = async (sessionId) => {
-    const id = Number(sessionId);
-    if (!Number.isInteger(id)) return;
-    const detail = await readAgent(id).catch(() => undefined);
-    if (!detail) return;
-    seq += 1;
-    broadcast("view", { sessionId: String(sessionId), view: deriveView(detail.agent, detail.live) });
+  const sendFrame = (client, name, data) =>
+    writeFrame(client, `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  const broadcast = (name, data) => {
+    for (const client of streams) sendFrame(client, name, data);
   };
+  const publishView = () => scheduleRefresh();
   const audit = createAuditLog({
     append: (line) => {
       void appendFile(join(directory, "mobile-audit.jsonl"), `${line}\n`, {
@@ -203,7 +241,7 @@ export async function startMobileServer({
       list: agents.map((agent) => ({
         sessionId: String(agent.id),
         name: agent.name ?? "未命名会话",
-        cwd: agent.cwd ?? "",
+        cwd: "",
         active: agent.status === "running" || agent.status === "ready",
         modifiedAt: Number(agent.updatedAt ?? Date.now()),
         ...(agent.readOnly ? { readOnly: true } : {}),
@@ -211,6 +249,57 @@ export async function startMobileServer({
     };
   };
 
+  /** 权威快照包含历史和 partial，客户端原子替换，不伪造 SDK 增量事件。 */
+  const snapshot = async () => {
+    const { list } = await collect();
+    const views = [],
+      transcripts = [];
+    for (const row of list) {
+      const detail = await readAgent(row.sessionId);
+      if (!detail) continue;
+      views.push(deriveView(detail.agent, detail.live));
+      const { messages, truncated } = projectTranscript(detail.messages);
+      transcripts.push({
+        sessionId: row.sessionId,
+        state: toTranscript(messages, {
+          active: detail.live?.idle === false,
+          streaming:
+            detail.live?.idle === false ? detail.live.partial : undefined,
+        }),
+        truncated,
+      });
+    }
+    return {
+      serverTime: Date.now(),
+      list,
+      views,
+      transcripts,
+      pendingPermissions: [],
+      remoteControl: remoteControl(),
+      snapshotSeq: ++seq,
+    };
+  };
+  function scheduleRefresh() {
+    if (stopped || refreshTimer || !streams.size) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      if (refreshing) {
+        scheduleRefresh();
+        return;
+      }
+      refreshing = snapshot()
+        .then((value) => broadcast("snapshot", value))
+        .catch((error) => {
+          console.error("手机端投影失败：", error.message);
+          for (const client of streams) closeStream(client);
+        })
+        .finally(() => {
+          refreshing = undefined;
+        });
+    }, 150);
+    refreshTimer.unref?.();
+  }
+  const unsubscribe = workspace.subscribe?.(scheduleRefresh);
 
   server.on("request", async (request, response) => {
     try {
@@ -246,7 +335,9 @@ export async function startMobileServer({
 
       const isRead =
         request.method === "GET" &&
-        (path === "/api/snapshot" || path === "/api/stream" || TRANSCRIPT.test(path));
+        (path === "/api/snapshot" ||
+          path === "/api/stream" ||
+          TRANSCRIPT.test(path));
       const isWrite = request.method === "POST" && WRITE.test(path);
       // 只读模式下写端点明确 403，而不是静默丢弃。
       if (isWrite && !remoteControl()) {
@@ -275,41 +366,7 @@ export async function startMobileServer({
       }
 
       if (path === "/api/snapshot") {
-        const { list } = await collect();
-        // 活跃会话带投影：手机端首屏直接有内容，不必逐条拉历史。
-        const views = [];
-        const transcripts = [];
-        for (const row of list) {
-          const id = Number(row.sessionId);
-          if (!Number.isInteger(id)) continue;
-          const detail = await readAgent(id).catch(() => undefined);
-          if (!detail) continue;
-          views.push(deriveView(detail.agent, detail.live));
-          const { messages, truncated } = projectTranscript(detail.messages, detail.live);
-          transcripts.push({
-            sessionId: row.sessionId,
-            state: toTranscript(messages, {
-              streaming:
-                detail.live && detail.live.idle === false && detail.live.partial
-                  ? {
-                      id: detail.live.partial.id,
-                      text: detail.live.partial.text,
-                      thinking: detail.live.partial.thinking,
-                    }
-                  : undefined,
-            }),
-            truncated,
-          });
-        }
-        sendJson(response, 200, {
-          serverTime: Date.now(),
-          list,
-          views,
-          transcripts,
-          pendingPermissions: [],
-          remoteControl: remoteControl(),
-          snapshotSeq: seq,
-        });
+        sendJson(response, 200, await snapshot());
         return;
       }
 
@@ -319,31 +376,36 @@ export async function startMobileServer({
           sendJson(response, 503, { error: "连接数已达上限" });
           return;
         }
-        streams.add(response);
-        response.on("close", () => {
-          streams.delete(response);
-          backpressure.release();
+        const client = {
+          id: String(++seq),
+          response,
+          blocked: false,
+          pendingBytes: 0,
+          timer: undefined,
+        };
+        streams.add(client);
+        response.once("close", () => closeStream(client));
+        response.on("drain", () => {
+          client.blocked = false;
+          client.pendingBytes = 0;
+          for (const frame of backpressure.drain(client.id))
+            writeFrame(client, frame.wire);
         });
         response.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
           Connection: "keep-alive",
         });
-        /** 命名事件帧：手机端按 addEventListener(name, …) 订阅。 */
-        const send = (name, data) => {
-          if (response.writableEnded) return;
-          response.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
-        };
-        // 首帧给一份与快照同形的 list，客户端据此判断已连上。
         const initial = await collect();
-        send("list", { list: initial.list });
-        const timer = setInterval(() => send("ping", { at: Date.now() }), 15000);
-        timer.unref?.();
-        request.on("close", () => {
-          clearInterval(timer);
-          backpressure.release();
-        });
-        send("ping", { at: Date.now() });
+        if (!streams.has(client)) return;
+        sendFrame(client, "list", initial);
+        sendFrame(client, "ping", { at: Date.now() });
+        client.timer = setInterval(
+          () => sendFrame(client, "ping", { at: Date.now() }),
+          15000,
+        );
+        client.timer.unref?.();
+        scheduleRefresh();
         return;
       }
 
@@ -353,7 +415,11 @@ export async function startMobileServer({
         const entries = (await workspace.transcript(Number(id))).entries ?? [];
         const messages = entries.flatMap((entry) => entry.model ?? []);
         const { messages: safe, truncated } = projectMessages(messages);
-        sendJson(response, 200, { sessionId: id, messages: safe, truncated });
+        sendJson(response, 200, {
+          sessionId: id,
+          messages: toSessionMessages(safe),
+          truncated,
+        });
         return;
       }
 
@@ -365,7 +431,12 @@ export async function startMobileServer({
         if (write[2] === "prompt") {
           const text = typeof input.text === "string" ? input.text.trim() : "";
           if (!text || text.length > 50000) {
-            audit.record({ ip, action: "prompt", target: write[1], result: "error:bad_length" });
+            audit.record({
+              ip,
+              action: "prompt",
+              target: write[1],
+              result: "error:bad_length",
+            });
             throw new DeskError(422, "消息长度无效");
           }
           try {
@@ -384,7 +455,12 @@ export async function startMobileServer({
             });
             throw error;
           }
-          audit.record({ ip, action: "prompt", target: write[1], result: "ok" });
+          audit.record({
+            ip,
+            action: "prompt",
+            target: write[1],
+            result: "ok",
+          });
           sendJson(response, 200, { ok: true });
           // 写操作后推一次状态帧：手机端不必等轮询就能看到"运行中"。
           void publishView(write[1]);
@@ -399,6 +475,10 @@ export async function startMobileServer({
 
       sendJson(response, 404, { error: "not found" });
     } catch (error) {
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
       const status = error?.status ?? 500;
       sendJson(response, status, {
         error: status === 500 ? "服务端错误" : String(error.message),
@@ -406,17 +486,26 @@ export async function startMobileServer({
     }
   });
 
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "0.0.0.0", resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "0.0.0.0", resolve);
+    });
+  } catch (error) {
+    unsubscribe?.();
+    throw error;
+  }
   const address = server.address();
-  const actualPort = typeof address === "object" && address ? address.port : port;
+  const actualPort =
+    typeof address === "object" && address ? address.port : port;
 
   // 二维码地址：优先非回环的局域网 IP，手机才连得上；没有局域网地址时退回归环。
-  const lan = hosts.filter((host) => host !== "127.0.0.1" && host !== "localhost");
+  const lan = hosts.filter(
+    (host) => host !== "127.0.0.1" && host !== "localhost",
+  );
   const urls = (lan.length ? lan : ["127.0.0.1"]).map(
-    (host) => `${scheme}://${host}:${actualPort}/?t=${encodeURIComponent(token)}`,
+    (host) =>
+      `${scheme}://${host}:${actualPort}/?t=${encodeURIComponent(token)}`,
   );
 
   return {
@@ -431,14 +520,22 @@ export async function startMobileServer({
     get capacity() {
       return { clients: backpressure.clients, queue: backpressure.queueSize };
     },
+    refresh: scheduleRefresh,
     port: actualPort,
     url: urls[0] ?? `${scheme}://127.0.0.1:${actualPort}/`,
     urls,
     tokenPath,
     async stop() {
-      await new Promise((resolve) => server.close(resolve));
-      // 停服务即撤销：下次启动重新生成令牌。
-      await readFile(tokenPath, "utf8").catch(() => "");
+      if (stopped) return;
+      stopped = true;
+      unsubscribe?.();
+      clearTimeout(refreshTimer);
+      for (const client of streams) closeStream(client);
+      await refreshing;
+      await new Promise((resolve) => {
+        server.close(resolve);
+        server.closeAllConnections();
+      });
     },
   };
 }

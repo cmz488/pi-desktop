@@ -43,7 +43,8 @@ const PLACEHOLDER_KEYS = new Set([
   "extensionPath",
 ]);
 
-const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const isRecord = (value) =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** 内容块：image 换成占位，其余原样。 */
 function sanitizeContent(content) {
@@ -63,7 +64,8 @@ function sanitizeContent(content) {
  */
 function sanitizeDetails(value, depth = 0) {
   if (depth > 6) return undefined;
-  if (Array.isArray(value)) return value.map((item) => sanitizeDetails(item, depth + 1));
+  if (Array.isArray(value))
+    return value.map((item) => sanitizeDetails(item, depth + 1));
   if (!isRecord(value)) return value;
   const out = {};
   for (const [key, item] of Object.entries(value)) {
@@ -96,14 +98,17 @@ export function sanitizeMessage(message) {
     role: message.role ?? "user",
     text: typeof message.text === "string" ? message.text : "",
   };
-  if (message.content !== undefined) out.content = sanitizeContent(message.content);
+  if (message.content !== undefined)
+    out.content = sanitizeContent(message.content);
   if (message.toolName) out.toolName = String(message.toolName);
   if (message.toolCallId) out.toolCallId = String(message.toolCallId);
   if (message.isError) out.isError = true;
   if (message.stopReason) out.stopReason = String(message.stopReason);
   if (message.customType) out.customType = String(message.customType);
-  if (typeof message.eventKey === "number") out.timestamp = message.eventKey;
-  if (message.details !== undefined) out.details = sanitizeDetails(message.details);
+  if (typeof (message.eventKey ?? message.timestamp) === "number")
+    out.timestamp = message.eventKey ?? message.timestamp;
+  if (message.details !== undefined)
+    out.details = sanitizeDetails(message.details);
   return out;
 }
 
@@ -115,7 +120,10 @@ export function sanitizeMessage(message) {
 export function sanitizeTranscript(messages, limit = TRANSCRIPT_TAIL_LIMIT) {
   const list = Array.isArray(messages) ? messages : [];
   const tail = list.slice(-limit);
-  return { messages: tail.map(sanitizeMessage), truncated: list.length > tail.length };
+  return {
+    messages: tail.map(sanitizeMessage),
+    truncated: list.length > tail.length,
+  };
 }
 
 /**

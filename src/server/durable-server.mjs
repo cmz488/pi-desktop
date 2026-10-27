@@ -527,7 +527,8 @@ export async function startDurableDesk(options = {}) {
       port: options.port ?? process.env.PI_DESK_PORT ?? 0,
       snapshot: current,
       /** `/api/composer`：把输入框正文镜像给扩展的同步 getEditorText()。 */
-      setComposerText: (text) => resources?.setComposerText?.(target().active?.id, text),
+      setComposerText: (text) =>
+        resources?.setComposerText?.(target().active?.id, text),
       btw: (input) => {
         const active = target().active;
         const model = active.model
@@ -828,7 +829,10 @@ export async function startDurableDesk(options = {}) {
          * 它们属于工作空间而不是某个会话，所以按工作空间数据目录持久化，不带 Agent 归属。
          * `desktop` 作用域：页面刷新后必须能读回同一份值，否则侧栏折叠、置顶和主题每次都会丢。
          */
-        if (url.pathname === "/api/ui-state" || url.pathname === "/api/environment-ui-state") {
+        if (
+          url.pathname === "/api/ui-state" ||
+          url.pathname === "/api/environment-ui-state"
+        ) {
           const name =
             url.pathname === "/api/ui-state" ? "uiState" : "environmentUiState";
           if (request.method === "GET") {
@@ -837,8 +841,10 @@ export async function startDurableDesk(options = {}) {
           }
           if (request.method === "POST") {
             const input = await body(request);
-            await uiStateStore.write(name, input.value);
-            json(response, { value: input.value });
+            const value = await uiStateStore.write(name, input.value, {
+              merge: name === "uiState",
+            });
+            json(response, { value });
             return true;
           }
         }
@@ -848,20 +854,36 @@ export async function startDurableDesk(options = {}) {
          */
         if (url.pathname === "/api/lan") {
           if (request.method === "GET") {
-            json(response, { status: await mobileControl?.status?.() ?? { enabled: false, port: null, urls: [], qrDataUrl: null, clients: 0, remoteControl: false } });
+            json(response, {
+              status: (await mobileControl?.status?.()) ?? {
+                enabled: false,
+                port: null,
+                urls: [],
+                qrDataUrl: null,
+                clients: 0,
+                remoteControl: false,
+              },
+            });
             return true;
           }
           if (request.method === "POST") {
             const input = await body(request);
             if (input.enabled !== undefined)
-              json(response, { status: await mobileControl.setEnabled(input.enabled === true) });
+              json(response, {
+                status: await mobileControl.setEnabled(input.enabled === true),
+              });
             else if (input.remoteControl !== undefined)
-              json(response, { status: await mobileControl.setRemoteControl(input.remoteControl === true) });
+              json(response, {
+                status: await mobileControl.setRemoteControl(
+                  input.remoteControl === true,
+                ),
+              });
             else throw new DeskError(422, "缺少 enabled 或 remoteControl");
             return true;
           }
         }
         if (url.pathname === "/api/daily-dir" && request.method === "GET") {
+          await mkdir(uiStateStore.dailyDir(), { recursive: true });
           json(response, { path: uiStateStore.dailyDir() });
           return true;
         }
@@ -1424,8 +1446,10 @@ export async function startDurableDesk(options = {}) {
         enabled: true,
         port: mobile.port,
         urls: mobile.urls,
-        qrDataUrl: mobile.urls[0] ? await QRCode.toDataURL(mobile.urls[0]) : null,
-        clients: 0,
+        qrDataUrl: mobile.urls[0]
+          ? await QRCode.toDataURL(mobile.urls[0])
+          : null,
+        clients: mobile.capacity.clients,
         remoteControl: mobileRemoteControl,
       };
     };
@@ -1446,6 +1470,7 @@ export async function startDurableDesk(options = {}) {
       },
       async setRemoteControl(enabled) {
         mobileRemoteControl = enabled !== false;
+        mobile?.refresh();
         return mobileStatus();
       },
     };

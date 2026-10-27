@@ -30,7 +30,7 @@ export function useSessionEventBridge({
 					// 正被查看（= 当前活跃 tab）的会话完成时不打未读标记
 					isActiveViewing: useSessionsStore.getState().activeSessionId === sessionId,
 				});
-				if (event.type === "agent_settled") void retrySessionHistory(sessionId);
+				if (event.type === "agent_settled" || (event.type === "desktop_snapshot" && !event.transcript.agentActive)) void retrySessionHistory(sessionId);
 			},
 		});
 		const offBoundary = onSessionBoundaryReset((sessionId) => conflator.discard(sessionId));
@@ -38,6 +38,11 @@ export function useSessionEventBridge({
 			const offEvent = pi.onEvent(
 				({ sessionId, event, sequence }: { sessionId: string; event: SessionEvent; sequence?: number }) => {
 					acceptSessionEvent(sessionId, sequence, event, () => {
+            if (event.type === "desktop_snapshot" && event.name !== undefined &&
+              useSessionsStore.getState().sessions.find((row) => row.sessionId === sessionId)?.name !== event.name) {
+              useSessionsStore.getState().updateSessionName(sessionId, event.name);
+              useProjectsStore.getState().applySessionName(sessionId, event.name);
+            }
 						if (event.type === "session_info_changed") {
 							useSessionsStore.getState().updateSessionName(sessionId, event.name);
 							// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。

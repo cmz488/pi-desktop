@@ -202,7 +202,7 @@ export function connect(): void {
 			);
 		}, RECONNECT_LABEL_DELAY_MS);
 	};
-	for (const name of ["view", "list", "event", "perm", "perm_resolved", "ping"] as const) {
+	for (const name of ["snapshot", "view", "list", "event", "perm", "perm_resolved", "ping"] as const) {
 		stream.addEventListener(name, (e) => {
 			lastFrameAt = Date.now();
 			if (name === "ping") return;

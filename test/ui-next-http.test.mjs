@@ -59,7 +59,11 @@ async function fixture(t) {
       headers:
         input === undefined
           ? { Accept: "application/json" }
-          : { Accept: "application/json", "Content-Type": "application/json", Origin: origin },
+          : {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              Origin: origin,
+            },
       ...(input === undefined ? {} : { body: JSON.stringify(input) }),
     });
     const text = await response.text();
@@ -115,16 +119,11 @@ test("已实现通道在真实 Host 上返回可用数据", async (t) => {
   const models = await f.api.listModels({});
   assert.ok(Array.isArray(models));
 
-  for (const p of ["/api/sessions","/api/state","/api/interactions","/api/plugin-resources","/api/providers","/api/mcp","/api/package","/api/files","/api/git","/api/commands"]) {
-    const r = await fetch(f.origin + p, { headers: { Accept: "application/json" } });
-    console.error("PROBE", p, r.status);
-  }
   const providers = await f.api.listProviders({});
   assert.ok(Array.isArray(providers), "settings:listProviders 必须返回数组");
 
   const mcp = await f.api.mcpConfigList({});
   assert.ok(Array.isArray(mcp));
-
 });
 
 test("未实现通道抛可诊断错误，不返回空数据", async (t) => {
@@ -155,6 +154,9 @@ test("未实现通道抛可诊断错误，不返回空数据", async (t) => {
 test("会话创建与提示走真实 Host，返回 Percho 需要的身份", async (t) => {
   const f = await fixture(t);
   const created = await f.api.createSession({ options: {} });
-  assert.ok(created?.sessionId || created?.id, "createSession 必须返回会话身份");
+  assert.ok(
+    created?.sessionId || created?.id,
+    "createSession 必须返回会话身份",
+  );
   assert.equal(typeof (created.sessionId ?? created.id), "string");
 });

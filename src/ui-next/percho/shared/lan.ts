@@ -106,6 +106,7 @@ export interface LanSsePingFrame {
 
 /** 局域网观察服务的所有 SSE 数据帧。 */
 export type LanSseFrame =
+  | { event: "snapshot"; data: LanSnapshot }
 	| LanSseHelloFrame
 	| LanSseViewFrame
 	| LanSseListFrame

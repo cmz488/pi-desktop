@@ -283,6 +283,8 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				mutex: { extensionPath: event.extensionPath, tools: event.tools },
 			});
 		}
+		case "desktop_snapshot":
+      return { ...state, ...event.transcript };
 		case "agent_start":
 			return {
 				...state,

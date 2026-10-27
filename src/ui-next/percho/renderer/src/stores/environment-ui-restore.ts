@@ -78,6 +78,11 @@ export async function initEnvironmentUiState(): Promise<void> {
 	saved = await getPi()
 		.loadEnvironmentUiState()
 		.catch(() => null);
+	if (saved && saved.catalog.length === 0 && saved.workspace.members.length === 0) {
+    // 早期 HTTP 适配把 ISO 时间变成 NaN，导致环境投影始终保存为空；保留旧工作区的恢复入口。
+    const legacy = await getPi().loadUiState().catch(() => null);
+    if (legacy?.sessionWorkspace?.files.length) saved = null;
+  }
 	if (saved) {
 		markMixedWorkspaceState();
 		for (const cwd of saved.dailyDirs) rememberDailyDirectory(cwd);

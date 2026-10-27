@@ -12,6 +12,8 @@
 import { UI_CHANNELS } from "../../../channels.mjs";
 import { UI_SUPPORT, UI_SUBSCRIPTION_SUPPORT } from "../../../support.mjs";
 import { buildHostApi } from "../../../host-api.mjs";
+import { createSessionTransport } from "../../../session-transport.mjs";
+import { createSubscriptions } from "../../../subscriptions.mjs";
 import { createHttpHandlers } from "../../../http-handlers.mjs";
 
 /** 与 Host 通信；非 2xx 转成带 status 的错误。 */
@@ -45,45 +47,23 @@ async function request(path, input) {
 const get = (path) => request(path);
 const post = (path, input) => request(path, input ?? {});
 
-/** Host 的 SSE 事件流 → Percho 的订阅回调。 */
-function createSubscriptions() {
-  const listeners = new Map();
-  let source;
-
-  const ensureStream = () => {
-    if (source) return;
-    source = new EventSource("/api/events");
-    source.onmessage = (event) => {
-      let payload;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      for (const listener of listeners.get("onEvent") ?? []) listener(payload);
-    };
-  };
-
-  return (name, _channel, listener) => {
-    if (!listeners.has(name)) listeners.set(name, new Set());
-    listeners.get(name).add(listener);
-    if (name === "onEvent") ensureStream();
-    return () => {
-      listeners.get(name)?.delete(listener);
-    };
-  };
-}
 
 let installed;
+const sessions = createSessionTransport({ get, post });
+
+export function mirrorComposerText(sessionId: string, text: string): Promise<unknown> {
+  return sessions.mirrorComposer(sessionId, text);
+}
+
 
 export function installHostApi() {
   if (installed) return installed;
   installed = buildHostApi({
     channels: UI_CHANNELS,
-    handlers: createHttpHandlers({ get, post }),
+    handlers: createHttpHandlers({ get, post, sessions }),
     support: UI_SUPPORT,
     subscriptionSupport: UI_SUBSCRIPTION_SUPPORT,
-    subscribe: createSubscriptions(),
+    subscribe: createSubscriptions({ sessions }),
     platform: "linux",
   });
   window.pi = installed;

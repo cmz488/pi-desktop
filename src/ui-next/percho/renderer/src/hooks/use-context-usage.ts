@@ -53,7 +53,13 @@ export function useContextUsage(sessionId: string | null): ContextUsageInfo | nu
 	useEffect(() => {
 		if (!sessionId) return;
 		const off = getExecutionApi(sessionId).onEvent(({ sessionId: sid, event }) => {
-			if (sid !== sessionId || !isRefreshEvent(event.type)) return;
+			if (sid !== sessionId) return;
+      if (event.type === "desktop_snapshot") {
+        generationRef.current += 1;
+        setUsage(event.usage ?? null);
+        return;
+      }
+      if (!isRefreshEvent(event.type)) return;
 			void refresh();
 		});
 		return off;

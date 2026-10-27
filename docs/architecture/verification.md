@@ -43,25 +43,13 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 测试使用临时目录和本地模型／Git／HTTPS 夹具，不触碰真实用户配置、会话或远端仓库。Chromium／Electron／PTY 的专项需要对应本机工具，详见 package.json 中各命令。真实局域网设备的首次证书信任、第三方 OAuth 和任意 Pi 自定义 TUI 控件不能由本地夹具保证。
 
-## 已知上游限制
+## Percho 适配回归
 
-以下缺口已在 1.4.0 上升级中定位到上游，不在本仓库内绕过：
+`test/percho-integration.test.mjs` 启动默认的多进程 Desktop Host，验证两个 worker 的身份、项目和消息目标隔离，按文件重开、真实 SSE 回复、扩展通知／预填／一次性对话框，以及偏好的局部更新、并发保存与 Host 重开。边界数据直接交给移植的 `messagesToUIMessages`、`buildChatRows`、`reduceEvent` 和导航解析器消费，不以“返回了数组”代替契约验证。
 
-- **跨包嵌套工具语义**：`pi-coding-agent` 的 `codemode` 是 Pi 侧的`内置扩展`，在 Pi 的
-  `AgentSession` 里调用 Pi 侧工具，不经过 Durable 的 `executeTool`。两侧对嵌套结果的约定不同，
-  因此 `codemode` 里 `text(await tools.bash(...))` 得到空输出。
+`test/mobile-stream.test.mjs` 保持真实 SSE 连接，验证从桌面／workspace 发起的 partial 和最终答案到达手机，并将快照交给实际 lan-web 消费函数；另验证五连接上限、一次性释放名额及有连接时的停机。手机增量使用 `snapshot` 命名帧替换权威状态，保留既有 `list`／`ping` 帧。
 
-  实测证据（两个独立探针）：
-  - 自定义工具只返回 `output`（不声明 schema）时，嵌套调用**能**拿到
-    `structuredOutput: "HELLO_FROM_TOOL"` —— Durable 会把 model 可见的 output 复制成结构化值。
-  - 内置 `bash` **声明了** `structuredOutputSchema`（含 `output`/`truncated`/`exitCode`），
-    所以 Durable 走 schema 分支、只回传校验后的结构化值；经 `codemode` 路径调用时该值为空，
-    回传的键是 `["taskId","isError","diagnostics","durationMs"]`。
-
-  这属于上游两包的集成差异，不是本仓库可修的实现缺陷。不自行注入 `structuredOutput`
-  绕过——那会绕过 Durable 的 schema 校验，属于改上游契约。
-  回归：`test/durable-features.test.mjs` 的嵌套工具用例断言 `codemode` 本身成功执行且
-  `shellEnv` 配置被接受，不假装输出可见。
+嵌套工具输出缺失曾被误判为上游差异。实际错误在本地 `customTools` 适配器：返回给 Pi SDK 的结果被改成了 Durable 的 `output`，但 Pi 仍读取 `content`。现在在两个边界分别使用原生字段，并在工具声明 schema 时对应传递 `structuredContent`／`structuredOutput`；没有绕过 schema 校验。`test/durable-features.test.mjs` 恢复断言 `codemode` 能读到嵌套 bash 的真实 stdout 与会话 shell 环境。
 
 ## 标准 Pi 扩展兼容基线
 

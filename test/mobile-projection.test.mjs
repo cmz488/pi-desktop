@@ -42,7 +42,7 @@ test("deriveView 给出 Percho 视图所需的全部字段", () => {
 
   assert.equal(view.sessionId, "7");
   assert.equal(view.name, "会话");
-  assert.equal(view.cwd, "/p");
+  assert.equal(view.cwd, "", "LAN 不暴露本地绝对目录");
   assert.equal(view.agentActive, true);
   assert.equal(view.compacting, false);
   assert.equal(view.queued, true);
@@ -51,7 +51,11 @@ test("deriveView 给出 Percho 视图所需的全部字段", () => {
   assert.deepEqual(view.todos, []);
   assert.equal(view.pendingPermission, null);
   assert.equal(view.lastError, null);
-  assert.deepEqual(view.stats, { inputTokens: 11, outputTokens: 22, cost: 0.5 });
+  assert.deepEqual(view.stats, {
+    inputTokens: 11,
+    outputTokens: 22,
+    cost: 0.5,
+  });
   assert.equal(view.lastActivity, 1700000000000);
 });
 
@@ -80,14 +84,17 @@ test("deriveView 在缺字段时给出类型允许的空值，而不是省略键
 
 test("toUiMessage 只映射手机端渲染的 kind，未知角色落 system", () => {
   assert.equal(toUiMessage({ role: "user", text: "hi" }, 0).kind, "user");
-  assert.equal(toUiMessage({ role: "assistant", text: "yo" }, 1).kind, "assistant");
+  assert.equal(
+    toUiMessage({ role: "assistant", text: "yo" }, 1).kind,
+    "assistant",
+  );
   const tool = toUiMessage(
     { role: "toolResult", text: "ok", toolName: "bash", isError: true },
     2,
   );
-  assert.equal(tool.kind, "tool");
-  assert.equal(tool.toolName, "bash");
-  assert.equal(tool.isError, true);
+  assert.equal(tool.kind, "assistant");
+  assert.equal(tool.tools[0].name, "bash");
+  assert.equal(tool.tools[0].isError, true);
   assert.equal(toUiMessage({ role: "system", text: "s" }, 3).kind, "system");
   // 未知角色不得被误标成 user。
   assert.equal(toUiMessage({ role: "custom", text: "x" }, 4).kind, "system");
@@ -126,11 +133,22 @@ async function fixture(t) {
     }),
   );
   const providers = await openDurableModels({ agentDir, directory });
-  const faux = fauxProvider({ provider: "proj", models: [{ id: "local" }], tokensPerSecond: 10000 });
+  const faux = fauxProvider({
+    provider: "proj",
+    models: [{ id: "local" }],
+    tokensPerSecond: 10000,
+  });
   providers.models.setProvider(faux.provider);
   // fetch（undici）不接受 node:https 的 Agent，所以功能用例走明文端口；
   // TLS 握手本身由 test/mobile.test.mjs 用 https.request 单独验证。
-  const app = await startDurableDesk({ cwd, agentDir, directory, providers, port: 0, mobileTls: false });
+  const app = await startDurableDesk({
+    cwd,
+    agentDir,
+    directory,
+    providers,
+    port: 0,
+    mobileTls: false,
+  });
   t.after(async () => {
     await app.stop();
     await rm(root, { recursive: true, force: true });
@@ -139,7 +157,6 @@ async function fixture(t) {
   return { app, faux, directory };
 }
 
-
 const baseUrl = (app) => new URL(app.mobile.url).origin;
 
 test("快照带 view 与 transcript，首屏即有内容", async (t) => {
@@ -147,7 +164,9 @@ test("快照带 view 与 transcript，首屏即有内容", async (t) => {
   const token = encodeURIComponent(app.mobile.token);
   const base = baseUrl(app);
 
-  const snapshot = await (await fetch(`${base}/api/snapshot?t=${token}`)).json();
+  const snapshot = await (
+    await fetch(`${base}/api/snapshot?t=${token}`)
+  ).json();
   assert.equal(snapshot.views.length, snapshot.list.length);
   assert.equal(snapshot.transcripts.length, snapshot.list.length);
 
@@ -156,7 +175,9 @@ test("快照带 view 与 transcript，首屏即有内容", async (t) => {
   assert.ok(view, "每个会话都要有 view");
   assert.equal(typeof view.agentActive, "boolean");
 
-  const transcript = snapshot.transcripts.find((item) => item.sessionId === row.sessionId);
+  const transcript = snapshot.transcripts.find(
+    (item) => item.sessionId === row.sessionId,
+  );
   assert.ok(transcript, "每个会话都要有 transcript");
   assert.ok(Array.isArray(transcript.state.messages));
   assert.equal(transcript.state.phase, "idle");
@@ -165,14 +186,23 @@ test("快照带 view 与 transcript，首屏即有内容", async (t) => {
   faux.setResponses([fauxAssistantMessage("ANSWER")]);
   await fetch(`${base}/api/sessions/${row.sessionId}/prompt`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${app.mobile.token}` },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${app.mobile.token}`,
+    },
     body: JSON.stringify({ text: "问题" }),
   });
 
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const next = await (await fetch(`${base}/api/snapshot?t=${token}`)).json();
-    const entry = next.transcripts.find((item) => item.sessionId === row.sessionId);
-    if (entry.state.messages.some((message) => message.kind === "assistant" && message.text === "ANSWER"))
+    const entry = next.transcripts.find(
+      (item) => item.sessionId === row.sessionId,
+    );
+    if (
+      entry.state.messages.some(
+        (message) => message.kind === "assistant" && message.text === "ANSWER",
+      )
+    )
       return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -189,7 +219,9 @@ test("SSE 使用命名事件帧（list／ping），不是裸 message", async (t)
     signal: controller.signal,
   });
   assert.equal(response.status, 200);
-  assert.ok((response.headers.get("content-type") ?? "").includes("text/event-stream"));
+  assert.ok(
+    (response.headers.get("content-type") ?? "").includes("text/event-stream"),
+  );
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

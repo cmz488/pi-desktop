@@ -226,6 +226,7 @@ export interface SessionCompactionMessage {
 
 /** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
 export type SessionMessage =
+  | { role: "system"; text: string; timestamp: number }
 	| SessionUserMessage
 	| SessionAssistantMessage
 	| SessionImageMessage
@@ -497,6 +498,7 @@ export interface StreamGuardTrippedEvent {
 /** pi 事件 + Percho UI 事件，跨 IPC 统一转发。 */
 export type { PiAgentSessionEvent as AgentSessionEvent };
 export type SessionEvent =
+  | { type: "desktop_snapshot"; transcript: import("./transcript").SessionTranscriptState; usage?: ContextUsageInfo | null; name?: string }
 	| Exclude<PiAgentSessionEvent, { type: "turn_end" }>
 	| (Extract<PiAgentSessionEvent, { type: "turn_end" }> & {
 			/** Percho 转发附加：失败响应的持久化 entry，供错误卡精确核验（不靠毫秒时间判唯一）。 */

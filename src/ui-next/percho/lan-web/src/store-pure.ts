@@ -97,6 +97,8 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 	frame: LanSseFrame,
 ): Partial<LanAppState> {
 	switch (frame.event) {
+    case "snapshot":
+      return seedSessions(state, frame.data);
 		case "hello":
 		case "ping":
 			return {}; // 心跳不携带状态（判活由接线层 lastFrameAt 记录）

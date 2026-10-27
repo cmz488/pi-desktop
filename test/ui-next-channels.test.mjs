@@ -33,7 +33,13 @@ async function fixture(t) {
     }),
   );
   const providers = await openDurableModels({ agentDir, directory });
-  const app = await startDurableDesk({ cwd, agentDir, directory, providers, port: 0 });
+  const app = await startDurableDesk({
+    cwd,
+    agentDir,
+    directory,
+    providers,
+    port: 0,
+  });
   t.after(async () => {
     await app.stop();
     await rm(root, { recursive: true, force: true });
@@ -46,15 +52,22 @@ async function fixture(t) {
       headers:
         input === undefined
           ? { Accept: "application/json" }
-          : { Accept: "application/json", "Content-Type": "application/json", Origin: origin },
+          : {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              Origin: origin,
+            },
       ...(input === undefined ? {} : { body: JSON.stringify(input) }),
     });
     const text = await response.text();
     const payload = text ? JSON.parse(text) : undefined;
     if (!response.ok)
-      throw Object.assign(new Error(payload?.error ?? `HTTP ${response.status}`), {
-        status: response.status,
-      });
+      throw Object.assign(
+        new Error(payload?.error ?? `HTTP ${response.status}`),
+        {
+          status: response.status,
+        },
+      );
     return payload;
   };
   const api = buildHostApi({
@@ -106,10 +119,10 @@ test("MCP 与权限只读通道返回可用数据", async (t) => {
   assert.ok(Array.isArray(mcp));
 
   const config = await f.api.getPermissionConfig({});
-  assert.equal(typeof config.mode, "string");
+  assert.equal(config.enabled, true);
 
   const mode = await f.api.getPermissionMode({});
-  assert.equal(typeof mode, "string");
+  assert.ok(["default", "fullAccess"].includes(mode));
 });
 
 test("未实现通道保持可诊断的拒绝，且原因非空", async (t) => {

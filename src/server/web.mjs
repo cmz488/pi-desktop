@@ -384,7 +384,10 @@ export async function startWebSlot(options = {}) {
         if (type === "error") mcpFailed = true;
       } else bridge?.publish("notification", { message, type });
     },
-    setEditorText: (text) => bridge?.publish("editor_text", { text }),
+    setEditorText: (text) => {
+      composerText = text;
+      bridge?.publish("editor_text", { text });
+    },
     // 扩展同步读取编辑器正文；渲染进程通过 /api/composer 维护这个镜像。
     getEditorText: () => composerText,
     setWorkingMessage: (message) => {

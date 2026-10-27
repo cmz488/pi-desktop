@@ -2,18 +2,20 @@
 
 # 0.28.x · Percho 界面移植与 Pi 1.4.0 升级
 
+后续审查纠正：本页最初记录的 528/528 没有覆盖真实消费链，不能据此宣布移植完成。嵌套工具空输出实际由本地 Pi SDK／Durable 结果字段混用导致，已修正并恢复 stdout 断言。默认 Host 现在按 worker 所有权路由，SSE 投影为权威状态；手机连接回收与背压接入实际网络路径。新增回归见[验证说明](../architecture/verification.md#percho-适配回归)。下面的规模和门禁数字保留为初次记录。
+
 本轮把界面移植、手机端重建、SDK 升级和扩展能力收口放在同一条线上做，因为四者互相卡住：不升到 1.4.0 就无法判断扩展缺口是实现问题还是版本问题；不打通传输层就无法验证移植的界面；手机端复用同一套传输层，做完才知道隧道该不该留。
 
 ## 规模
 
 相对 `main`：**408 个文件，+53355 / −27596**，28 个提交。
 
-| 区域 | 说明 |
-| --- | --- |
-| `src/ui-next/percho/` | 移植源码 41264 行（渲染层 234 文件 + shared 契约 + lan-web 23 文件），MIT，`LICENSE` 随代码 |
-| 我们自己的新模块 | 9 个：`ui-context`、`mobile`、`mobile-data`、`mobile-projection`、`self-signed-cert`、`ui-state-store`、`channels`、`support`、`host-api`、`http-handlers`、`build`、`vite.config` |
-| 删除 | 30 个文件：Tailscale 全套（1173 行源码 + 2316 行测试）、旧页面壳与专属模块（20208 行） |
-| 新增测试 | 11 个文件：扩展 UI 一致性、手机端（边界/TLS/数据面/投影/LAN）、移植契约（契约/HTTP/状态/通道） |
+| 区域                  | 说明                                                                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/ui-next/percho/` | 移植源码 41264 行（渲染层 234 文件 + shared 契约 + lan-web 23 文件），MIT，`LICENSE` 随代码                                                                                         |
+| 我们自己的新模块      | 12 个：`ui-context`、`mobile`、`mobile-data`、`mobile-projection`、`self-signed-cert`、`ui-state-store`、`channels`、`support`、`host-api`、`http-handlers`、`build`、`vite.config` |
+| 删除                  | 30 个文件：Tailscale 全套（1173 行源码 + 2316 行测试）、旧页面壳与专属模块（20208 行）                                                                                              |
+| 新增测试              | 11 个文件：扩展 UI 一致性、手机端（边界/TLS/数据面/投影/LAN）、移植契约（契约/HTTP/状态/通道）                                                                                      |
 
 ## 四条主线
 
@@ -23,14 +25,14 @@
 
 破坏性变更与适配：
 
-| 变更 | 处理 |
-| --- | --- |
-| `ToolExecutionResult.content` → `output` | 三处 Durable 工具边界改写；Pi SDK 侧 `content` 未变，两者不能混 |
-| `defineDoc` 新增必需 `checkpointWhen` | 五个 `desk.*` doc 全部补上（上游 `transaction.js` 无保护直接调用） |
-| `read` 改用 `openBinaryReader` | 加入只读 env 白名单 |
-| `TaskRuntime.sleep` → `sleepUntil(until, checkpoint, ctx)` | 后台任务不再立即 faulted |
+| 变更                                                             | 处理                                                                                                                 |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `ToolExecutionResult.content` → `output`                         | 三处 Durable 工具边界改写；Pi SDK 侧 `content` 未变，两者不能混                                                      |
+| `defineDoc` 新增必需 `checkpointWhen`                            | 五个 `desk.*` doc 全部补上（上游 `transaction.js` 无保护直接调用）                                                   |
+| `read` 改用 `openBinaryReader`                                   | 加入只读 env 白名单                                                                                                  |
+| `TaskRuntime.sleep` → `sleepUntil(until, checkpoint, ctx)`       | 后台任务不再立即 faulted                                                                                             |
 | `emitBeforeAgentStart` 签名变为 `(trigger, systemPromptOptions)` | 旧的三参数调用让 `beforeRequest` 卡死、`turnIndex` 永不递增，`turn_end` 报 −1；**这一个 bug 掩盖了后面所有边界问题** |
-| `pi-ai` 必须只在 peerDependencies | 否则打包后装第二份 runtime |
+| `pi-ai` 必须只在 peerDependencies                                | 否则打包后装第二份 runtime                                                                                           |
 
 ### 2 · 边界补丁：从源码改写退回原生
 
@@ -49,11 +51,11 @@ Percho 的 `patches/@earendil-works+pi-coding-agent+1.4.0.patch` 实测**打不�
 
 `src/agent/ui-context.mjs` 给 28 个成员各自声明层级：
 
-| 层级 | 数量 | 内容 |
-| --- | --- | --- |
-| native | 19 | 真实 GUI 实现（含 `getEditorText` 输入框镜像、`getAllThemes`/`getTheme` 接 SDK 主题模块） |
-| degraded | 8 | 可用但非终端语义，附原因，首次使用时记录 |
-| refused | 1 | `setTheme` 明确返回失败 |
+| 层级     | 数量 | 内容                                                                                      |
+| -------- | ---- | ----------------------------------------------------------------------------------------- |
+| native   | 19   | 真实 GUI 实现（含 `getEditorText` 输入框镜像、`getAllThemes`/`getTheme` 接 SDK 主题模块） |
+| degraded | 8    | 可用但非终端语义，附原因，首次使用时记录                                                  |
+| refused  | 1    | `setTheme` 明确返回失败                                                                   |
 
 声明表是契约：SDK 新增成员未登记层级时 `test/extension-ui-conformance.test.mjs` 直接失败。
 
@@ -71,10 +73,10 @@ Percho 的 `patches/@earendil-works+pi-coding-agent+1.4.0.patch` 实测**打不�
 
 Percho 契约共 123 个 invoke + 17 订阅：
 
-| 状态 | invoke | 订阅 |
-| --- | --- | --- |
-| 已接通 | **64** | 10 |
-| 如实标记 unsupported | 59 | 7 |
+| 状态                    | invoke | 订阅 |
+| ----------------------- | ------ | ---- |
+| 已登记 invoke／实际订阅 | **64** | 5    |
+| unsupported             | 59     | 12   |
 
 保持 unsupported 的按「我们后端有没有」分诊，不硬造：`remote`(12) SSH 远端开发已被手机端取代、`app`(8) Electron 外壳能力、`update`(5) 无内置更新器、`uiPlugins`(3) 无该运行时、其余为无对应接口的存储与配置。
 
@@ -82,29 +84,29 @@ Percho 契约共 123 个 invoke + 17 订阅：
 
 ## 实测纠正的错误假设
 
-| 假设 | 实测 |
-| --- | --- |
-| `GET /api/package` 列包 | 不存在，`/api/package` 只接受 install/remove |
-| `/api/plugin` 读清单 | 只写；读取端是 `/api/plugins`（复数） |
-| 审批模式在 `/api/state` | 在 `/api/agent.active.approvalMode` |
-| 新 provider 用 `models: [...]` | `patchProvider` 用 `modelId`（单数） |
-| `/api/workspace/command` 可建会话 | Host 专属路由；worker 上是 `POST /api/command` |
-| 内置 `bash` 未声明 `structuredOutputSchema` | **它声明了**，且 `codemode` 从不经过 Durable 的 `executeTool`——这是跨包集成差异，不是本地缺陷 |
-| Percho 是 58 个通道 | 123 个（旧 grep 漏了多行定义） |
+| 假设                                        | 实测                                                                               |
+| ------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `GET /api/package` 列包                     | 不存在，`/api/package` 只接受 install/remove                                       |
+| `/api/plugin` 读清单                        | 只写；读取端是 `/api/plugins`（复数）                                              |
+| 审批模式在 `/api/state`                     | 在 `/api/agent.active.approvalMode`                                                |
+| 新 provider 用 `models: [...]`              | `patchProvider` 用 `modelId`（单数）                                               |
+| `/api/workspace/command` 可建会话           | Host 专属路由；worker 上是 `POST /api/command`                                     |
+| 内置 `bash` 未声明 `structuredOutputSchema` | 它声明了；空输出来自本地适配器误把 Pi SDK 的 `content` 改为 `output`，不是上游缺陷 |
+| Percho 是 58 个通道                         | 123 个（旧 grep 漏了多行定义）                                                     |
 
 ## 数据面
 
-手机端出网内容统一在 `src/server/mobile-data.mjs` 裁剪：图片保留数量占位、本地路径与会话文件名递归清空、工具 `details` 走 6 层。写操作记入 `mobile-audit.jsonl`（时间/来源 IP/动作/目标/结果），**不记令牌、不记正文**。连接数上限 5、单会话待发帧 64，超出明确拒绝。
+手机端出网内容统一在 `src/server/mobile-data.mjs` 裁剪：图片保留数量占位、本地路径与会话文件名递归清空、工具 `details` 走 6 层。写操作记入 `mobile-audit.jsonl`（时间/来源 IP/动作/目标/结果），**不记令牌、不记正文**。连接数上限 5、每客户端待发帧 64，并限制实际发送缓冲和队列的总字节数；超出断开慢连接。
 
-实时投影由 `src/server/mobile-projection.mjs` 产出 Percho 期望的 view/transcript 状态；SSE 用命名帧（`list`/`view`/`ping`），快照带 `seq` 供客户端去重。
+实时投影由 `src/server/mobile-projection.mjs` 产出 Percho 的 view/transcript 状态；workspace 更新触发 SSE `snapshot` 帧，客户端原子替换历史与 partial，另保留 `list`／`ping`。
 
 ## 三个遗留失败的根因
 
-| 失败 | 根因 |
-| --- | --- |
+| 失败                         | 根因                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | legacy SQLite history export | `migrateLegacy` 传的两方法 `models` 占位对象缺 `getAuth`，1.4.0 的 `withClientIdentity` 调用 `.bind` 时崩（16.7s → 1.1s） |
-| TUI drafts | `pi-tui` 用 **APC** 序列标记光标，测试只清 CSI，草稿被切成 `ESC_pi:fc草ESC_pi:/fc稿-A` |
-| nested tool output | 见上表；测试改为断言 `codemode` 本身成功，不假装输出可见 |
+| TUI drafts                   | `pi-tui` 用 **APC** 序列标记光标，测试只清 CSI，草稿被切成 `ESC_pi:fc草ESC_pi:/fc稿-A`                                    |
+| nested tool output           | 本地适配器混淆 Pi SDK 的 `content` 和 Durable 的 `output`；修正边界后恢复真实 stdout 断言                                 |
 
 ## 门禁
 

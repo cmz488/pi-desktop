@@ -50,11 +50,16 @@ export const UI_SUPPORT = Object.freeze({
   ),
   "session:getTodos": unsupported("todo 以工具结果进入转录，没有独立读取接口"),
   "session:clearQueue": unsupported("队列由 Durable 拥有，没有公开清空入口"),
-  "session:getFollowUpMessages": unsupported("队列由 Durable 拥有，没有公开读取入口"),
+  "session:getFollowUpMessages": unsupported(
+    "队列由 Durable 拥有，没有公开读取入口",
+  ),
   "session:setName": implemented("/api/workspace/command"),
   "session:export": unsupported("会话导出走 workspace 命令，通道名未对齐"),
-  "session:recall": unsupported("撤回走 workspace rewind 命令，语义与 Percho recall 不同"),
-  "session:getChannelSubscriptionSessionIds": unsupported("我们没有频道订阅模型"),
+  "session:recall": unsupported(
+    "撤回走 workspace rewind 命令，语义与 Percho recall 不同",
+  ),
+  "session:getChannelSubscriptionSessionIds":
+    unsupported("我们没有频道订阅模型"),
   "session:getChannelSubscriptions": unsupported("我们没有频道订阅模型"),
   "domain:action": unsupported("Percho 的通用域动作分发；我们没有等价入口"),
 
@@ -103,12 +108,18 @@ export const UI_SUPPORT = Object.freeze({
   "settings:getModelPrefs": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
-  "settings:setProviderModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
+  "settings:setProviderModelsHidden":
+    unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setProviderBaseUrl": implemented("/api/provider"),
   "settings:testProvider": implemented("/api/refresh-models"),
-  "settings:setSubagentModel": unsupported("子代理模型选择随 workspace configure，没有独立通道"),
-  "settings:setSubagentThinking": unsupported("子代理思考等级随 workspace configure"),
-  "settings:setSubagentPreferBuiltin": unsupported("我们没有内置／原生子代理二选一开关"),
+  "settings:setSubagentModel": unsupported(
+    "子代理模型选择随 workspace configure，没有独立通道",
+  ),
+  "settings:setSubagentThinking": unsupported(
+    "子代理思考等级随 workspace configure",
+  ),
+  "settings:setSubagentPreferBuiltin":
+    unsupported("我们没有内置／原生子代理二选一开关"),
   "settings:listSubagents": implemented("/api/subagent-history"),
   "settings:loginRespond": implemented("/api/interaction-reply"),
 
@@ -119,7 +130,9 @@ export const UI_SUPPORT = Object.freeze({
   "channelWatch:setEnabled": unsupported("我们没有频道观察配置"),
 
   // ── 桌面外壳（Electron / preload 拥有） ─────────────────────────────────
-  "project:pickDirectory": unsupported("目录选择是 Electron 原生能力，不在 Host HTTP 上"),
+  "project:pickDirectory": unsupported(
+    "目录选择是 Electron 原生能力，不在 Host HTTP 上",
+  ),
   "file:saveDialog": unsupported("保存对话框是 Electron 原生能力"),
   "app:openExternal": unsupported("外部链接由桌面壳处理"),
   "app:openPath": unsupported("在文件管理器中打开是桌面壳能力"),
@@ -143,7 +156,9 @@ export const UI_SUPPORT = Object.freeze({
   "update:download": unsupported("我们以 pi package 分发，没有内置更新器"),
   "update:install": unsupported("我们以 pi package 分发，没有内置更新器"),
   "update:diagnostics": unsupported("我们以 pi package 分发，没有内置更新器"),
-  "update:exportDiagnostics": unsupported("我们以 pi package 分发，没有内置更新器"),
+  "update:exportDiagnostics": unsupported(
+    "我们以 pi package 分发，没有内置更新器",
+  ),
 
   // ── UI 插件 ─────────────────────────────────────────────────────────────
   "uiPlugins:getConfig": implemented("/api/plugin-config"),
@@ -156,18 +171,42 @@ export const UI_SUPPORT = Object.freeze({
   "uiPlugins:openDir": unsupported("我们没有 Percho 的 UI 插件运行时"),
 
   // ── 远端 ────────────────────────────────────────────────────────────────
-  "remote:listSshAliases": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:authGuide": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:stopService": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:preflight": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:forget": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:checkOperation": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:dismissOperation": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:status": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:prepareInstall": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:install": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:connect": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
-  "remote:disconnect": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
+  "remote:listSshAliases": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:authGuide": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:stopService": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:preflight": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:forget": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:checkOperation": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:dismissOperation": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:status": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:prepareInstall": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:install": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:connect": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
+  "remote:disconnect": unsupported(
+    "Percho 用 SSH 远端；我们的远程路线由手机端方案取代",
+  ),
 
   // ── 局域网 ──────────────────────────────────────────────────────────────
   "lan:getStatus": implemented("/api/lan"),
@@ -178,15 +217,23 @@ export const UI_SUPPORT = Object.freeze({
 /** 订阅通道的支持状态；事件侧同样不允许静默不回。 */
 export const UI_SUBSCRIPTION_SUPPORT = Object.freeze({
   onEvent: implemented("/api/events"),
-  onPermissionRequest: implemented("/api/events"),
-  onPermissionResolved: implemented("/api/events"),
-  onTrustRequest: implemented("/api/events"),
-  onTrustResolved: implemented("/api/events"),
+  onPermissionRequest: unsupported(
+    "本 Host 的审批使用同一个一次性扩展对话框通道",
+  ),
+  onPermissionResolved: unsupported(
+    "审批的结算由 onExtensionDialogResolved 通知",
+  ),
+  onTrustRequest: unsupported(
+    "本 Host 的信任交互使用扩展对话框，不产生 Percho TrustRequest",
+  ),
+  onTrustResolved: unsupported("信任交互的结算由扩展对话框通知"),
   onExtensionDialogRequest: implemented("/api/events"),
   onExtensionDialogResolved: implemented("/api/events"),
   onExtensionNotify: implemented("/api/events"),
   onExtensionEditorText: implemented("/api/events"),
-  onMcpServersChanged: implemented("/api/events"),
+  onMcpServersChanged: unsupported(
+    "本 Host 没有独立的 MCP 服务器变更事件；写入后读取原生清单",
+  ),
   onStorageStartup: unsupported("我们没有首启数据迁移步骤"),
   onRemoteConnectionStatus: unsupported("我们的远程路线由手机端方案取代"),
   onProviderLoginEvent: unsupported("登录事件走 /api/events 的其它类型"),

@@ -487,6 +487,11 @@ export function createSupervisor(store, options) {
               );
               return {
                 ...metadata,
+                cwd:
+                  projects.find((project) => project.id === row.projectId)
+                    ?.cwd ??
+                  row.cwd ??
+                  join(options.directory, "agents", row.id, "context"),
                 rootConversationId: members.find(
                   (member) => member.forkOf === null,
                 )?.id,

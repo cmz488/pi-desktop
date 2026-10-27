@@ -7,6 +7,7 @@ import {
 	sameEnvironment,
 } from "@percho/shared";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { mirrorComposerText } from "../../pi-http-bridge";
 import { getPi } from "../../api";
 import { EnvironmentContext } from "../../environment-context";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
@@ -102,6 +103,10 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
 	const { document, images, slashCommand, quotes } = draft;
 	const text = draftText(draft);
+  useEffect(() => {
+    if (activeSessionId)
+      void mirrorComposerText(activeSessionId, text).catch((error: unknown) => console.error("输入框镜像失败", error));
+  }, [activeSessionId, text]);
 	const updateDraft = useDraftStore((s) => s.updateDraft);
 	const setText = (updater: string | ((prev: string) => string)) => {
 		updateDraft(draftKey, (d) =>

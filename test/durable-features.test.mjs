@@ -615,7 +615,11 @@ test("reused Desktop modules support nested tools, attachments, native settings 
   assert(state.tools.includes("ask_user_question"));
   assert(state.tools.includes("codemode"));
   // 入口 / 现在服务移植后的渲染层（旧 /prototype.js 已随页面壳删除）。
-  assert((await (await fetch(f.app.url)).text()).includes("/ui-next/assets/index.js"));
+  assert(
+    (await (await fetch(f.app.url)).text()).includes(
+      "/ui-next/assets/index.js",
+    ),
+  );
   assert.equal((await f.call("/api/package-catalog")).source, "pi.dev");
   assert((await f.call("/api/plugins")).rows.some((row) => row.name === "mcp"));
   const settings = await f.call("/api/settings?scope=global");
@@ -636,18 +640,19 @@ test("reused Desktop modules support nested tools, attachments, native settings 
     revision: descriptor.active.revision,
     shellEnv: { REUSED_ENV: "provided-by-desktop" },
   });
-  // codemode 是 Pi SDK 的内置扩展，它在 Pi 的 AgentSession 里调用 Pi 侧的工具，
-  // 不经过 Durable 的 executeTool。Durable 1.4.0 的嵌套结果只回传结构化值，
-  // Pi 侧的 text() 因此打印空输出（见 docs/architecture/verification.md 的上游限制）。
-  // 这里验证 codemode 仍然可调用、且 shellEnv 配置被接受；不假装输出可见。
   state = await f.runTool("codemode", {
     code: `text(await tools.bash({command: 'printf %s "$REUSED_ENV"'}));`,
   });
-  const codemodeResult = state.messages.find(
-    (row) => row.role === "toolResult" && row.toolName === "codemode",
+  assert(
+    state.messages.some(
+      (row) =>
+        row.role === "toolResult" &&
+        row.toolName === "codemode" &&
+        !row.isError &&
+        row.text.includes("provided-by-desktop"),
+    ),
+    JSON.stringify(state.messages.filter((row) => row.role === "toolResult")),
   );
-  assert(codemodeResult, "codemode 必须产生工具结果");
-  assert.equal(codemodeResult.isError, false, "codemode 本身必须执行成功");
   f.faux.setResponses([fauxAssistantMessage("attachment received")]);
   await f.call("/api/prompt", {
     message: "review file",

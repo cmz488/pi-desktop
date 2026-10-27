@@ -189,6 +189,9 @@ export function createDurableResources({
           label: tool.name,
           description: tool.description,
           parameters: tool.parameters,
+          ...(tool.structuredOutputSchema
+            ? { outputSchema: tool.structuredOutputSchema }
+            : {}),
           annotations: {
             readOnlyHint: readOnly || tool.name === "read",
             destructiveHint: !readOnly && tool.name !== "read",
@@ -212,12 +215,14 @@ export function createDurableResources({
               },
               ctx,
             );
-            // Durable 1.4.0 的 ToolExecutionResult 用 output（旧版为 content）；
-            // 这里处在 Durable ToolTask 边界，所以要转成 output。Pi SDK 工具仍返回 content。
+            // 这里返回给 Pi SDK；只有外层 Durable ToolTask 使用 output。
             return {
-              output:
-                result.content ??
+              content:
+                result.output ??
                 (output ? [{ type: "text", text: output }] : []),
+              ...(result.structuredOutput === undefined
+                ? {}
+                : { structuredContent: result.structuredOutput }),
               details: result.details ?? {},
               isError:
                 !!result.isError ||
@@ -415,6 +420,9 @@ export function createDurableResources({
               name: tool.name,
               description: tool.description,
               parameters: tool.parameters,
+              ...(tool.outputSchema
+                ? { structuredOutputSchema: tool.outputSchema }
+                : {}),
               // ExtensionAPI 没有重放契约；即使 MCP 声明 read-only 提示，
               // 原生与嵌套调用也仍不安全。
               executionMode: "sequential",
@@ -493,6 +501,9 @@ export function createDurableResources({
                 return {
                   // Durable 1.4.0 的工具执行结果用 output；result 来自 Pi 的原生工具。
                   output: result.content,
+                  ...(result.structuredContent === undefined
+                    ? {}
+                    : { structuredOutput: result.structuredContent }),
                   ...(result.usage === undefined
                     ? {}
                     : { usage: result.usage }),
@@ -795,12 +806,12 @@ export function createDurableResources({
      */
     ui(conversationId) {
       const host = readyHosts.get(conversationId);
-      const snapshot = host?.app?.snapshot?.();
+      const snapshot = host?.capabilities.snapshot();
       return snapshot?.ui;
     },
     /** 扩展的同步 getEditorText() 读取的输入框镜像。 */
     setComposerText(conversationId, text) {
-      readyHosts.get(conversationId)?.app?.setComposerText?.(text);
+      readyHosts.get(conversationId)?.capabilities.setComposerText(text);
     },
     cancelInteractions: () => {
       for (const host of readyHosts.values())
