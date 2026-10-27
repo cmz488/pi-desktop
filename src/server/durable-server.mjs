@@ -1378,6 +1378,7 @@ export async function startDurableDesk(options = {}) {
           directory,
           pageHtml: page,
           port: options.mobilePort ?? 0,
+          tls: options.mobileTls !== false,
         });
     }
     let stopped = false;
@@ -1405,7 +1406,18 @@ export async function startDurableDesk(options = {}) {
     return {
       url,
       /** 手机端（局域网）：独立端口与令牌；未构建页面时不启用。 */
-      mobile: mobile ? { url: mobile.url, port: mobile.port, token: mobile.token } : undefined,
+      /**
+       * 手机端（局域网）：独立端口、令牌与自签证书。urls 可直接生成二维码。
+       */
+      mobile: mobile
+        ? {
+            url: mobile.url,
+            urls: mobile.urls,
+            port: mobile.port,
+            scheme: mobile.scheme,
+            token: mobile.token,
+          }
+        : undefined,
       workspace,
       nativeSession: transcripts?.metadata,
       bridge,

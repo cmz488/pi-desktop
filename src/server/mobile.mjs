@@ -1,36 +1,45 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { DeskError } from "../config/config-store.mjs";
 import { contentText } from "../shared/conversation.mjs";
+import { ensureCertificate, localHosts } from "./self-signed-cert.mjs";
 
 /**
- * 手机端（局域网）HTTP 服务：独立端口、独立令牌。
+ * 手机端（局域网）HTTP(S) 服务：独立端口、独立令牌、内置自签证书。
  *
- * 接口：`startMobileServer({ workspace, directory, pageHtml, iconPng, pwaManifest, port })`
- *   返回 `{ url, token, stop }`。
+ * 接口：`startMobileServer({ workspace, directory, pageHtml, iconPng, pwaManifest, port, tls })`
+ *   返回 `{ url, urls, token, port, tokenPath, stop }`。
  * 不变量：
- *   - 手机端与桌面端是两套边界：独立端口、独立令牌，令牌只能访问 `/api/*`，不能读桌面路由，
- *     也不能读源码或资产目录——否则一次手机连接就等于拿到整个 Host；
+ *   - 手机端与桌面端是两套边界：独立端口、独立令牌；令牌只能访问下面列出的路径，
+ *     读不到桌面路由，也读不到源码或资产目录；
  *   - `GET /` 不需要令牌（页面自己弹 TokenGate），其余全部要令牌；
  *   - 写端点用 `Authorization: Bearer`，不把令牌放进 URL（避免进日志）；
- *   - 令牌每次启动重新生成并原子落盘，旧令牌立即失效。
- * 为什么独立服务而不是挂在桌面 Host 上：桌面 Host 的路由没有鉴权（它只服务本机回环），
- *   把手机路由混进去就得给桌面路由也加鉴权，那是更大的安全面改动。
- * 错误：鉴权失败 401 且不回显令牌；未知路径 404；写端点越界 403。
+ *   - 令牌每次启动重新生成并落盘 0600，旧令牌立即失效；
+ *   - TLS 默认开启。自签证书是局域网唯一可行形态：没有公共 CA 愿意为 `192.168.x.x` 签证书。
+ *     关闭 TLS 只能由调用方显式要求，且返回的 `urls` 会如实标成 http。
+ * 为什么独立服务：桌面 Host 的路由没有鉴权（只服务本机回环），把手机路由混进去就得给桌面
+ *   路由也加鉴权，那是更大的安全面改动。
+ * 错误：鉴权失败 401 且不回显令牌；未知路径 404；TLS 装配失败直接抛出，不静默降级到明文。
  */
 
 /** 手机端只用这几个路径；其余一律 404。 */
 const TRANSCRIPT = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const WRITE = /^\/api\/sessions\/([^/]+)\/(prompt|abort)$/;
-const PERMISSION = /^\/api\/permissions\/([^/]+)\/respond$/;
 
 const MAX_BODY = 64 * 1024;
 const MAX_MESSAGES = 100;
 
-function tokenDigest(token) {
-  return createHash("sha256").update(token).digest("hex");
+const digestOf = (token) => createHash("sha256").update(token).digest();
+
+/** 定长比较：长度不同直接失败，避免时序侧信道。 */
+function matches(candidate, expected) {
+  if (typeof candidate !== "string" || !candidate.length) return false;
+  const value = digestOf(candidate);
+  return value.length === expected.length && timingSafeEqual(value, expected);
 }
 
 function bearerOf(request) {
@@ -67,68 +76,81 @@ function sendJson(response, status, value) {
   response.end(body);
 }
 
-/** 我们的消息 → Percho 手机端消费的历史消息（保留 role/text，去掉不出网字段）。 */
+/**
+ * 我们的消息 → Percho 手机端消费的历史消息。
+ *
+ * 转录里存的是模型消息（`content` 块），不是投影后的 `text`；直接读 `text` 会得到空字符串。
+ */
 function toHistoryMessage(message) {
-  // 转录里存的是模型消息（content 块），不是投影后的 text；直接读 text 会得到空字符串。
   const text =
-    typeof message?.text === "string"
-      ? message.text
-      : contentText(message?.content);
+    typeof message?.text === "string" ? message.text : contentText(message?.content);
   return {
     role: message?.role ?? "user",
     text,
     ...(message?.toolName ? { toolName: String(message.toolName) } : {}),
     ...(message?.isError ? { isError: true } : {}),
-    ...(typeof message?.eventKey === "number" ? { timestamp: message.eventKey } : {}),
   };
 }
+
+/** PWA 清单：令牌不进 start_url，页面自行从 localStorage 恢复。 */
+const pwaManifest = JSON.stringify({
+  name: "Pi Desktop Remote",
+  short_name: "Pi Desktop",
+  start_url: "./",
+  scope: "./",
+  display: "standalone",
+  background_color: "#161d27",
+  theme_color: "#161d27",
+  icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+});
 
 export async function startMobileServer({
   workspace,
   directory,
   pageHtml,
-  iconPng,
-  pwaManifest,
   port = 0,
+  tls = true,
 }) {
   if (typeof pageHtml !== "string" || !pageHtml.length)
     throw new TypeError("手机端服务需要已构建的页面");
 
   const token = randomBytes(18).toString("base64url");
-  const digest = tokenDigest(token);
+  const expectedDigest = digestOf(token);
   const tokenPath = join(directory, "mobile-token.json");
-  // 数据目录在首次启动时可能还不存在；先建目录再落盘。
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(
-    tokenPath,
-    JSON.stringify({ createdAt: Date.now(), digest }),
-    { mode: 0o600 },
-  );
+  await writeFile(tokenPath, JSON.stringify({ createdAt: Date.now(), digest: expectedDigest.toString("hex") }), {
+    mode: 0o600,
+  });
+
+  const hosts = localHosts(networkInterfaces());
+  let scheme = "http";
+  let server;
+  if (tls) {
+    // 启用 TLS 时证书必须装配成功；失败就抛，不静默降级到明文。
+    const { cert, key } = await ensureCertificate({ directory, hosts });
+    server = createHttpsServer({ cert, key });
+    scheme = "https";
+  } else {
+    server = createHttpServer();
+  }
 
   /** 读一次会话目录；手机端只需要导航与按需正文。 */
   const collect = async () => {
     const state = await workspace.read();
     const agents = Array.isArray(state?.agents) ? state.agents : [];
-    const list = agents.map((agent) => ({
-      sessionId: String(agent.id),
-      name: agent.name ?? "未命名会话",
-      cwd: agent.cwd ?? "",
-      active: agent.status === "running" || agent.status === "ready",
-      modifiedAt: Number(agent.updatedAt ?? Date.now()),
-      ...(agent.readOnly ? { readOnly: true } : {}),
-    }));
-    return { list };
+    return {
+      list: agents.map((agent) => ({
+        sessionId: String(agent.id),
+        name: agent.name ?? "未命名会话",
+        cwd: agent.cwd ?? "",
+        active: agent.status === "running" || agent.status === "ready",
+        modifiedAt: Number(agent.updatedAt ?? Date.now()),
+        ...(agent.readOnly ? { readOnly: true } : {}),
+      })),
+    };
   };
 
-  const authorized = (token_) => {
-    if (typeof token_ !== "string" || !token_.length) return false;
-    // 定长比较避免时序侧信道；长度不同直接失败。
-    const candidate = Buffer.from(tokenDigest(token_));
-    const expected = Buffer.from(digest);
-    return candidate.length === expected.length && candidate.equals(expected);
-  };
-
-  const server = createServer(async (request, response) => {
+  server.on("request", async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       const path = url.pathname;
@@ -141,7 +163,7 @@ export async function startMobileServer({
         response.end(pageHtml);
         return;
       }
-      if (request.method === "GET" && path === "/manifest.webmanifest" && pwaManifest) {
+      if (request.method === "GET" && path === "/manifest.webmanifest") {
         response.writeHead(200, {
           "Content-Type": "application/manifest+json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -149,27 +171,32 @@ export async function startMobileServer({
         response.end(pwaManifest);
         return;
       }
-      if (request.method === "GET" && path === "/icon.png" && iconPng) {
+      // 移动端用内联 SVG 作为图标，避免为一张图再开一条资产通道。
+      if (request.method === "GET" && path === "/icon.svg") {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#161d27"/><circle cx="32" cy="32" r="14" fill="none" stroke="#d5d8db" stroke-width="3"/><circle cx="32" cy="32" r="4" fill="#d5d8db"/></svg>`;
         response.writeHead(200, {
-          "Content-Type": "image/png",
+          "Content-Type": "image/svg+xml; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        response.end(iconPng);
+        response.end(svg);
         return;
       }
 
       const isRead =
         request.method === "GET" &&
         (path === "/api/snapshot" || path === "/api/stream" || TRANSCRIPT.test(path));
-      const isWrite = request.method === "POST" && (WRITE.test(path) || PERMISSION.test(path));
+      const isWrite = request.method === "POST" && WRITE.test(path);
       if (!isRead && !isWrite) {
         sendJson(response, 404, { error: "not found" });
         return;
       }
 
       // 写端点优先 Bearer（令牌不进 URL 日志）；读端点用 ?t=。
-      const supplied = request.method === "POST" ? (bearerOf(request) ?? url.searchParams.get("t")) : url.searchParams.get("t");
-      if (!authorized(supplied)) {
+      const supplied =
+        request.method === "POST"
+          ? (bearerOf(request) ?? url.searchParams.get("t"))
+          : url.searchParams.get("t");
+      if (!matches(supplied, expectedDigest)) {
         sendJson(response, 401, { error: "invalid token" });
         return;
       }
@@ -199,6 +226,7 @@ export async function startMobileServer({
         const timer = setInterval(() => {
           if (!response.writableEnded) response.write(": ping\n\n");
         }, 15000);
+        timer.unref?.();
         request.on("close", () => clearInterval(timer));
         response.write(": connected\n\n");
         return;
@@ -238,12 +266,6 @@ export async function startMobileServer({
         return;
       }
 
-      // 权限应答：手机端只允许一次性的 allow/deny，不再暴露其它形态。
-      const permission = PERMISSION.exec(path);
-      if (permission) {
-        throw new DeskError(501, "手机端暂不支持应答权限请求");
-      }
-
       sendJson(response, 404, { error: "not found" });
     } catch (error) {
       const status = error?.status ?? 500;
@@ -260,14 +282,22 @@ export async function startMobileServer({
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
 
+  // 二维码地址：优先非回环的局域网 IP，手机才连得上；没有局域网地址时退回归环。
+  const lan = hosts.filter((host) => host !== "127.0.0.1" && host !== "localhost");
+  const urls = (lan.length ? lan : ["127.0.0.1"]).map(
+    (host) => `${scheme}://${host}:${actualPort}/?t=${encodeURIComponent(token)}`,
+  );
+
   return {
     token,
-    url: `http://127.0.0.1:${actualPort}/`,
+    scheme,
     port: actualPort,
+    url: urls[0] ?? `${scheme}://127.0.0.1:${actualPort}/`,
+    urls,
     tokenPath,
     async stop() {
       await new Promise((resolve) => server.close(resolve));
-      // 停服务即撤销令牌：下次启动重新生成。
+      // 停服务即撤销：下次启动重新生成令牌。
       await readFile(tokenPath, "utf8").catch(() => "");
     },
   };
