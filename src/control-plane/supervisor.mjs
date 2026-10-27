@@ -3,6 +3,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DeskError } from "../config/config-store.mjs";
+import { createModels } from "@earendil-works/pi-ai";
 import { launchService } from "./process.mjs";
 import { createPiSessions, reconcilePiSessions } from "./pi-sessions.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
@@ -350,7 +351,10 @@ export function createSupervisor(store, options) {
     const workspace = await openAgentWorkspace({
       storagePath,
       resume: false,
-      models: { getAvailable: async () => [], getModel: () => undefined },
+      // 只读查看历史：用真实的空凭据 models 实例。1.4.0 的 Harness 会经
+      // withClientIdentity 包装 models，要求 getAuth 等方法齐全；手写的两个方法的
+      // 占位对象会在包装时报 "Cannot read properties of undefined (reading 'bind')"。
+      models: createModels(),
     });
     let transcript;
     try {

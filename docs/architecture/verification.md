@@ -47,14 +47,21 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 以下缺口已在 1.4.0 上升级中定位到上游，不在本仓库内绕过：
 
-- **嵌套工具输出**：`pi-durable@1.4.0` 的 `NestedToolExecutionResult` 只含
-  `{taskId, isError, diagnostics, durationMs}`；`ToolExecutionResult.output` 是模型可见字段，
-  不会进入嵌套结果（上游注释：“the output for the model is not kept”）。未声明
-  `structuredOutputSchema` 的工具（包括内置 `bash`）因此无法把 stdout 交给调用方。
-  影响：`pi-coding-agent` 的 `codemode` 中 `text(await tools.bash(...))` 打印空输出。
-  实测：嵌套 `bash` 回传 `["taskId","isError","diagnostics","durationMs"]`。
-  回归：`test/durable-features.test.mjs` 的嵌套工具用例。不自行注入 `structuredOutput`
+- **跨包嵌套工具语义**：`pi-coding-agent` 的 `codemode` 是 Pi 侧的`内置扩展`，在 Pi 的
+  `AgentSession` 里调用 Pi 侧工具，不经过 Durable 的 `executeTool`。两侧对嵌套结果的约定不同，
+  因此 `codemode` 里 `text(await tools.bash(...))` 得到空输出。
+
+  实测证据（两个独立探针）：
+  - 自定义工具只返回 `output`（不声明 schema）时，嵌套调用**能**拿到
+    `structuredOutput: "HELLO_FROM_TOOL"` —— Durable 会把 model 可见的 output 复制成结构化值。
+  - 内置 `bash` **声明了** `structuredOutputSchema`（含 `output`/`truncated`/`exitCode`），
+    所以 Durable 走 schema 分支、只回传校验后的结构化值；经 `codemode` 路径调用时该值为空，
+    回传的键是 `["taskId","isError","diagnostics","durationMs"]`。
+
+  这属于上游两包的集成差异，不是本仓库可修的实现缺陷。不自行注入 `structuredOutput`
   绕过——那会绕过 Durable 的 schema 校验，属于改上游契约。
+  回归：`test/durable-features.test.mjs` 的嵌套工具用例断言 `codemode` 本身成功执行且
+  `shellEnv` 配置被接受，不假装输出可见。
 
 ## 标准 Pi 扩展兼容基线
 

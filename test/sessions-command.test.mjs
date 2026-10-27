@@ -12,11 +12,15 @@ import { join } from "node:path";
 import { createInteractionStore } from "../src/agent/interaction-store.mjs";
 import { until } from "./concurrent-fixture.mjs";
 
+// 渲染输出里有三类转义序列：CSI（ESC [）、APC（ESC _，pi-tui 的假光标）与 OSC（ESC ]）。
+// 只清 CSI 会残留 APC 控制字符，把 "草稿-A" 切成 "ESC_pi:fc草ESC_pi:/fc稿-A"。
+const ANSI_SEQUENCES =
+  /\x1b\[[0-?]*[ -/]*[@-~]|\x1b[_\]][\s\S]*?(?:\x07|\x1b\\)/g;
 const rendered = (view) =>
   view
     .render(110)
     .join("\n")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    .replace(ANSI_SEQUENCES, "");
 const aid = "aaaaaaaa-1111-2222-3333-444444444444";
 const bid = "bbbbbbbb-1111-2222-3333-444444444444";
 test("sessions grammar, ID shorthand, prefix ambiguity and invalid arguments", () => {
