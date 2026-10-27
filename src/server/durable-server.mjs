@@ -9,6 +9,7 @@ import { createDesktopBtw } from "../agent/btw-desktop.mjs";
 import { sendJson } from "./http-transfer.mjs";
 import { createTaskWaits } from "./task-waits.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
+import { createUiStateStore } from "./ui-state-store.mjs";
 import { openDurableModels } from "../agent/durable-models.mjs";
 import { createDurableResources } from "../agent/durable-resources.mjs";
 import { uiSnapshot } from "../agent/ui-context.mjs";
@@ -98,6 +99,8 @@ export async function startDurableDesk(options = {}) {
       join(homedir(), ".pi", "agent"),
   );
   const directory = resolve(options.directory ?? join(agentDir, "desktop"));
+  // 客户端 UI 状态与导航偏好：按工作空间数据目录持久化，页面刷新后读回同一份值。
+  const uiStateStore = createUiStateStore(directory);
   // Start the SDK graph in parallel with everything below; only the steps that
   // need its namespace await it. The early network step uses the same package's
   // settings submodule so a fresh host does not serialize behind the whole SDK.
@@ -812,6 +815,30 @@ export async function startDurableDesk(options = {}) {
           const transcript = transcripts?.get(ctx.active.id);
           if (!transcript) throw new DeskError(403, "此会话不提供创建分支");
           json(response, await transcript.forkSnapshot(input));
+          return true;
+        }
+        /**
+         * 客户端 UI 状态与导航偏好。
+         *
+         * 它们属于工作空间而不是某个会话，所以按工作空间数据目录持久化，不带 Agent 归属。
+         * `desktop` 作用域：页面刷新后必须能读回同一份值，否则侧栏折叠、置顶和主题每次都会丢。
+         */
+        if (url.pathname === "/api/ui-state" || url.pathname === "/api/environment-ui-state") {
+          const name =
+            url.pathname === "/api/ui-state" ? "uiState" : "environmentUiState";
+          if (request.method === "GET") {
+            json(response, { value: await uiStateStore.read(name) });
+            return true;
+          }
+          if (request.method === "POST") {
+            const input = await body(request);
+            await uiStateStore.write(name, input.value);
+            json(response, { value: input.value });
+            return true;
+          }
+        }
+        if (url.pathname === "/api/daily-dir" && request.method === "GET") {
+          json(response, { path: uiStateStore.dailyDir() });
           return true;
         }
         if (url.pathname === "/api/approval" && request.method === "POST") {

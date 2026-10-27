@@ -104,5 +104,14 @@ export function createHttpHandlers({ get, post }) {
     },
     // `/api/mcp` 实测返回 { pending, revisions, rows, supported }。
     "mcp:configList": async () => (await get("/api/mcp"))?.rows ?? [],
+    // 以下五个由工作空间数据目录承载：页面刷新后必须读回同一份值。
+    "uiState:load": async () => (await get("/api/ui-state"))?.value ?? null,
+    "uiState:save": async (args) =>
+      (await post("/api/ui-state", { value: args?.value ?? args ?? {} }))?.value ?? null,
+    "environmentUi:load": async () =>
+      (await get("/api/environment-ui-state"))?.value ?? null,
+    "environmentUi:save": async (args) =>
+      (await post("/api/environment-ui-state", { value: args?.value ?? args ?? {} }))?.value ?? null,
+    "app:getDailyDir": async () => (await get("/api/daily-dir"))?.path ?? "",
   };
 }
