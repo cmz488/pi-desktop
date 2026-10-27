@@ -10,7 +10,6 @@ import {
 } from "../server/web-assets.mjs";
 import QRCode from "qrcode";
 import { createDirectoryPicker } from "../desktop/directory-picker.mjs";
-import { createRemoteAccess } from "../remote/remote-access.mjs";
 import { createDesktopGlobal } from "../resources/desktop-global.mjs";
 import { sendJson } from "../server/http-transfer.mjs";
 import { workspaceIndex } from "../shared/lazy-data.mjs";
@@ -170,11 +169,6 @@ export async function startDesktopHost(options = {}) {
     settingsReloadPending = false,
     settingsReloadTimer,
     settingsReloadDelay = 250;
-  const remoteAccess = createRemoteAccess({
-    targetUrl: () => origin + "/",
-    funnel: options.remoteFunnel,
-    directory: join(directory, "tailscale"),
-  });
   const global = createDesktopGlobal({
     agentDir,
     directory,
@@ -215,31 +209,21 @@ export async function startDesktopHost(options = {}) {
     settingsReloadTimer.unref?.();
     return Promise.resolve();
   }
+  /**
+   * 桌面貌本机入口信息。
+   *
+   * 隧道（Tailscale）已移除：手机端由独立端口 + 自签证书承担（见 /api/lan）。
+   * 这里只报告桌面自己的地址，不再合成远端扫码入口。
+   */
   async function remoteInfo(agentId) {
-    const tunnel = remoteAccess.read();
-    let url = tunnel.scanUrl ?? origin + "/";
-    if (
-      tunnel.scanUrl &&
-      (await store.read()).agents.some((row) => row.id === agentId)
-    ) {
-      const selected = new URL(url);
-      selected.searchParams.set("agent", agentId);
-      url = selected.href;
-    }
+    const url = origin + "/";
     return {
-      tunnel,
       url,
       urls: [],
       port: server.address().port,
       lan: false,
-      ...(tunnel.scanUrl
-        ? {
-            qr: await QRCode.toDataURL(url, {
-              width: 280,
-              margin: 4,
-              errorCorrectionLevel: "M",
-            }),
-          }
+      ...((await store.read()).agents.some((row) => row.id === agentId)
+        ? { qr: await QRCode.toDataURL(url, { width: 280, margin: 4, errorCorrectionLevel: "M" }) }
         : {}),
     };
   }
@@ -291,11 +275,10 @@ export async function startDesktopHost(options = {}) {
         }
         return;
       }
+      // 隧道已移除：/api/remote 只读，用于桌面端展示自己的本机入口。
       if (url.pathname === "/api/remote") {
-        if (request.method === "POST")
-          await remoteAccess.execute((await body(request)).action);
-        else if (request.method !== "GET")
-          throw new DeskError(405, "请求方式不支持");
+        if (request.method !== "GET")
+          throw new DeskError(405, "隧道已移除，远程连接不再支持写操作");
         sendJson(
           response,
           200,
@@ -547,7 +530,6 @@ export async function startDesktopHost(options = {}) {
       directoryPicker.close?.();
       const closed = new Promise((resolve) => server.close(resolve));
       server.closeAllConnections();
-      await remoteAccess.close();
       await supervisor.close();
       await closed;
       await store.close();

@@ -14,7 +14,6 @@ import { sendJson as json, openEventStream } from "./http-transfer.mjs";
 import { chatSnapshot } from "../shared/lazy-data.mjs";
 import QRCode from "qrcode";
 import { lanAddresses } from "../remote/lan.mjs";
-import { createRemoteAccess } from "../remote/remote-access.mjs";
 import {
   DeskError,
   readDocument,
@@ -93,14 +92,6 @@ export function createDeskBridge(input) {
         : body,
   });
   let server, listenUrl;
-  const remoteAccess = createRemoteAccess({
-    targetUrl: () => listenUrl,
-    funnel: transport.funnel,
-    directory: transport.agentDir
-      ? join(transport.agentDir, "desktop", "tailscale")
-      : undefined,
-    onChange: () => publish("remote_changed", {}),
-  });
   let analysis = createLspDiagnostics();
   let catalog = createPackageCatalog({ fetchPage: transport.catalogFetch });
   const localAddresses = () => transport.lanAddresses?.() ?? lanAddresses();
@@ -507,35 +498,6 @@ export function createDeskBridge(input) {
     }
     if (url.pathname === "/api/commands" && request.method === "GET") {
       json(response, 200, { rows: host.snapshot().commands ?? [] });
-      return;
-    }
-    if (url.pathname === "/api/remote" && !host.capabilities.remote)
-      throw new DeskError(404, "当前 Desktop 宿主未启用远程连接");
-    if (url.pathname === "/api/remote" && request.method === "GET") {
-      json(
-        response,
-        200,
-        await connectionDetails(
-          url.searchParams.get("address"),
-          localManagement(request),
-        ),
-      );
-      return;
-    }
-    if (url.pathname === "/api/remote" && request.method === "POST") {
-      if (!localManagement(request))
-        throw new DeskError(403, "请在电脑管理远程连接");
-      const origin = `${secure ? "https" : "http"}://${request.headers.host}`;
-      if (
-        request.headers.origin !== origin ||
-        !/^application\/json(?:;|$)/i.test(
-          request.headers["content-type"] ?? "",
-        )
-      )
-        throw new DeskError(403, "远程管理需要本机同源 JSON 请求");
-      const input = await body(request);
-      await remoteAccess.execute(input.action);
-      json(response, 200, await connectionDetails(undefined, true));
       return;
     }
     if (url.pathname === "/api/events" && request.method === "GET") {
@@ -1319,28 +1281,13 @@ export function createDeskBridge(input) {
     );
     return { localUrl: listenUrl, url: urls[0] ?? listenUrl, urls, port, lan };
   }
-  async function connectionDetails(address, management = true) {
+  async function connectionDetails(address) {
     const info = connectionInfo();
     // Address selection chooses an advertised URL, without creating a listener or a credential.
-    const tunnel = management ? remoteAccess.read() : undefined;
-    let url =
-      address && info.urls.includes(address)
-        ? address
-        : (tunnel?.scanUrl ?? info.url);
-    if (tunnel?.scanUrl && url === tunnel.scanUrl) {
-      const selected = host.snapshot();
-      if (
-        selected.host === "durable" &&
-        /^\d+$/.test(selected.sessionId ?? "")
-      ) {
-        const destination = new URL(url);
-        destination.searchParams.set("agent", selected.sessionId);
-        url = destination.href;
-      }
-    }
+    // 隧道（Tailscale）已移除：二维码只指向本机地址；手机端由 /api/lan 的独立端口承担。
+    let url = address && info.urls.includes(address) ? address : info.url;
     return {
       ...info,
-      ...(tunnel ? { tunnel } : {}),
       url,
       qr: await QRCode.toDataURL(url, {
         width: 280,
@@ -1401,7 +1348,7 @@ export function createDeskBridge(input) {
   }
   async function stop() {
     filePicker.close?.();
-    await Promise.all([remoteAccess.close(), analysis.stop(), catalog.stop()]);
+    await Promise.all([analysis.stop(), catalog.stop()]);
     analysis = createLspDiagnostics();
     catalog = createPackageCatalog({ fetchPage: transport.catalogFetch });
     const finishing = Promise.all([...clients].map((stream) => stream.end()));

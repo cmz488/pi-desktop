@@ -27,7 +27,6 @@ export const sharedAssets = new Map([
   ["/provider-settings.js", ["src/ui/chat/provider-settings.js", javascript]],
   ["/resource-settings.js", ["src/ui/chat/resource-settings.js", javascript]],
   ["/package-settings.js", ["src/ui/chat/package-settings.js", javascript]],
-  ["/remote-settings.js", ["src/ui/chat/remote-settings.js", javascript]],
   [
     "/composer-attachments.js",
     ["src/ui/chat/composer-attachments.js", javascript],

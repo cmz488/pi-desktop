@@ -246,7 +246,6 @@ export class SessionHost {
       capabilities: {
         ...(manager.baseOptions?.capabilities ?? {}),
         sessions: true,
-        remote: true,
         newSession: true,
         switchSession: true,
         sessionCommand: true,

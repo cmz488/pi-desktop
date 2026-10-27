@@ -482,7 +482,6 @@ export async function startDurableDesk(options = {}) {
       agentDir,
       capabilities: {
         sessions: true,
-        remote: true,
         newSession: true,
         switchSession: true,
         sessionCommand: true,

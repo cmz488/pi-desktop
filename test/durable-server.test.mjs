@@ -245,10 +245,10 @@ test("an IPv6 loopback listener returns a reachable local URL", async (t) => {
   const app = await startDurableDesk({ workspace, host: "::1", port: 0 });
   t.after(() => app.stop());
   assert.equal(new URL(app.url).hostname, "[::1]");
-  const response = await fetch(new URL("api/remote", app.url));
+  // 隧道已移除：/api/remote 不再是入口，用 /api/state 探测监听是否可达。
+  const response = await fetch(new URL("api/state", app.url));
   assert.equal(response.status, 200);
   const details = await response.json();
-  assert.equal(details.localUrl, app.url);
-  assert.equal(details.lan, false);
-  assert(details.qr.startsWith("data:image/png;base64,"));
+  assert.equal(typeof details.sessionId, "string");
+  assert.ok(Array.isArray(details.messages));
 });

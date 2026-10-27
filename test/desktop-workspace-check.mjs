@@ -14,27 +14,11 @@ import { browserDriver } from "./durable-browser-driver.mjs";
 
 await loadEmbeddedPiSdk();
 let pickerCalls = 0;
-let prepared = 0;
-let runtimeState = { phase: "off", backendState: "", managed: true };
 const f = await desktopFixture({
   defaultConversation: true,
   directoryPicker: {
     async pick() {
       return ++pickerCalls === 1 ? null : f.other;
-    },
-  },
-  remoteFunnel: {
-    runtimeState: () => runtimeState,
-    async prepare() {
-      prepared++;
-      runtimeState = {
-        phase: "running",
-        backendState: "NeedsLogin",
-        managed: true,
-      };
-    },
-    async start() {
-      throw new Error("fixture requires explicit login");
     },
   },
 });
@@ -57,12 +41,6 @@ try {
     : join(f.root, "browser");
   if (electronMode) {
     await f.app.stop();
-    const tailCli = join(f.root, "tailscale-fixture");
-    await writeFile(
-      tailCli,
-      "#!/usr/bin/env node\nconsole.log(JSON.stringify({BackendState:'NeedsLogin'}));\n",
-      { mode: 0o700 },
-    );
     const entry = join(f.root, "desktop-fixture-entry.mjs");
     await writeFile(
       entry,
@@ -997,13 +975,6 @@ try {
     await readFile(join(f.agentDir, "AGENTS.md"), "utf8"),
     "UI_GLOBAL_PERSONA",
   );
-  await evaluate(
-    "document.querySelector('#runtime').contentDocument.querySelector('.settings-nav [data-view=remote]').click()",
-  );
-  await until(
-    "document.querySelector('#runtime').contentDocument.querySelector('#network-status').textContent==='需要登录 Tailscale'",
-  );
-  if (!electronMode) assert.equal(prepared, 1);
   await evaluate(
     "document.querySelector('#runtime').contentDocument.querySelector('.settings-nav [data-view=personality]').click()",
   );

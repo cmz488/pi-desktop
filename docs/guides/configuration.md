@@ -4,7 +4,7 @@
 
 ## 网络代理与外观
 
-“Pi 配置 → 网络 → HTTP 代理”使用全局 `SettingsManager.httpProxy`，填写完整 URL，例如 `http://127.0.0.1:7897`。已有 HTTP_PROXY／HTTPS_PROXY 环境变量优先；Agent 下次启动读取新值。TLS 证书校验保持开启。Tailscale 连接独立遵循当前直连策略，见 [远程指南](remote-access.md)。
+“Pi 配置 → 网络 → HTTP 代理”使用全局 `SettingsManager.httpProxy`，填写完整 URL，例如 `http://127.0.0.1:7897`。已有 HTTP_PROXY／HTTPS_PROXY 环境变量优先；Agent 下次启动读取新值。TLS 证书校验保持开启。手机端不经过任何隧道，直连局域网 HTTPS；见 [手机连接](remote-access.md)。
 
 字号覆盖聊天、设置与外层项目栏；Ctrl/⌘+=、Ctrl/⌘+- 调整，Ctrl/⌘+0 复位，范围为 12–24px。
 

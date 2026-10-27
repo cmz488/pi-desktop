@@ -13,7 +13,7 @@
 | `src/tui/`                       | 原生 TUI 与会话命令兼容 adapter                                                       |
 | `src/shared/`                    | Node／浏览器共用的投影、卡片、草稿、连接和索引逻辑                                    |
 | `src/ui/`                        | 项目导航、生产聊天页面及浏览器专用 module                                             |
-| `src/remote/`                    | Tailscale、认证和远程网关                                                             |
+| `src/remote/`                    | 局域网地址发现（`lan.mjs`）；手机端服务见 `src/server/mobile*.mjs`                     |
 | `src/git/`、`src/workspace/`     | Git 审阅 limits／permitted actions、项目文件和只读诊断                                |
 | `src/config/`                    | revision、锁和原子配置写入                                                            |
 | `src/cli/`                       | 预览与可选启动适配器安装命令                                                          |

@@ -4,7 +4,6 @@ import { createPreferencesSettings } from "./preferences-settings.js";
 import { createProviderSettings } from "./provider-settings.js";
 import { createResourceSettings } from "./resource-settings.js";
 import { createPackageSettings } from "./package-settings.js";
-import { createRemoteSettings } from "./remote-settings.js";
 import { createComposerAttachments } from "./composer-attachments.js";
 import { createComposerModelPicker } from "./composer-model-picker.js";
 import { createWorkspacePanels } from "./workspace-panels.js";
@@ -742,13 +741,6 @@ const resourceSettings = createResourceSettings({
   },
   refresh: () => refresh(),
 });
-const remoteSettings = createRemoteSettings({
-  live,
-  api,
-  esc,
-  toast,
-  getAgent: () => desktopConfiguration?.agent?.id,
-});
 const composerAttachments = createComposerAttachments({
   live,
   embedded: !!runtimePrefix,
@@ -786,7 +778,6 @@ function syncChatViews() {
   providerSettings.update();
   packageSettings.setContext(context);
   resourceSettings.setContext(context);
-  remoteSettings.setContext({ identity, active: active && view === "remote" });
 }
 async function selectComposerModel(provider, id) {
   if (!live) {
@@ -2574,7 +2565,6 @@ function applyRecord(record) {
   }
   if (record.kind === "remote_changed") {
     if (view === "remote")
-      void remoteSettings.refresh().catch((error) => toast(error.message));
     return;
   }
   // 切换未就绪时，state 仍属于旧会话；仅保留不修改会话内容的通知与包进度。
@@ -2690,7 +2680,6 @@ window.addEventListener("pagehide", (event) => {
     providerSettings.dispose();
     packageSettings.dispose();
     resourceSettings.dispose();
-    remoteSettings.dispose();
     composerAttachments.dispose();
     chatDialog.dispose();
     sessionInventories.dispose();
