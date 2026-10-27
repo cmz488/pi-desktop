@@ -95,7 +95,7 @@
         "desktop:durable": "node launch-desktop.mjs --single-process",
         "build:ui": "node src/ui-next/build.mjs",
         "test:ui-next": "node --test test/ui-next-contract.test.mjs test/ui-next-http.test.mjs",
-        "test:mobile": "node --test test/mobile.test.mjs test/mobile-lan.test.mjs test/mobile-data.test.mjs"
+        "test:mobile": "node --test test/mobile.test.mjs test/mobile-lan.test.mjs test/mobile-data.test.mjs test/mobile-projection.test.mjs"
     },
     "allowScripts": {
         "electron@41.10.7": true

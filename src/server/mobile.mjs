@@ -11,6 +11,7 @@ import {
   createBackpressure,
   sanitizeTranscript,
 } from "./mobile-data.mjs";
+import { deriveView, toTranscript } from "./mobile-projection.mjs";
 import { ensureCertificate, localHosts } from "./self-signed-cert.mjs";
 
 /**
@@ -127,7 +128,54 @@ export async function startMobileServer({
   });
 
   // 出网数据面：容量上限与写操作审计。审计落盘到工作空间数据目录。
+/** 单个会话的投影素材：agent 行、运行态与已脱敏消息。 */
+  const readAgent = async (id) => {
+    const state = await workspace.read();
+    const agent = (state.agents ?? []).find((row) => row.id === id);
+    if (!agent) return undefined;
+    const live =
+      typeof workspace.live === "function"
+        ? await workspace.live(id).catch(() => undefined)
+        : undefined;
+    const entries = (await workspace.transcript(id)).entries ?? [];
+    const messages = entries
+      .flatMap((entry) => entry.model ?? [])
+      .map((message) => ({
+        ...message,
+        text: typeof message?.text === "string" ? message.text : contentText(message?.content),
+      }));
+    return { agent, live, messages };
+  };
+
+  /** 消息先脱敏再取尾部上限；手机端只看到清洗后的内容。 */
+  const projectTranscript = (messages, live) => {
+    const sanitized = sanitizeTranscript(messages);
+    return sanitized;
+  };
+
   const backpressure = createBackpressure();
+  /** 帧序号：手机端丢弃 seq ≤ snapshotSeq 的 event 帧，避免快照与增量双重应用。 */
+  let seq = 0;
+  /** 已连接的 SSE 客户端（按响应对象），用于广播。 */
+  const streams = new Set();
+  const broadcast = (name, data) => {
+    for (const response of streams) {
+      if (response.writableEnded) {
+        streams.delete(response);
+        continue;
+      }
+      response.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+  };
+  /** 把一次已完成的写操作广播成 view 帧（状态是幂等的，客户端直接覆盖）。 */
+  const publishView = async (sessionId) => {
+    const id = Number(sessionId);
+    if (!Number.isInteger(id)) return;
+    const detail = await readAgent(id).catch(() => undefined);
+    if (!detail) return;
+    seq += 1;
+    broadcast("view", { sessionId: String(sessionId), view: deriveView(detail.agent, detail.live) });
+  };
   const audit = createAuditLog({
     append: (line) => {
       void appendFile(join(directory, "mobile-audit.jsonl"), `${line}\n`, {
@@ -162,6 +210,7 @@ export async function startMobileServer({
       })),
     };
   };
+
 
   server.on("request", async (request, response) => {
     try {
@@ -227,16 +276,39 @@ export async function startMobileServer({
 
       if (path === "/api/snapshot") {
         const { list } = await collect();
+        // 活跃会话带投影：手机端首屏直接有内容，不必逐条拉历史。
+        const views = [];
+        const transcripts = [];
+        for (const row of list) {
+          const id = Number(row.sessionId);
+          if (!Number.isInteger(id)) continue;
+          const detail = await readAgent(id).catch(() => undefined);
+          if (!detail) continue;
+          views.push(deriveView(detail.agent, detail.live));
+          const { messages, truncated } = projectTranscript(detail.messages, detail.live);
+          transcripts.push({
+            sessionId: row.sessionId,
+            state: toTranscript(messages, {
+              streaming:
+                detail.live && detail.live.idle === false && detail.live.partial
+                  ? {
+                      id: detail.live.partial.id,
+                      text: detail.live.partial.text,
+                      thinking: detail.live.partial.thinking,
+                    }
+                  : undefined,
+            }),
+            truncated,
+          });
+        }
         sendJson(response, 200, {
           serverTime: Date.now(),
           list,
-          // 活跃投影需要 Percho 的事件 reducer；我们的 SessionEvent 形状不同，尚未适配，
-          // 因此快照不带 views/transcripts —— 客户端会退化为按需拉取历史。
-          views: [],
-          transcripts: [],
+          views,
+          transcripts,
           pendingPermissions: [],
           remoteControl: remoteControl(),
-          snapshotSeq: 0,
+          snapshotSeq: seq,
         });
         return;
       }
@@ -247,18 +319,31 @@ export async function startMobileServer({
           sendJson(response, 503, { error: "连接数已达上限" });
           return;
         }
-        response.on("close", () => backpressure.release());
+        streams.add(response);
+        response.on("close", () => {
+          streams.delete(response);
+          backpressure.release();
+        });
         response.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
           Connection: "keep-alive",
         });
-        const timer = setInterval(() => {
-          if (!response.writableEnded) response.write(": ping\n\n");
-        }, 15000);
+        /** 命名事件帧：手机端按 addEventListener(name, …) 订阅。 */
+        const send = (name, data) => {
+          if (response.writableEnded) return;
+          response.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        // 首帧给一份与快照同形的 list，客户端据此判断已连上。
+        const initial = await collect();
+        send("list", { list: initial.list });
+        const timer = setInterval(() => send("ping", { at: Date.now() }), 15000);
         timer.unref?.();
-        request.on("close", () => clearInterval(timer));
-        response.write(": connected\n\n");
+        request.on("close", () => {
+          clearInterval(timer);
+          backpressure.release();
+        });
+        send("ping", { at: Date.now() });
         return;
       }
 
@@ -301,11 +386,14 @@ export async function startMobileServer({
           }
           audit.record({ ip, action: "prompt", target: write[1], result: "ok" });
           sendJson(response, 200, { ok: true });
+          // 写操作后推一次状态帧：手机端不必等轮询就能看到"运行中"。
+          void publishView(write[1]);
           return;
         }
         await workspace.execute("abort", { id });
         audit.record({ ip, action: "abort", target: write[1], result: "ok" });
         sendJson(response, 200, { ok: true });
+        void publishView(write[1]);
         return;
       }
 

@@ -110,9 +110,15 @@ test("有效令牌可读快照与历史，并可用 Bearer 写", async (t) => {
   assert.equal(typeof row.cwd, "string");
   assert.equal(typeof row.active, "boolean");
   assert.equal(typeof row.modifiedAt, "number");
-  // 活跃投影尚未适配：明确为空，而不是伪造内容。
-  assert.deepEqual(snapshot.views, []);
-  assert.deepEqual(snapshot.transcripts, []);
+  // 活跃投影已接入：每个会话都带 view，且 transcript 与 view 同集合。
+  assert.equal(snapshot.views.length, snapshot.list.length);
+  assert.equal(snapshot.transcripts.length, snapshot.list.length);
+  const view = snapshot.views.find((row) => row.sessionId === row.sessionId);
+  assert.equal(typeof view.name, "string");
+  assert.equal(typeof view.agentActive, "boolean");
+  assert.equal(typeof view.lastActivity, "number");
+  assert.ok(view.currentTool === null || typeof view.currentTool === "string");
+  assert.ok(view.stats === null || typeof view.stats.cost === "number");
 
   const history = await (
     await fetch(`${base}/api/sessions/${row.sessionId}/transcript?t=${token}`)
