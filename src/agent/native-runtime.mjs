@@ -505,11 +505,22 @@ export function createNativeRuntime({
             .createCommandContext()
             .getSystemPromptOptions();
           const selectedBefore = [...promptOptions.selectedTools];
+          // 1.4.0: emitBeforeAgentStart(trigger, systemPromptOptions)。
+          // trigger 是 user／custom 的判别联合：user 带 prompt+images，custom 带 message。
+          // 原生 request 只可能是用户输入启动，所以这里用 user 分支。
           const result = await runner().emitBeforeAgentStart(
-            contentText(user?.content),
-            Array.isArray(user?.content)
-              ? user.content.filter((block) => block.type === "image")
-              : undefined,
+            {
+              messageType: "user",
+              prompt: contentText(user?.content),
+              ...(Array.isArray(user?.content) &&
+              user.content.some((block) => block.type === "image")
+                ? {
+                    images: user.content.filter(
+                      (block) => block.type === "image",
+                    ),
+                  }
+                : {}),
+            },
             promptOptions,
           );
           const selected = result.systemPromptOptions.selectedTools;
