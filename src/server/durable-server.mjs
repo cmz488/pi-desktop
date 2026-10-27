@@ -843,6 +843,25 @@ export async function startDurableDesk(options = {}) {
             return true;
           }
         }
+        /**
+         * 跨设备互联（手机端）：状态、开关与远程控制开关。
+         * 状态里带二维码 data URL，Percho 的设置页直接渲染。
+         */
+        if (url.pathname === "/api/lan") {
+          if (request.method === "GET") {
+            json(response, { status: await mobileControl?.status?.() ?? { enabled: false, port: null, urls: [], qrDataUrl: null, clients: 0, remoteControl: false } });
+            return true;
+          }
+          if (request.method === "POST") {
+            const input = await body(request);
+            if (input.enabled !== undefined)
+              json(response, { status: await mobileControl.setEnabled(input.enabled === true) });
+            else if (input.remoteControl !== undefined)
+              json(response, { status: await mobileControl.setRemoteControl(input.remoteControl === true) });
+            else throw new DeskError(422, "缺少 enabled 或 remoteControl");
+            return true;
+          }
+        }
         if (url.pathname === "/api/daily-dir" && request.method === "GET") {
           json(response, { path: uiStateStore.dailyDir() });
           return true;
@@ -1370,17 +1389,67 @@ export async function startDurableDesk(options = {}) {
     const url = await bridge.start();
     // 手机端（局域网）：独立端口与令牌。页面来自构建产物；未构建或显式关闭时不启动，
     // 而不是提供一个打不开的地址。
-    if (options.mobile !== false) {
+    /**
+     * 手机端开关：运行态读取，不缓存。Percho 的「跨设备互联」页通过 lan:setEnabled 控制它。
+     */
+    let mobileEnabled = options.mobile !== false;
+    let mobileRemoteControl = true;
+    const startMobile = async () => {
+      if (mobile) return mobile;
       const page = await readFile(mobilePage, "utf8").catch(() => undefined);
-      if (page)
-        mobile = await startMobileServer({
-          workspace,
-          directory,
-          pageHtml: page,
-          port: options.mobilePort ?? 0,
-          tls: options.mobileTls !== false,
-        });
-    }
+      if (!page) return undefined;
+      mobile = await startMobileServer({
+        workspace,
+        directory,
+        pageHtml: page,
+        port: options.mobilePort ?? 0,
+        tls: options.mobileTls !== false,
+        remoteControl: () => mobileRemoteControl,
+      });
+      return mobile;
+    };
+    if (mobileEnabled) await startMobile();
+    /** 手机端状态：端口、地址（含令牌）、二维码。未监听时 port 为 null。 */
+    const mobileStatus = async () => {
+      if (!mobile)
+        return {
+          enabled: false,
+          port: null,
+          urls: [],
+          qrDataUrl: null,
+          clients: 0,
+          remoteControl: mobileRemoteControl,
+        };
+      const { default: QRCode } = await import("qrcode");
+      return {
+        enabled: true,
+        port: mobile.port,
+        urls: mobile.urls,
+        qrDataUrl: mobile.urls[0] ? await QRCode.toDataURL(mobile.urls[0]) : null,
+        clients: 0,
+        remoteControl: mobileRemoteControl,
+      };
+    };
+    /**
+     * 手机端控制面：状态（含二维码）、开关、远程控制开关。
+     * 路由闭包与返回值共用同一个对象，避免两处各写一份。
+     */
+    const mobileControl = {
+      status: mobileStatus,
+      async setEnabled(enabled) {
+        mobileEnabled = enabled !== false;
+        if (mobileEnabled) await startMobile();
+        else if (mobile) {
+          await mobile.stop();
+          mobile = undefined;
+        }
+        return mobileStatus();
+      },
+      async setRemoteControl(enabled) {
+        mobileRemoteControl = enabled !== false;
+        return mobileStatus();
+      },
+    };
     let stopped = false;
     const stop = () =>
       (stopPromise ??= (async () => {
@@ -1418,6 +1487,7 @@ export async function startDurableDesk(options = {}) {
             token: mobile.token,
           }
         : undefined,
+      mobileControl,
       workspace,
       nativeSession: transcripts?.metadata,
       bridge,

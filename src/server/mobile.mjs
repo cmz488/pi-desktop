@@ -110,6 +110,8 @@ export async function startMobileServer({
   pageHtml,
   port = 0,
   tls = true,
+  // 远程控制开关：读运行态，不缓存；关闭时写端点一律 403。
+  remoteControl = () => true,
 }) {
   if (typeof pageHtml !== "string" || !pageHtml.length)
     throw new TypeError("手机端服务需要已构建的页面");
@@ -186,6 +188,11 @@ export async function startMobileServer({
         request.method === "GET" &&
         (path === "/api/snapshot" || path === "/api/stream" || TRANSCRIPT.test(path));
       const isWrite = request.method === "POST" && WRITE.test(path);
+      // 只读模式下写端点明确 403，而不是静默丢弃。
+      if (isWrite && !remoteControl()) {
+        sendJson(response, 403, { error: "远程控制未开启" });
+        return;
+      }
       if (!isRead && !isWrite) {
         sendJson(response, 404, { error: "not found" });
         return;
@@ -211,7 +218,7 @@ export async function startMobileServer({
           views: [],
           transcripts: [],
           pendingPermissions: [],
-          remoteControl: true,
+          remoteControl: remoteControl(),
           snapshotSeq: 0,
         });
         return;
@@ -291,6 +298,9 @@ export async function startMobileServer({
   return {
     token,
     scheme,
+    get remoteControl() {
+      return remoteControl();
+    },
     port: actualPort,
     url: urls[0] ?? `${scheme}://127.0.0.1:${actualPort}/`,
     urls,

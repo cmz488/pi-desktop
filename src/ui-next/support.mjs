@@ -218,9 +218,9 @@ export const UI_SUPPORT = Object.freeze({
   "remote:disconnect": unsupported("Percho 用 SSH 远端；我们的远程路线由手机端方案取代"),
 
   // ── 局域网 ──────────────────────────────────────────────────────────────
-  "lan:getStatus": unsupported("Percho 的 LAN 观察服务由我们的手机端方案取代"),
-  "lan:setEnabled": unsupported("Percho 的 LAN 观察服务由我们的手机端方案取代"),
-  "lan:setRemoteControl": unsupported("Percho 的 LAN 观察服务由我们的手机端方案取代"),
+  "lan:getStatus": implemented("/api/lan"),
+  "lan:setEnabled": implemented("/api/lan"),
+  "lan:setRemoteControl": implemented("/api/lan"),
 });
 
 /** 订阅通道的支持状态；事件侧同样不允许静默不回。 */

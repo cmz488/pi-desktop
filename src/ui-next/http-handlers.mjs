@@ -113,5 +113,11 @@ export function createHttpHandlers({ get, post }) {
     "environmentUi:save": async (args) =>
       (await post("/api/environment-ui-state", { value: args?.value ?? args ?? {} }))?.value ?? null,
     "app:getDailyDir": async () => (await get("/api/daily-dir"))?.path ?? "",
+    // 跨设备互联：状态含二维码，Percho 的设置页直接渲染。
+    "lan:getStatus": async () => (await get("/api/lan"))?.status ?? null,
+    "lan:setEnabled": async (args) =>
+      (await post("/api/lan", { enabled: args?.enabled === true }))?.status ?? null,
+    "lan:setRemoteControl": async (args) =>
+      (await post("/api/lan", { remoteControl: args?.remoteControl === true }))?.status ?? null,
   };
 }

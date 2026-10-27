@@ -166,17 +166,37 @@ export function createSelfSignedCertificate({ hosts, commonName: name = "pi-desk
   };
 }
 
-/** 本地接口的 IPv4（排除回环与链路本地），用于 SAN。 */
+/**
+ * 本地接口的 IPv4（排除回环与链路本地），按物理网卡优先排序。
+ *
+ * 排序不是美化：二维码只展示首个地址，若 VPN/网桥排在前面，手机扫到的是自己连不上的地址。
+ * 与 Percho 同一策略：en/eth/wlan 优先，utun/tailscale/bridge 这类隧道末位。
+ */
+function interfaceRank(name) {
+  if (/^(en|eth|wlan|wl)/i.test(name)) return 0;
+  if (/^(utun|tailscale|zt|wg|tun|bridge|awdl|llw|virbr|docker|veth)/i.test(name)) return 2;
+  return 1;
+}
+
 export function localHosts(interfaces) {
-  const hosts = new Set(["127.0.0.1", "localhost"]);
-  for (const addresses of Object.values(interfaces)) {
-    for (const address of addresses ?? []) {
-      if (address.family !== "IPv4" || address.internal) continue;
-      if (address.address.startsWith("169.254.")) continue;
-      hosts.add(address.address);
-    }
-  }
-  return [...hosts];
+  const entries = Object.entries(interfaces).flatMap(([name, addresses]) =>
+    (addresses ?? [])
+      .filter(
+        (address) =>
+          address.family === "IPv4" &&
+          !address.internal &&
+          !address.address.startsWith("169.254."),
+      )
+      .map((address) => ({ name, address: address.address })),
+  );
+  entries.sort(
+    (a, b) =>
+      interfaceRank(a.name) - interfaceRank(b.name) ||
+      a.name.localeCompare(b.name) ||
+      a.address.localeCompare(b.address),
+  );
+  // 回环保留在尾部：SAN 需要它，二维码不该展示它。
+  return [...new Set(entries.map((entry) => entry.address)), "127.0.0.1", "localhost"];
 }
 
 /**
