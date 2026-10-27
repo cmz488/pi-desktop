@@ -81,6 +81,50 @@ Desktop 的 Durable Agent 内置 `desk-subagents`，向模型公开 `desk_subage
 
 面板 HTML 经同一 DOMPurify 边界；按钮只暴露受限的 `data-panel-action`／`data-panel-value`，工作台校验后转交宿主处理，适配器不直接执行脚本。面板按 goal id 关联验收与事件，切换目标或会话后不会把旧目标的验收报告混到新目标上。
 
+## 扩展 UI 能力契约
+
+`ExtensionUIContext` 是 TUI 契约（终端按键、ANSI 组件、主题切换）。GUI 宿主无法全部满足，因此
+`src/agent/ui-context.mjs` 给 28 个成员各自声明实现层级，**不允许静默 no-op 或假返回值**：
+
+| 层级 | 含义 | 成员 |
+| --- | --- | --- |
+| `native` | GUI 真实实现 | `select` `confirm` `input` `editor` `notify` `setStatus` `setWorkingMessage` `setWorkingVisible` `setHiddenThinkingLabel` `setWidget` `setTitle` `setEditorText` `getEditorText` `pasteToEditor` `theme` `getAllThemes` `getTheme` `getToolsExpanded` `setToolsExpanded` |
+| `degraded` | 可用但非终端语义，附原因 | `onTerminalInput` `setWorkingIndicator` `setHeader` `setFooter` `custom` `addAutocompleteProvider` `setEditorComponent` `getEditorComponent` |
+| `refused` | 明确拒绝并返回失败 | `setTheme` |
+
+几条容易误解的降级行为：
+
+- `getEditorText()` 读的是渲染进程持续推送的输入框镜像（`/api/composer`）；它不是会话历史读。
+- `custom()`、`setHeader()`、`setFooter()` 把 TUI 组件投影成**有界纯文本**；`custom` 随后以
+  `undefined` 结束（等同用户取消），不使用户等待挂起，也不伪造选择结果。
+- `setEditorComponent()` 只保存工厂，使 `getEditorComponent()` 诚实回读；GUI 使用自研输入框，
+  不应用该工厂。
+- `onTerminalInput()` 返回可用的退订函数，但 handler 永不调用；GUI 没有原始终端输入流。
+
+声明表是契约：SDK 升级新增成员而未登记层级时，`test/extension-ui-conformance.test.mjs` 直接
+失败。该套件同时校验每个成员的实际行为与声明一致、`degraded`／`refused` 的使用可观测。
+
+客户端从 `Agent snapshot` 的 `ui` 字段读到可见状态与能力报告：
+
+```json
+{
+  "ui": {
+    "workingVisible": true,
+    "hiddenThinkingLabel": "",
+    "toolsExpanded": false,
+    "title": "",
+    "autocompleteProviders": 0,
+    "capabilities": {
+      "members": { "custom": { "level": "degraded", "reason": "…", "used": 1 } },
+      "usedMembers": ["custom"],
+      "counts": { "native": 19, "degraded": 8, "refused": 1 }
+    }
+  }
+}
+```
+
+`usedMembers` 回答“这个扩展依赖哪些降级能力”，不会把未使用的成员算作已降级。
+
 ## 受信任的本地适配器
 
 复杂展示继续兼容 `register({ id, version, project, render })`。`project(message)` 返回视图；`render(view, context)` 返回 HTML，原有单参数 renderer 可继续使用。适配器可选声明 `panel: { id, label, title, tools, aggregate(views), render(view, context) }`：`tools` 列出由面板接管的工具名，`aggregate` 把同一 adapter 的视图合并成一页；声明后工作台不再为该 adapter 生成逐卡片页面。module 的 `summary(view)` 负责工具摘要，`layout(messages, {sessionId})` 负责普通消息与状态卡片分流；页面只消费结果。通用卡片和 Goal 共用同一 renderer，新增插件优先使用上述 schema。

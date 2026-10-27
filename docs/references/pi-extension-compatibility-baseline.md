@@ -88,10 +88,10 @@ Desktop 不按包名再次发现或加载扩展，也不把扩展源码下载到
 | `editor`                                                                 | 原生有预填多行编辑语义；当前 Web 将 prefill 作为 input 的占位内容                                             | 必须是真正可编辑的预填内容；取消和空字符串不同                                  |
 | `setWidget`（行／factory）                                               | Web 可 render、替换时 dispose；默认 Durable 只让识别出的增强 widget 进入扩展投影，普通 `notes-summary` 不出现 | 通用 Pi widget 自动展示，保留 placement／替换／清理；不是要求插件加专用声明     |
 | 工具结果／custom 消息                                                    | 普通结果与文字已进入真实 Host 转录；已有增强卡片 registry                                                     | 真实页面验证通用内容、HTML 清理与增强展示兼容                                   |
-| editor text／paste                                                       | 发布 `editor_text`，读取 editor text 仍为 `""`                                                                | 当前目标的读写／草稿语义明确；不把另一会话草稿送给扩展                          |
-| `custom`                                                                 | `async () => undefined`，阻塞交互静默消失                                                                     | 可见、可操作、可取消的通用回退；不能假装用户已确认或制造组件返回值              |
-| header／footer／title、editor component、autocomplete、terminal input 等 | 若干 no-op／终端降级；它们不是已适配 Web 的证明                                                               | 能表达的走通用展示；不能表达的明确提示／保留必要回退，不执行插件浏览器代码      |
-| terminal theme／工具展开／键盘绘制                                       | 与网页 DOM、主题和输入法不是同一个 interface                                                                  | 不承诺任意 ANSI、光标、图片协议或自定义终端布局等价；限制必须可见               |
+| editor text／paste                                                       | 发布 `editor_text`；读取经 `/api/composer` 镜像（见[扩展 UI 能力契约](../guides/extensions.md#扩展-ui-能力契约)） | 当前目标的读写／草稿语义明确；不把另一会话草稿送给扩展                          |
+| `custom`                                                                 | 投影为有界文本后以 `undefined` 结束，标注 `degraded`                                                          | 可见、可取消的通用回退；不能假装用户已确认或制造组件返回值                      |
+| header／footer／title、editor component、autocomplete、terminal input 等 | 各自声明 `native`／`degraded`／`refused` 并在快照 `ui.capabilities` 上报；无静默 no-op                        | 能表达的走通用展示；不能表达的明确提示／保留必要回退，不执行插件浏览器代码      |
+| terminal theme／工具展开／键盘绘制                                       | 工具展开态为 `native`；`setTheme` 为 `refused`；键盘绘制不会被模拟                                            | 不承诺任意 ANSI、光标、图片协议或自定义终端布局等价；限制必须可见               |
 
 ### 不可变的安全与运行归属
 
