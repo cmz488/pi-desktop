@@ -1,11 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { DeskError } from "../config/config-store.mjs";
 import { contentText } from "../shared/conversation.mjs";
+import {
+  createAuditLog,
+  createBackpressure,
+  sanitizeTranscript,
+} from "./mobile-data.mjs";
 import { ensureCertificate, localHosts } from "./self-signed-cert.mjs";
 
 /**
@@ -31,7 +36,6 @@ const TRANSCRIPT = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const WRITE = /^\/api\/sessions\/([^/]+)\/(prompt|abort)$/;
 
 const MAX_BODY = 64 * 1024;
-const MAX_MESSAGES = 100;
 
 const digestOf = (token) => createHash("sha256").update(token).digest();
 
@@ -77,19 +81,17 @@ function sendJson(response, status, value) {
 }
 
 /**
- * 我们的消息 → Percho 手机端消费的历史消息。
+ * 我们的消息 → 手机端可消费的形状。
  *
  * 转录里存的是模型消息（`content` 块），不是投影后的 `text`；直接读 `text` 会得到空字符串。
+ * 脱敏与容量上限统一交给 `mobile-data.mjs`：出网的东西只能从一个地方裁剪。
  */
-function toHistoryMessage(message) {
-  const text =
-    typeof message?.text === "string" ? message.text : contentText(message?.content);
-  return {
-    role: message?.role ?? "user",
-    text,
-    ...(message?.toolName ? { toolName: String(message.toolName) } : {}),
-    ...(message?.isError ? { isError: true } : {}),
-  };
+function projectMessages(messages) {
+  const projected = (Array.isArray(messages) ? messages : []).map((message) => ({
+    ...message,
+    text: typeof message?.text === "string" ? message.text : contentText(message?.content),
+  }));
+  return sanitizeTranscript(projected);
 }
 
 /** PWA 清单：令牌不进 start_url，页面自行从 localStorage 恢复。 */
@@ -124,6 +126,15 @@ export async function startMobileServer({
     mode: 0o600,
   });
 
+  // 出网数据面：容量上限与写操作审计。审计落盘到工作空间数据目录。
+  const backpressure = createBackpressure();
+  const audit = createAuditLog({
+    append: (line) => {
+      void appendFile(join(directory, "mobile-audit.jsonl"), `${line}\n`, {
+        mode: 0o600,
+      }).catch(() => {});
+    },
+  });
   const hosts = localHosts(networkInterfaces());
   let scheme = "http";
   let server;
@@ -190,6 +201,12 @@ export async function startMobileServer({
       const isWrite = request.method === "POST" && WRITE.test(path);
       // 只读模式下写端点明确 403，而不是静默丢弃。
       if (isWrite && !remoteControl()) {
+        audit.record({
+          ip: request.socket.remoteAddress ?? "",
+          action: "denied",
+          target: url.pathname,
+          result: "remote_control_off",
+        });
         sendJson(response, 403, { error: "远程控制未开启" });
         return;
       }
@@ -225,6 +242,12 @@ export async function startMobileServer({
       }
 
       if (path === "/api/stream") {
+        // 连接上限是保护 Host 的手段：慢客户端或被反复重连的客户端不能拖住服务。
+        if (!backpressure.admit()) {
+          sendJson(response, 503, { error: "连接数已达上限" });
+          return;
+        }
+        response.on("close", () => backpressure.release());
         response.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
@@ -244,12 +267,8 @@ export async function startMobileServer({
         const id = decodeURIComponent(transcript[1]);
         const entries = (await workspace.transcript(Number(id))).entries ?? [];
         const messages = entries.flatMap((entry) => entry.model ?? []);
-        const tail = messages.slice(-MAX_MESSAGES);
-        sendJson(response, 200, {
-          sessionId: id,
-          messages: tail.map(toHistoryMessage),
-          truncated: messages.length > tail.length,
-        });
+        const { messages: safe, truncated } = projectMessages(messages);
+        sendJson(response, 200, { sessionId: id, messages: safe, truncated });
         return;
       }
 
@@ -257,18 +276,35 @@ export async function startMobileServer({
       if (write) {
         const id = Number(decodeURIComponent(write[1]));
         const input = await readBody(request);
+        const ip = request.socket.remoteAddress ?? "";
         if (write[2] === "prompt") {
           const text = typeof input.text === "string" ? input.text.trim() : "";
-          if (!text || text.length > 50000) throw new DeskError(422, "消息长度无效");
-          await workspace.execute("send", {
-            id,
-            message: text,
-            requestId: `mobile-${id}-${Date.now()}`,
-          });
+          if (!text || text.length > 50000) {
+            audit.record({ ip, action: "prompt", target: write[1], result: "error:bad_length" });
+            throw new DeskError(422, "消息长度无效");
+          }
+          try {
+            await workspace.execute("send", {
+              id,
+              message: text,
+              requestId: `mobile-${id}-${Date.now()}`,
+            });
+          } catch (error) {
+            // 审计只记错误分类，不记正文——正文可能含用户隐私。
+            audit.record({
+              ip,
+              action: "prompt",
+              target: write[1],
+              result: `error:${String(error?.message ?? "unknown").slice(0, 80)}`,
+            });
+            throw error;
+          }
+          audit.record({ ip, action: "prompt", target: write[1], result: "ok" });
           sendJson(response, 200, { ok: true });
           return;
         }
         await workspace.execute("abort", { id });
+        audit.record({ ip, action: "abort", target: write[1], result: "ok" });
         sendJson(response, 200, { ok: true });
         return;
       }
@@ -300,6 +336,12 @@ export async function startMobileServer({
     scheme,
     get remoteControl() {
       return remoteControl();
+    },
+    /** 写操作审计（不含令牌与正文）。 */
+    audit,
+    /** 当前客户端数与队列深度。 */
+    get capacity() {
+      return { clients: backpressure.clients, queue: backpressure.queueSize };
     },
     port: actualPort,
     url: urls[0] ?? `${scheme}://127.0.0.1:${actualPort}/`,
