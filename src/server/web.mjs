@@ -18,9 +18,13 @@ import {
   loadEmbeddedPiSdk,
   loadPiToolPipeline,
   webTerminalTheme,
+  preloadPiThemes,
+  listPiThemes,
+  loadPiTheme,
   configurePiNetwork,
   scopedMcpCredentials,
 } from "../agent/pi-sdk.mjs";
+import { createExtensionUiContext } from "../agent/ui-context.mjs";
 import { projectMessage, projectToolEvent } from "../shared/conversation.mjs";
 import { createAgentSnapshot } from "./agent-snapshot.mjs";
 import { gitInfo } from "../git/workspace-info.mjs";
@@ -125,9 +129,10 @@ export async function startWebSlot(options = {}) {
   let operation = "",
     workingMessage = "",
     activeTool = "";
+  // 扩展 getEditorText() 是同步 API，所以渲染进程必须持续推送输入框正文；
+  // 宿主只保留最近一份镜像，不在读取时做往返。
+  let composerText = "";
   const desktopBtw = createDesktopBtw();
-  const extensionStatuses = new Map();
-  const extensionWidgets = new Map();
   const activeCalls = new Map();
   let askQuestions;
   let git = await gitInfo(cwd),
@@ -368,113 +373,36 @@ export async function startWebSlot(options = {}) {
       }),
     );
   }
-  const noop = () => {};
   const piTheme = webTerminalTheme(sdk);
-  const ui = {
-    select: (title, values, opts) =>
-      uiPrompt(title, {
-        type: "select",
-        message: title,
-        options: values.map((value) => ({ id: value, label: value })),
-        signal: opts?.signal,
-      }),
-    confirm: async (title, message, opts) =>
-      (await uiPrompt(title, {
-        type: "select",
-        message,
-        options: [
-          { id: "yes", label: "确认" },
-          { id: "no", label: "取消" },
-        ],
-        signal: opts?.signal,
-      })) === "yes",
-    input: (title, placeholder, opts) =>
-      uiPrompt(title, {
-        type: "text",
-        message: title,
-        placeholder,
-        signal: opts?.signal,
-      }),
-    editor: (title, prefill) =>
-      uiPrompt(title, { type: "text", message: title, placeholder: prefill }),
-    notify: (message, type) => {
+  // getAllThemes/getTheme 是同步 API，所以先预热 SDK 主题模块；失败不阻断会话。
+  await preloadPiThemes();
+  const uiContext = createExtensionUiContext({
+    prompt: uiPrompt,
+    notify: ({ message, type }) => {
       if (mcpInteraction) {
         mcpInteraction.notify({ type: "message", message, level: type });
         if (type === "error") mcpFailed = true;
       } else bridge?.publish("notification", { message, type });
     },
-    onTerminalInput: () => noop,
-    setStatus: (key, text) => {
-      if (text === undefined) extensionStatuses.delete(key);
-      else
-        extensionStatuses.set(
-          key,
-          String(text)
-            .replace(/\x1b\[[0-9;]*m/g, "")
-            .slice(0, 200),
-        );
-      changed();
-    },
-    setWorkingMessage: (text) => {
-      workingMessage = text ?? "";
-      changed();
-    },
-    setWorkingVisible: noop,
-    setWorkingIndicator: noop,
-    setHiddenThinkingLabel: noop,
-    setWidget: (key, value) => {
-      extensionWidgets.get(key)?.dispose?.();
-      extensionWidgets.delete(key);
-      if (value !== undefined) {
-        try {
-          extensionWidgets.set(
-            key,
-            typeof value === "function"
-              ? value(
-                  {
-                    requestRender: changed,
-                    terminal: { columns: 100, rows: 60 },
-                    children: [],
-                  },
-                  piTheme,
-                )
-              : { render: () => value },
-          );
-        } catch (error) {
-          bridge?.publish("notification", {
-            message: `扩展组件无法显示：${error.message}`,
-            type: "error",
-          });
-        }
-      }
-      changed();
-    },
-    setFooter: noop,
-    setHeader: noop,
-    setTitle: noop,
-    custom: async () => undefined,
     setEditorText: (text) => bridge?.publish("editor_text", { text }),
-    getEditorText: () => "",
-    pasteToEditor: (text) => bridge?.publish("editor_text", { text }),
-    get theme() {
-      return piTheme;
+    // 扩展同步读取编辑器正文；渲染进程通过 /api/composer 维护这个镜像。
+    getEditorText: () => composerText,
+    setWorkingMessage: (message) => {
+      workingMessage = message;
+      changed();
     },
-    addAutocompleteProvider: noop,
-    setEditorComponent: noop,
-    getEditorComponent: () => undefined,
-    getAllThemes: () => [],
-    getTheme: () => undefined,
-    setTheme: () => ({
-      success: false,
-      error: "请通过 Pi 主题设置管理终端主题",
-    }),
-    getToolsExpanded: () => false,
-    setToolsExpanded: noop,
-  };
+    invalidate: changed,
+    theme: piTheme,
+    listThemes: () => listPiThemes(sdk),
+    loadTheme: (name) => loadPiTheme(sdk, name),
+  });
+  const ui = uiContext.ui;
+  const uiState = uiContext.state;
+  const extensionStatuses = uiState.statuses;
+  const extensionWidgets = uiState.widgets;
   function resetSessionPresentation() {
-    extensionStatuses.clear();
-    for (const widget of extensionWidgets.values()) widget?.dispose?.();
-    extensionWidgets.clear();
+    // 扩展 UI 状态（状态栏、插槽、工作行、工具展开态、使用记录）由 ui-context 统一重置。
+    uiContext.reset();
     workingMessage = "";
     activeTool = "";
     streamingText = "";
@@ -576,17 +504,10 @@ export async function startWebSlot(options = {}) {
         : activeTool
           ? `执行 ${activeTool}…`
           : "");
+    // 插槽行由 ui-context 投影（已去 ANSI 并限长）；这里只负责转成会话卡片。
     const widgets = [...extensionWidgets].flatMap(([key, widget]) => {
       try {
-        const lines = (widget?.render?.(100) ?? [])
-          .slice(0, 40)
-          .map((line) =>
-            String(line)
-              .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-              .trim()
-              .slice(0, 400),
-          )
-          .filter(Boolean);
+        const lines = widget?.lines?.() ?? [];
         return lines.length
           ? [
               {
@@ -595,7 +516,7 @@ export async function startWebSlot(options = {}) {
                 customType: "pi-widget",
                 display: true,
                 content: "",
-                details: { key, lines },
+                details: { key, placement: widget.placement, lines },
               },
             ]
           : [];
@@ -616,6 +537,16 @@ export async function startWebSlot(options = {}) {
       compacting: current.isCompacting,
       workingMessage,
       statuses: [...extensionStatuses.values()],
+      // 扩展 UI 的其余可见状态：GUI 渲染消费这些字段，而不是猜终端语义。
+      ui: {
+        workingVisible: uiState.workingVisible,
+        hiddenThinkingLabel: uiState.hiddenThinkingLabel,
+        toolsExpanded: uiState.toolsExpanded,
+        title: uiState.title,
+        autocompleteProviders: uiState.autocompleteProviders,
+        // 声明层级 + 本次会话实际触达的降级／拒绝成员。
+        capabilities: uiContext.report(),
+      },
       commands: commandCatalog(current),
       stats,
       git,
@@ -810,6 +741,10 @@ export async function startWebSlot(options = {}) {
       requestContext: false,
     },
     snapshot,
+    /** `/api/composer`：把渲染进程的输入框正文镜像给扩展的同步 `getEditorText()`。 */
+    setComposerText: (text) => {
+      composerText = text;
+    },
     btw: (input) => {
       const current = session();
       return desktopBtw.handle(input, {

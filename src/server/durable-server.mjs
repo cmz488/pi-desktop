@@ -11,6 +11,7 @@ import { createTaskWaits } from "./task-waits.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
 import { openDurableModels } from "../agent/durable-models.mjs";
 import { createDurableResources } from "../agent/durable-resources.mjs";
+import { uiSnapshot } from "../agent/ui-context.mjs";
 import { createAgentBrowser } from "../agent/agent-browser.mjs";
 import { createInteractionStore } from "../agent/interaction-store.mjs";
 import { webCommands } from "../shared/pi-commands.mjs";
@@ -517,6 +518,8 @@ export async function startDurableDesk(options = {}) {
       host: options.host ?? process.env.PI_DESK_HOST ?? "127.0.0.1",
       port: options.port ?? process.env.PI_DESK_PORT ?? 0,
       snapshot: current,
+      /** `/api/composer`：把输入框正文镜像给扩展的同步 getEditorText()。 */
+      setComposerText: (text) => resources?.setComposerText?.(target().active?.id, text),
       btw: (input) => {
         const active = target().active;
         const model = active.model
@@ -689,6 +692,10 @@ export async function startDurableDesk(options = {}) {
           tools: active?.tools ?? [],
           usage: active?.contextUsage ?? null,
           stats,
+          // 扩展 UI 的可见状态与能力报告由资源 session 拥有；合入 Host 快照，客户端才能渲染
+          // 真实语义。未就绪时不伪造默认值，由 client 的 createAgentSnapshot 默认兜底。
+          // 资源 session 未就绪时用声明兜底：能力声明不依赖会话。
+          ui: resources?.ui?.(active?.id) ?? uiSnapshot(),
           commands: resourceHost ? nativeInfo.commands : webCommands,
           git:
             active &&

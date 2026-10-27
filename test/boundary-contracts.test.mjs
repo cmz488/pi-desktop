@@ -176,6 +176,8 @@ test("the pi-sdk adapter keeps its deep compatibility paths and exports", async 
     "core/session-manager.js",
     "core/settings-manager.js",
     "extensions/mcp/oauth.js",
+    // 扩展 UI 的 getAllThemes/getTheme 需要 SDK 的主题模块（不在主入口导出）。
+    "modes/interactive/theme/theme.js",
   ]);
   for (const path of paths) {
     const file = fileURLToPath(new URL(`./${path}`, embeddedSdkEntry));

@@ -317,6 +317,13 @@ export function createHostInterface(input = {}) {
     get settingsChanged() {
       return optionalMethod(input, "settingsChanged");
     },
+    /**
+     * `/api/composer`：把渲染进程的输入框正文镜像给扩展的同步 `getEditorText()`。
+     * 它在 Host 接口上显式可用，而不是靠回调存在性推断。
+     */
+    get setComposerText() {
+      return optionalMethod(input, "setComposerText");
+    },
   };
   return Object.freeze(host);
 }

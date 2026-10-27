@@ -247,6 +247,45 @@ export function webTerminalTheme(sdk) {
   );
 }
 
+/**
+ * 扩展主题目录：SDK 把 theme 模块留在包内深路径（不在主入口导出）。
+ * 这里沿用本文件“深路径只出现在适配层”的约束，按入口 URL 懒加载并缓存。
+ */
+let themeModule;
+async function piThemeModule() {
+  themeModule ??= await import(
+    new URL("./modes/interactive/theme/theme.js", embeddedSdkEntry)
+  );
+  return themeModule;
+}
+
+/** `getAllThemes()` 的同步实现：SDK 的列表是同步的，因此首次调用时已缓存模块。 */
+export function listPiThemes() {
+  try {
+    return themeModule?.getAvailableThemesWithPaths?.() ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** `getTheme(name)`：按名称加载，不切换当前主题。 */
+export function loadPiTheme(_sdk, name) {
+  try {
+    return themeModule?.getThemeByName?.(String(name));
+  } catch {
+    return undefined;
+  }
+}
+
+/** 扩展 UI 构造前预热主题模块，使同步读取有数据；失败不阻断会话。 */
+export async function preloadPiThemes() {
+  try {
+    await piThemeModule();
+  } catch {
+    themeModule = undefined;
+  }
+}
+
 // Pi 目前把作用域 MCP 凭据后端保持为内部。正常启动使用它的原生默认值；
 // 自定义 --agent-dir 绝不能写入用户 profile。
 export async function scopedMcpCredentials(agentDir, entry = sdkEntry, sdk) {

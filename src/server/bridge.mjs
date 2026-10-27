@@ -960,6 +960,14 @@ export function createDeskBridge(input) {
       await models.set(input.provider, input.id, {
         defer: deferredConfiguration,
       });
+    } else if (url.pathname === "/api/composer") {
+      // 扩展 `getEditorText()` 是同步 API，因此渲染进程把当前输入框正文镜像到这里。
+      // 只保存最近一份文本，不触发会话写入、不进入对话记录。
+      if (!host.setComposerText)
+        throw new DeskError(501, "当前 Desktop 宿主未提供输入框镜像");
+      if (typeof input.text !== "string" || input.text.length > 50000)
+        throw new DeskError(422, "输入框正文无效");
+      host.setComposerText(input.text);
     } else if (url.pathname === "/api/thinking") {
       const canSet = host.capabilities.canSetThinking
         ? state.canSetThinking()

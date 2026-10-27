@@ -786,6 +786,22 @@ export function createDurableResources({
     selectTools,
     reload,
     close,
+    /**
+     * 扩展 UI 的可见状态与能力报告。
+     *
+     * 它由资源 session（web slot）拥有，而 Host 的 /api/state 由 durable 快照组装，两者是不同的
+     * 投影。Host 需要把这份状态合进自己的快照，客户端才能渲染真实语义（工作行、工具展开态、
+     * 哪些扩展依赖降级能力）。未就绪时返回 undefined，不伪造默认值。
+     */
+    ui(conversationId) {
+      const host = readyHosts.get(conversationId);
+      const snapshot = host?.app?.snapshot?.();
+      return snapshot?.ui;
+    },
+    /** 扩展的同步 getEditorText() 读取的输入框镜像。 */
+    setComposerText(conversationId, text) {
+      readyHosts.get(conversationId)?.app?.setComposerText?.(text);
+    },
     cancelInteractions: () => {
       for (const host of readyHosts.values())
         host.capabilities.interactions.cancelAll();

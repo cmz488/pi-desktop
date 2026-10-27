@@ -733,6 +733,7 @@ const resourceSettings = createResourceSettings({
     await showView("workspace");
     if (identity !== chatViewIdentity()) return;
     $("#prompt").value = `/${name} `;
+    mirrorComposer();
     $("#prompt").focus();
   },
   async beginInteraction(job) {
@@ -2623,6 +2624,7 @@ function applyRecord(record) {
     toast(`${record.data.action} · ${record.data.source}`);
   else if (record.kind === "editor_text") {
     $("#prompt").value = record.data.text;
+    mirrorComposer();
     syncComposerButton();
     updateCommands();
   }
@@ -3343,6 +3345,26 @@ function formatTokens(value) {
     ? `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`
     : String(value ?? 0);
 }
+/**
+ * 把输入框正文镜像给宿主，供扩展的同步 `getEditorText()` 读取。
+ * SDK 的 `getEditorText()` 没有异步形态，所以只能由渲染进程主动推送；这里做节流，
+ * 并跳过与上次相同的值。失败不提示用户——镜像是辅助能力，不该打扰输入。
+ */
+let composerMirrorTimer;
+let composerMirrorSent = "";
+function mirrorComposer() {
+  clearTimeout(composerMirrorTimer);
+  composerMirrorTimer = setTimeout(() => {
+    const text = $("#prompt").value;
+    if (text === composerMirrorSent) return;
+    composerMirrorSent = text;
+    api("/api/composer", { text }, { selectSession: false }).catch(() => {
+      // 镜像失效时允许下一次输入重试。
+      composerMirrorSent = "";
+    });
+  }, 220);
+}
+
 function updateCommands() {
   const prompt = $("#prompt"),
     token = prompt.value.match(/^\/([^\s]*)$/);
@@ -3736,6 +3758,7 @@ $("#prompt").addEventListener("input", () => {
   historyIndex = -1;
   historyDraft = "";
   sessionDrafts.edit($("#prompt").value);
+  mirrorComposer();
   composerAttachments.resize();
   syncComposerButton();
   commandIndex = 0;

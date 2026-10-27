@@ -83,6 +83,19 @@ export function createAgentSnapshot(input = {}) {
     activity,
     workingMessage: input.workingMessage ?? "",
     statuses: Array.isArray(input.statuses) ? input.statuses : [],
+    /**
+     * 扩展 UI 状态：工作行可见性、折叠思考标签、工具展开态、窗口标题、补全提供者数量，
+     * 以及 ui-capabilities 报告（声明层级 + 本次会话触达的降级／拒绝成员）。
+     * 客户端据此渲染真实能力，而不是假设终端语义成立。
+     */
+    ui: input.ui ?? {
+      workingVisible: true,
+      hiddenThinkingLabel: "",
+      toolsExpanded: false,
+      title: "",
+      autocompleteProviders: 0,
+      capabilities: { members: {}, usedMembers: [], counts: {} },
+    },
     commands: Array.isArray(input.commands) ? input.commands : [],
     stats,
     metrics: input.metrics ?? usageMetrics(stats),
