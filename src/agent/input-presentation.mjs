@@ -20,6 +20,8 @@ const Presentations = defineDoc({
   history: "latest",
   fork: "current",
   initial: () => ({ unbound: {}, byEntry: {} }),
+  // 仅保留原文字来源映射，体积小；每次提交固化可避免 unbounded delta，与 pi.usage 一致。
+  checkpointWhen: () => true,
 });
 const digest = (text) => createHash("sha256").update(text).digest("hex");
 

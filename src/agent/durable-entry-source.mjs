@@ -1,54 +1,28 @@
 import { replaceOnce } from "./durable-boundary-source.mjs";
 
 /**
- * Durable entry input 补丁：让原生 input 准入直接携带 append-only entry。
+ * Durable entry input 补丁（1.4.0 版）：让原生 input 准入携带完整的输入 entry。
+ *
+ * 1.4.0 原生已具备大部分能力：`SubmissionDraft.type === "input"` 接受 `entry`
+ * （`admitSubmission` 调 `checkInputEntry` 校验 kind），`InboxItem.entry` 类型与
+ * `applyBoundary` 的队列路径都已存在。唯一缺口是 `appendInput` 用
+ * `pickInputEntry(entry)` 剥掉 `model`，再用 `content` 重写为一条 user 消息。
+ *
+ * `desk.native-message` 需要的是 `convertToLlm([nativeMessage])` 产生的 model，
+ * 与 `content` 无关；被重写就会丢掉真实上下文。这里只改这一处，其余仍走原生：
+ * 不 bump `InboxDoc` 版本、不改 `submissions.js`、不合成 `pi.user`。
  *
  * 接口：patchEntrySource(kind, source)；由摘要门禁后的兼容 installer 使用。
- * 不变量：沿用原 submission、inbox、run、幂等及取消；不合成 pi.user，不另建队列。
- * 错误：不匹配锚点或未知源码种类抛错，不对其他 SDK 猜测式修改。
+ * 不变量：kind 校验、幂等 requestId、队列模式、取消与恢复全部仍是原生行为。
+ * 错误：锚点不唯一或不存在时抛错，不猜测源码位置。
  */
 export function patchEntrySource(kind, source) {
-  if (kind === "inbox") {
-    source = replaceOnce(
-      source,
-      '        const message = { role: "user", content: item.content, timestamp: now };\n        const entry = await tx.appendEntry(UserEntry, conversationId, { model: [message] });',
-      '        const entry = item.entry === undefined\n            ? await tx.appendEntry(UserEntry, conversationId, { model: [{ role: "user", content: item.content, timestamp: now }] })\n            : await tx.appendEntry(conversationId, item.entry);',
-    );
-    return (
-      source +
-      `\nInboxDoc.definition.version = 2;
-InboxDoc.definition.migrate = (value, fromVersion) => {
-    if (fromVersion !== 1 && fromVersion !== 2) throw new Error("Durable inbox 版本无效");
-    return value;
-};\n`
-    );
-  }
-  if (kind !== "submissions")
+  if (kind !== "inbox")
     throw new Error("Durable entry input 补丁种类无效");
-  source = replaceOnce(
-    source,
-    "export async function admitSubmission(tx, conversationId, draft, now, queueModes) {",
-    `export async function admitSubmission(tx, conversationId, draft, now, queueModes) {
-    const entryInput = draft.type === "input" && draft.entry !== undefined;
-    if (entryInput) {
-        if (draft.content !== undefined) throw new TypeError("输入不能同时指定正文与 entry");
-        if (draft.entry.head !== undefined || draft.entry.edits?.length) throw new TypeError("输入 entry 不能改写已有上下文，请使用原生 write 或 reset");
-        if (!Array.isArray(draft.entry.model) || draft.entry.model.length === 0) throw new TypeError("输入 entry 必须提供模型消息");
-    }`,
-  );
-  source = replaceOnce(
-    source,
-    'copyJson(draft.type === "write" ? draft.entry : draft.content, {',
-    'copyJson(draft.type === "write" || entryInput ? draft.entry : draft.content, {',
-  );
-  source = replaceOnce(
-    source,
-    "            items.push({ id, mode, content: value });",
-    "            items.push(entryInput ? { id, mode, entry: value } : { id, mode, content: value });",
-  );
+  // 有 entry 时用 entry 自带的 model（调用方已决定上下文），没有才由 content 合成。
   return replaceOnce(
     source,
-    '    const message = { role: "user", content: draft.content, timestamp: now };\n    const entry = await tx.appendEntry(UserEntry, conversationId, { model: [message] });',
-    '    const entry = entryInput\n        ? await tx.appendEntry(conversationId, draft.entry)\n        : await tx.appendEntry(UserEntry, conversationId, { model: [{ role: "user", content: draft.content, timestamp: now }] });',
+    '    if (entry === undefined)\n        return tx.appendEntry(UserEntry, conversationId, { model: [message] });\n    return tx.appendEntry(conversationId, { ...pickInputEntry(entry), model: [message] });',
+    '    if (entry === undefined)\n        return tx.appendEntry(UserEntry, conversationId, { model: [message] });\n    // pi-desktop: 保留 entry 的 model，content 仅作为占位以满足原生 InboxItem 形状。\n    return tx.appendEntry(conversationId, { ...pickInputEntry(entry), model: entry.model ?? [message] });',
   );
 }

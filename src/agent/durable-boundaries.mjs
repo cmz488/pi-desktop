@@ -21,17 +21,24 @@ import { patchEntrySource } from "./durable-entry-source.mjs";
  */
 const API_VERSION = 1;
 const MIN_NATIVE_GENERATION_VERSION = 2;
-const MIN_NATIVE_INBOX_VERSION = 2;
 const PATCHED = Symbol.for("pi-desktop.durable-committed-boundary-patch");
-const SOURCE_HASHES = {
-  generation:
-    "76e00ccac9f54fd61d0bffc1bfb8adb97ad462b428874a5100928f82e7ff1c94",
-  compaction:
-    "de7eed72f40ca9f571d03374020f1b4f47dc609aae374f13388831ccdbd8c88d",
-  harness: "bccc40887ec3b24e7d015cd3e05aa8bce4e41eab67150b7301de8dbf9b7ab1b3",
-  submissions:
-    "1aa0780fee380912ba8123f0da003a087f7bee7a8b20b4157f99b60d42e68dd2",
-  inbox: "082751494dda99eeab21d74a2207912ad409055fa504d370089807d7c0421d85",
+/**
+ * 已核实的 Durable 发布版本 → 受影响源码摘要。
+ *
+ * 只接受逐字节核对过的发布文件：同版本号不同内容（篡改、被打过补丁、非官方源）一律拒绝，
+ * 不猜测锚点。升级版本必须重新跑 test/durable-boundaries.test.mjs 全绿后才能登记。
+ */
+const SUPPORTED_VERSIONS = {
+  "1.4.0": {
+    generation:
+      "b7b8c610e23f100edd9cde336c28f70ae8c82f6e988f4b4564e1a732a2e1b531",
+    compaction:
+      "96daba50b8e169864371dc93879cd9ee42cb60aec1864b380cee84db24253f99",
+    harness:
+      "472fe31f5525045ec4b27437a2049236f4f58cce4920aa9bd49e41445097574d",
+    inbox:
+      "f4de5603e1dd5f1072b24757a057074a3360a20720327ef58152e067f16d2454",
+  },
 };
 let pending;
 export async function ensureDurableBoundaries() {
@@ -51,14 +58,10 @@ export async function ensureDurableRequests() {
 }
 export async function ensureDurableInputs() {
   const support = await ensureDurableRequests();
-  if (
-    Harness.capabilities?.entryInput !== API_VERSION ||
-    InboxDoc.definition.version < MIN_NATIVE_INBOX_VERSION ||
-    typeof InboxDoc.definition.migrate !== "function"
-  )
+  if (Harness.capabilities?.entryInput !== API_VERSION)
     throw new DeskError(
       501,
-      "当前 Durable SDK 缺少 entry 输入准入与 inbox 迁移接口",
+      "当前 Durable SDK 缺少 entry 输入准入接口",
     );
   return support;
 }
@@ -83,7 +86,8 @@ async function install() {
   const manifest = JSON.parse(
     await readFile(new URL("../package.json", entry), "utf8"),
   );
-  if (manifest.version !== "1.0.2")
+  const SOURCE_HASHES = SUPPORTED_VERSIONS[manifest.version];
+  if (!SOURCE_HASHES)
     throw new DeskError(
       501,
       "当前 Durable SDK 未提供提交后边界接口，也不在兼容补丁支持范围；请先核对 SDK 版本",
@@ -108,7 +112,7 @@ async function install() {
     if (name === "harness")
       source +=
         "\nHarness.capabilities = { ...Harness.capabilities, entryInput: 1 };\n";
-    const url = `pi-desktop-durable:1.0.2/${name}.js`;
+    const url = `pi-desktop-durable:${manifest.version}/${name}.js`;
     urls[name] = url;
     sources.set(url, source);
     origins.set(url, original);

@@ -12,6 +12,9 @@ export function readOnlyEnvironment(env) {
   const reads = new Set([
     "absolutePath",
     "joinPath",
+    // 1.4.0 的 read 工具改用 openBinaryReader（1.0.2 为 readBinaryFile）；两者都保留以便
+    // 跨版本使用同一只读白名单。
+    "openBinaryReader",
     "openTextLineReader",
     "readTextFile",
     "readTextLines",
@@ -105,7 +108,7 @@ export const ReadOnlyWeb = defineExtension({
       async execute(args, _api, context) {
         const result = await readWeb(args.url, context);
         return {
-          content: [{ type: "text", text: `${result.url}\n\n${result.text}` }],
+          output: [{ type: "text", text: `${result.url}\n\n${result.text}` }],
         };
       },
     }),
@@ -122,7 +125,7 @@ export const ReadOnlyWeb = defineExtension({
           context,
         );
         return {
-          content: [{ type: "text", text: `${result.url}\n\n${result.text}` }],
+          output: [{ type: "text", text: `${result.url}\n\n${result.text}` }],
         };
       },
     }),

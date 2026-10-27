@@ -139,7 +139,7 @@ for (const backend of ["memory", "sqlite"]) {
             execute: async () => {
               started.resolve();
               await resume.promise;
-              return { content: [{ type: "text", text: "released" }] };
+              return { output: [{ type: "text", text: "released" }] };
             },
           }),
         ],

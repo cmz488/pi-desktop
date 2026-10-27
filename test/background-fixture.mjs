@@ -47,7 +47,7 @@ export function createBackgroundFixture() {
               ),
             context,
           );
-          return { content: [{ type: "text", text: `anchor ${id}` }] };
+          return { output: [{ type: "text", text: `anchor ${id}` }] };
         },
       }),
     ],

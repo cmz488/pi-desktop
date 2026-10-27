@@ -266,7 +266,7 @@ export function createManagedSubagents({
                 "子代理结果过大，请缩小列表或在工作台查看记录",
               );
             return {
-              content: [{ type: "text", text }],
+              output: [{ type: "text", text }],
             };
           },
         }),

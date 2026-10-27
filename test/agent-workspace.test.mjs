@@ -239,7 +239,7 @@ test("registry replacement changes the next call through the workspace interface
           description: "Return registered value",
           parameters: Type.Object({}),
           replay: "safe",
-          execute: async () => ({ content: [{ type: "text", text }] }),
+          execute: async () => ({ output: [{ type: "text", text }] }),
         }),
       ],
     });

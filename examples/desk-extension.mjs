@@ -16,7 +16,7 @@ export default defineExtension({
         if (!result.ok)
           throw new Error("No readable package.json in this project");
         return {
-          content: [
+          output: [
             {
               type: "text",
               text: String(JSON.parse(result.value).name ?? "unnamed project"),

@@ -84,6 +84,8 @@ const AgentProfile = defineDoc({
   history: "rewindable",
   fork: "asOf",
   initial: () => ({ name: "Agent", revision: 1, shellPath: "", shellEnv: {} }),
+  // 单条会话配置记录；每次变更直接固化，与 pi.agent 一致。
+  checkpointWhen: () => true,
 });
 // Host 权限属于当前 worker，不属于可退回、可按历史位置复制的会话配置。
 const WorkerApproval = defineDoc({
@@ -91,6 +93,7 @@ const WorkerApproval = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+  checkpointWhen: () => true,
 });
 // 原生 submission 离开 inbox 后不再保存投递模式；这里只保留已验证的身份信息，
 // 不复制队列、执行状态或回答，也不把后来重试的参数当作历史事实。
@@ -101,6 +104,7 @@ const LegacyMessageIdentities = defineDoc({
   history: "latest",
   fork: "initial",
   initial: () => ({ submissions: {} }),
+  checkpointWhen: () => true,
 });
 const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const text = (value, limit, label) => {
