@@ -24,7 +24,12 @@ export function createBackgroundFixture() {
     phases: {
       hold: async (task, runtime, context) => {
         // 锚点必须跨过普通回合的终态；有界 sleep 避免失败测试永久遗留后台任务。
-        await runtime.sleep(Date.now() + BACKGROUND_HOLD_MS, context);
+        // 1.4.0 用 sleepUntil(until, checkpoint, context)，checkpoint 需显式给出。
+        await runtime.sleepUntil(
+          Date.now() + BACKGROUND_HOLD_MS,
+          task.state.checkpoint,
+          context,
+        );
       },
     },
   });
