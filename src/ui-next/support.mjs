@@ -17,13 +17,9 @@ const unsupported = (reason) => ({ status: "unsupported", reason });
 export const UI_SUPPORT = Object.freeze({
   // ── 会话 ────────────────────────────────────────────────────────────────
   "session:create": implemented("/api/workspace/command"),
-  "session:open": unsupported(
-    "尚未接入：Host 有对应路由（/api/switch-session），但通道的请求／响应形状还没核实",
-  ),
-  "session:close": unsupported(
-    "会话在 worker 内常驻；我们没有 Percho 的显式 close 语义",
-  ),
-  "session:delete": unsupported("没有删除归档的通道；归档走 workspace 命令"),
+  "session:open": implemented("/api/workspace/command"),
+  "session:close": implemented("/api/workspace/command"),
+  "session:delete": implemented("/api/workspace/command"),
   "session:list": implemented("/api/sessions"),
   "session:listAll": implemented("/api/sessions"),
   "session:prompt": implemented("/api/prompt"),
@@ -55,7 +51,7 @@ export const UI_SUPPORT = Object.freeze({
   "session:getTodos": unsupported("todo 以工具结果进入转录，没有独立读取接口"),
   "session:clearQueue": unsupported("队列由 Durable 拥有，没有公开清空入口"),
   "session:getFollowUpMessages": unsupported("队列由 Durable 拥有，没有公开读取入口"),
-  "session:setName": unsupported("会话改名走 /api/workspace/command，通道名未对齐"),
+  "session:setName": implemented("/api/workspace/command"),
   "session:export": unsupported("会话导出走 workspace 命令，通道名未对齐"),
   "session:recall": unsupported("撤回走 workspace rewind 命令，语义与 Percho recall 不同"),
   "session:getChannelSubscriptionSessionIds": unsupported("我们没有频道订阅模型"),
@@ -75,7 +71,9 @@ export const UI_SUPPORT = Object.freeze({
 
   // ── 包与 MCP ────────────────────────────────────────────────────────────
   "packages:searchCatalog": implemented("/api/package-catalog"),
-  "packages:listConfigured": implemented("/api/package"),
+  "packages:listConfigured": unsupported(
+    "Host 的 /api/package 只接受写操作（install/remove），没有配置清单读取端",
+  ),
   "packages:install": implemented("/api/package"),
   "packages:remove": implemented("/api/package"),
   "mcp:configList": implemented("/api/mcp"),

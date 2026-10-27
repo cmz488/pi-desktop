@@ -113,10 +113,6 @@ export function createHttpHandlers({ get, post }) {
 
     // ── 包管理 ────────────────────────────────────────────────────────────
     // `/api/package` 的 body 是 { action, ...params }，由 packageManagement 解释。
-    "packages:listConfigured": async () => {
-      const body = await get("/api/package");
-      return body?.rows ?? [];
-    },
     "packages:install": async (args) =>
       await post("/api/package", { action: "install", name: String(args?.name ?? "") }),
     "packages:remove": async (args) =>
@@ -137,12 +133,12 @@ export function createHttpHandlers({ get, post }) {
     "mcp:configReload": async () => await get("/api/mcp"),
 
     // ── 权限与信任 ────────────────────────────────────────────────────────
-    // /api/approval 的 body 是 { mode }；只支持切换审批模式，不支持单次 allow/deny。
+    // /api/approval 的 body 是 { mode }；审批模式在 /api/agent 的 active.approvalMode 上。
     "permission:getConfig": async () => {
-      const state = await get("/api/state");
-      return { mode: state?.approvalMode ?? "ask-risky" };
+      const agent = await get("/api/agent");
+      return { mode: agent?.active?.approvalMode ?? "ask-risky" };
     },
-    "permission:getMode": async () => (await get("/api/state"))?.approvalMode ?? null,
+    "permission:getMode": async () => (await get("/api/agent"))?.active?.approvalMode ?? null,
     "permission:setMode": async (args) =>
       await post("/api/approval", { mode: String(args?.mode ?? "") }),
     "trust:respond": async (args) =>
@@ -202,8 +198,9 @@ export function createHttpHandlers({ get, post }) {
     // ── 资源清单（插件／技能） ────────────────────────────────────────────
     "settings:listSubagents": async () => (await get("/api/subagent-history"))?.rows ?? [],
     "uiPlugins:getConfig": async () => await get("/api/plugin-config"),
+    // 读取端是 /api/plugins（复数）；/api/plugin（单数）只做启停写入。
     "uiPlugins:list": async () => {
-      const body = await get("/api/plugin");
+      const body = await get("/api/plugins");
       return body?.rows ?? body ?? [];
     },
     "uiPlugins:setEnabled": async (args) =>
@@ -212,6 +209,31 @@ export function createHttpHandlers({ get, post }) {
       await post("/api/plugin", { id: args?.id, enabled: args?.enabled === true, revision: args?.revision }),
     "uiPlugins:readCode": async (args) =>
       await get(`/api/plugin-resources?id=${encodeURIComponent(String(args?.id ?? ""))}`),
+    // ── 会话：Host 级工作空间命令 ────────────────────────────────────────
+    // 会话由 Host 的 supervisor 管理（不是 worker 路由）；命令名与参数见
+    // src/control-plane/server.mjs 的 remoteWorkspaceCommands 与 supervisor.execute。
+    "session:open": async (args) =>
+      await post("/api/workspace/command", {
+        command: "agent.start",
+        id: Number(args?.sessionId),
+      }),
+    "session:close": async (args) =>
+      await post("/api/workspace/command", {
+        command: "agent.stop",
+        id: Number(args?.sessionId),
+      }),
+    "session:delete": async (args) =>
+      await post("/api/workspace/command", {
+        command: "agent.archive",
+        id: Number(args?.sessionId),
+      }),
+    "session:setName": async (args) =>
+      await post("/api/workspace/command", {
+        command: "agent.rename",
+        id: Number(args?.sessionId),
+        name: String(args?.name ?? ""),
+      }),
+
     // 以下五个由工作空间数据目录承载：页面刷新后必须读回同一份值。
     "uiState:load": async () => (await get("/api/ui-state"))?.value ?? null,
     "uiState:save": async (args) =>
