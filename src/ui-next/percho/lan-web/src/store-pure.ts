@@ -1,0 +1,156 @@
+import {
+	emptyTranscript,
+	type LanSessionBrief,
+	type LanSessionView,
+	type LanSnapshot,
+	type LanSseFrame,
+	type LanTranscriptHistory,
+	messagesToUIMessages,
+	type PermissionRequest,
+	reduceEvent,
+	type SessionTranscriptState,
+} from "@percho/shared";
+
+/*
+ * lan-web 数据层纯函数：snapshot 种子 + SSE 帧迁移，驱动 shared transcript reducer
+ * （与桌面端同一份）。与 EventSource 接线（store.ts）分离，可直接单测。
+ * 快照携带服务端投影态（含 in-flight 流式容器）——种子后事件帧无缝续接，
+ * 无需 mid-run 自愈层。
+ */
+
+export type ConnStatus = "token" | "connecting" | "connected" | "reconnecting";
+
+export interface LanAppState {
+	token: string;
+	/** 上一次尝试的 token 被 401 拒绝（logout 置 true，setToken 重试时清）。 */
+	authFailed: boolean;
+	status: ConnStatus;
+	remoteControl: boolean;
+	list: LanSessionBrief[];
+	views: Record<string, LanSessionView>;
+	transcripts: Record<string, SessionTranscriptState>;
+	/** 每会话消息是否被尾部 cap 截断（snapshot truncated）。 */
+	truncated: Record<string, boolean>;
+	/** 未决权限请求（含 requestId；perm/perm_resolved 帧驱动）。 */
+	pendingPerms: Record<string, PermissionRequest[]>;
+	/** 当前选中的会话（null = 会话列表页）。 */
+	selected: string | null;
+	/** 最近一次快照的服务端帧序号（event 帧去重边界）。 */
+	snapshotSeq: number;
+	/** 快照种子是否已完成（完成前到达的帧由接线层缓冲）。 */
+	seeded: boolean;
+}
+
+export const initialLanState: LanAppState = {
+	token: "",
+	authFailed: false,
+	status: "token",
+	remoteControl: false,
+	list: [],
+	views: {},
+	transcripts: {},
+	truncated: {},
+	pendingPerms: {},
+	selected: null,
+	snapshotSeq: 0,
+	seeded: false,
+};
+
+/** snapshot → 状态种子（幂等；重连重拉即整体重置自愈）。
+ *  transcripts 直接取服务端投影态（shared reducer 驱动、含 in-flight 流式容器）。 */
+export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<LanAppState> {
+	const views: Record<string, LanSessionView> = {};
+	for (const view of snap.views) views[view.sessionId] = view;
+	const transcripts: Record<string, SessionTranscriptState> = {};
+	const truncated: Record<string, boolean> = {};
+	for (const entry of snap.transcripts) {
+		transcripts[entry.sessionId] = entry.state;
+		truncated[entry.sessionId] = entry.truncated;
+	}
+	// 保留 selected（仍存在的话），否则回落到列表页
+	const selected =
+		state.selected && (views[state.selected] || snap.list.some((s) => s.sessionId === state.selected))
+			? state.selected
+			: null;
+	// 未决权限种子（perm 帧的补充；快照权威 → 整体重置）
+	const pendingPerms: Record<string, PermissionRequest[]> = {};
+	for (const request of snap.pendingPermissions ?? []) {
+		const bucket = pendingPerms[request.sessionId] ?? [];
+		bucket.push(request);
+		pendingPerms[request.sessionId] = bucket;
+	}
+	return {
+		list: snap.list,
+		views,
+		transcripts,
+		truncated,
+		pendingPerms,
+		selected,
+		snapshotSeq: snap.snapshotSeq,
+		remoteControl: snap.remoteControl,
+		seeded: true,
+	};
+}
+
+/** SSE 帧 → 状态迁移（event 帧带 seq 去重；view/list 全量幂等）。 */ export function applyFrame(
+	state: LanAppState,
+	frame: LanSseFrame,
+): Partial<LanAppState> {
+	switch (frame.event) {
+		case "hello":
+		case "ping":
+			return {}; // 心跳不携带状态（判活由接线层 lastFrameAt 记录）
+		case "list":
+			return { list: frame.data.list };
+		case "view":
+			// view 帧 = 服务端派生视图快照（六状态字段都从服务端投影派生，客户端 transcript 即权威态，
+			// 无需回写状态位——投影与服务端 reducer 同源，双写只会制造第二事实源）
+			return { views: { ...state.views, [frame.data.sessionId]: frame.data.view } };
+		case "event": {
+			const { sessionId, event, seq } = frame.data;
+			// 快照去重边界：效果已含在快照种子内
+			if (seq <= state.snapshotSeq) return {};
+			if (state.transcripts[sessionId] == null) return {};
+			const prev = state.transcripts[sessionId] ?? emptyTranscript();
+			const next = reduceEvent(prev, event);
+			if (next === prev) return {};
+			return { transcripts: { ...state.transcripts, [sessionId]: next } };
+		}
+		case "perm": {
+			const { sessionId, request } = frame.data;
+			const existing = state.pendingPerms[sessionId] ?? [];
+			if (existing.some((r) => r.id === request.id)) return {};
+			return { pendingPerms: { ...state.pendingPerms, [sessionId]: [...existing, request] } };
+		}
+		case "perm_resolved": {
+			const { sessionId, requestId } = frame.data;
+			const existing = state.pendingPerms[sessionId];
+			if (!existing) return {};
+			return {
+				pendingPerms: {
+					...state.pendingPerms,
+					[sessionId]: existing.filter((r) => r.id !== requestId),
+				},
+			};
+		}
+	}
+}
+
+/** 单会话 transcript 按需种子（历史会话点开时拉取；已有种子不覆盖）。 */
+export function seedTranscript(state: LanAppState, entry: LanTranscriptHistory): Partial<LanAppState> {
+	if (state.transcripts[entry.sessionId]) return {};
+	const view = state.views[entry.sessionId];
+	return {
+		transcripts: {
+			...state.transcripts,
+			[entry.sessionId]: {
+				...emptyTranscript(),
+				messages: messagesToUIMessages(entry.messages),
+				agentActive: view?.agentActive ?? false,
+				compacting: view?.compacting ?? false,
+				todos: view?.todos ?? [],
+			},
+		},
+		truncated: { ...state.truncated, [entry.sessionId]: entry.truncated },
+	};
+}

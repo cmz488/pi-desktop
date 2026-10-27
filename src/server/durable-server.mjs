@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createDeskBridge } from "./bridge.mjs";
@@ -10,6 +11,7 @@ import { sendJson } from "./http-transfer.mjs";
 import { createTaskWaits } from "./task-waits.mjs";
 import { openAgentWorkspace } from "../agent/agent-workspace.mjs";
 import { createUiStateStore } from "./ui-state-store.mjs";
+import { startMobileServer } from "./mobile.mjs";
 import { openDurableModels } from "../agent/durable-models.mjs";
 import { createDurableResources } from "../agent/durable-resources.mjs";
 import { uiSnapshot } from "../agent/ui-context.mjs";
@@ -101,6 +103,10 @@ export async function startDurableDesk(options = {}) {
   const directory = resolve(options.directory ?? join(agentDir, "desktop"));
   // 客户端 UI 状态与导航偏好：按工作空间数据目录持久化，页面刷新后读回同一份值。
   const uiStateStore = createUiStateStore(directory);
+  // 手机端单文件页面（由 npm run build:ui 的 lan-web 步骤产出）。
+  const mobilePage = fileURLToPath(
+    new URL("../../build/ui-next/lan-web/index.html", import.meta.url),
+  );
   // Start the SDK graph in parallel with everything below; only the steps that
   // need its namespace await it. The early network step uses the same package's
   // settings submodule so a fresh host does not serialize behind the whole SDK.
@@ -138,7 +144,7 @@ export async function startDurableDesk(options = {}) {
       return policy.followUpMode;
     },
   };
-  let bridge, workspace, root, stopPromise, transcripts;
+  let bridge, workspace, root, stopPromise, transcripts, mobile;
   let nativeOpening;
   const desktopBtw = createDesktopBtw();
   const browser =
@@ -1362,6 +1368,18 @@ export async function startDurableDesk(options = {}) {
       if (agent.idle && agent.pendingConfiguration)
         void applyDeferredConfiguration(agent.id).catch(() => {});
     const url = await bridge.start();
+    // 手机端（局域网）：独立端口与令牌。页面来自构建产物；未构建或显式关闭时不启动，
+    // 而不是提供一个打不开的地址。
+    if (options.mobile !== false) {
+      const page = await readFile(mobilePage, "utf8").catch(() => undefined);
+      if (page)
+        mobile = await startMobileServer({
+          workspace,
+          directory,
+          pageHtml: page,
+          port: options.mobilePort ?? 0,
+        });
+    }
     let stopped = false;
     const stop = () =>
       (stopPromise ??= (async () => {
@@ -1372,6 +1390,7 @@ export async function startDurableDesk(options = {}) {
         auth.cancelAll();
         // 先释放独立观察请求，再关闭传输与任务执行资源，避免关机被长等待拖住。
         await taskWaits.close();
+        await mobile?.stop();
         await bridge.stop();
         resources?.cancelInteractions();
         const closingBrowser = browser?.close();
@@ -1385,6 +1404,8 @@ export async function startDurableDesk(options = {}) {
       })());
     return {
       url,
+      /** 手机端（局域网）：独立端口与令牌；未构建页面时不启用。 */
+      mobile: mobile ? { url: mobile.url, port: mobile.port, token: mobile.token } : undefined,
       workspace,
       nativeSession: transcripts?.metadata,
       bridge,

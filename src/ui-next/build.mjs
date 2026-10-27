@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -50,6 +50,24 @@ async function walk(directory, prefix = "") {
   return files;
 }
 
+/** 手机端单文件页面（Percho lan-web）；与桌面入口分开构建，产物是单个 HTML。 */
+async function buildMobile() {
+  await exec(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../../node_modules/vite/bin/vite.js", import.meta.url)),
+      "build",
+      "--config",
+      fileURLToPath(new URL("percho/lan-web/vite.config.ts", import.meta.url)),
+    ],
+    { cwd: fileURLToPath(packageRoot), maxBuffer: 64 * 1024 * 1024 },
+  );
+  const page = new URL("build/ui-next/lan-web/index.html", packageRoot);
+  const info = await stat(page).catch(() => undefined);
+  if (!info?.isFile()) throw new Error("手机端构建产物缺失");
+  return info.size;
+}
+
 export async function buildUi() {
   await exec(
     process.execPath,
@@ -95,10 +113,12 @@ export async function buildUi() {
 
   await mkdir(new URL("src/ui-next/", packageRoot), { recursive: true });
   await writeFile(generated, body);
-  return { files: rows.length, outDir: fileURLToPath(outDir) };
+  const mobileBytes = await buildMobile();
+  return { files: rows.length, outDir: fileURLToPath(outDir), mobileBytes };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const result = await buildUi();
   console.log(`ui-next: ${result.files} 个产物 → ${result.outDir}`);
+  console.log(`lan-web: ${Math.round(result.mobileBytes / 1024)} KB 单文件页面`);
 }
