@@ -67,98 +67,52 @@ export const UI_SUPPORT = Object.freeze({
 
   // ── 项目与 Git ──────────────────────────────────────────────────────────
   "project:listFiles": implemented("/api/files"),
-  "project:ensureTrust": unsupported(
-    "尚未接入：Host 有 /api/project-trust，但信任请求体的形状还没核实",
-  ),
+  "project:ensureTrust": implemented("/api/project-trust"),
   "project:getGitBranch": implemented("/api/git"),
   "project:listGitBranches": implemented("/api/git"),
-  "project:checkoutBranch": unsupported(
-    "尚未接入：Host 有对应路由（/api/git），但通道的请求／响应形状还没核实",
-  ),
-  "project:validateDirectory": unsupported(
-    "尚未接入：Host 有对应路由（/api/workspace/command），但通道的请求／响应形状还没核实",
-  ),
+  "project:checkoutBranch": implemented("/api/command"),
+  "project:validateDirectory": implemented("/api/workspace/command"),
 
   // ── 包与 MCP ────────────────────────────────────────────────────────────
-  "packages:searchCatalog": unsupported(
-    "尚未接入：Host 有对应路由（/api/marketplace），但通道的请求／响应形状还没核实",
-  ),
-  "packages:listConfigured": unsupported(
-    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没实测核实",
-  ),
-  "packages:install": unsupported(
-    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没核实",
-  ),
-  "packages:remove": unsupported(
-    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没核实",
-  ),
+  "packages:searchCatalog": implemented("/api/package-catalog"),
+  "packages:listConfigured": implemented("/api/package"),
+  "packages:install": implemented("/api/package"),
+  "packages:remove": implemented("/api/package"),
   "mcp:configList": implemented("/api/mcp"),
-  "mcp:configUpsert": unsupported(
-    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
-  ),
-  "mcp:configRemove": unsupported(
-    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
-  ),
-  "mcp:configReload": unsupported(
-    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
-  ),
+  "mcp:configUpsert": implemented("/api/mcp-action"),
+  "mcp:configRemove": implemented("/api/mcp-action"),
+  "mcp:configReload": implemented("/api/mcp"),
 
   // ── 交互与权限 ──────────────────────────────────────────────────────────
-  "extension-dialog:respond": unsupported(
-    "尚未接入：Host 有对应路由（/api/interaction-reply），但通道的请求／响应形状还没核实",
-  ),
-  "trust:respond": unsupported(
-    "尚未接入：Host 有对应路由（/api/interaction-reply），但通道的请求／响应形状还没核实",
-  ),
+  "extension-dialog:respond": implemented("/api/interaction-reply"),
+  "trust:respond": implemented("/api/project-trust"),
   "permission:respond": unsupported(
     "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
   ),
-  "permission:getConfig": unsupported(
-    "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
-  ),
-  "permission:getMode": unsupported(
-    "尚未接入：Host 有对应路由（/api/state），但通道的请求／响应形状还没核实",
-  ),
-  "permission:setMode": unsupported(
-    "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
-  ),
+  "permission:getConfig": implemented("/api/state"),
+  "permission:getMode": implemented("/api/state"),
+  "permission:setMode": implemented("/api/approval"),
 
   // ── 设置 ────────────────────────────────────────────────────────────────
   "settings:listProviders": implemented("/api/providers"),
-  "settings:saveApiKey": unsupported(
-    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
-  ),
-  "settings:removeCredential": unsupported(
-    "尚未接入：Host 有对应路由（/api/provider-remove），但通道的请求／响应形状还没核实",
-  ),
-  "settings:addCustomProvider": unsupported(
-    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
-  ),
-  "settings:updateCustomProvider": unsupported(
-    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
-  ),
-  "settings:removeCustomProvider": unsupported(
-    "尚未接入：Host 有对应路由（/api/provider-remove），但通道的请求／响应形状还没核实",
-  ),
-  "settings:loginStart": unsupported(
-    "尚未接入：Host 有对应路由（/api/auth-start），但通道的请求／响应形状还没核实",
-  ),
-  "settings:loginCancel": unsupported(
-    "尚未接入：Host 有对应路由（/api/auth-logout），但通道的请求／响应形状还没核实",
-  ),
+  "settings:saveApiKey": implemented("/api/provider"),
+  "settings:removeCredential": implemented("/api/provider-remove"),
+  "settings:addCustomProvider": implemented("/api/provider"),
+  "settings:updateCustomProvider": implemented("/api/provider"),
+  "settings:removeCustomProvider": implemented("/api/provider-remove"),
+  "settings:loginStart": implemented("/api/auth-start"),
+  "settings:loginCancel": implemented("/api/auth-logout"),
   "settings:getModelPrefs": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setProviderModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
-  "settings:setProviderBaseUrl": unsupported("base URL 走 /api/provider 的完整保存，通道未对齐"),
-  "settings:testProvider": unsupported("没有独立的 provider 连通性测试入口"),
+  "settings:setProviderBaseUrl": implemented("/api/provider"),
+  "settings:testProvider": implemented("/api/refresh-models"),
   "settings:setSubagentModel": unsupported("子代理模型选择随 workspace configure，没有独立通道"),
   "settings:setSubagentThinking": unsupported("子代理思考等级随 workspace configure"),
   "settings:setSubagentPreferBuiltin": unsupported("我们没有内置／原生子代理二选一开关"),
-  "settings:listSubagents": unsupported(
-    "尚未接入：Host 有对应路由（/api/subagent-history），但通道的请求／响应形状还没核实",
-  ),
-  "settings:loginRespond": unsupported("交互式登录的应答走 /api/interaction-reply"),
+  "settings:listSubagents": implemented("/api/subagent-history"),
+  "settings:loginRespond": implemented("/api/interaction-reply"),
 
   // ── 上下文管理／频道观察 ────────────────────────────────────────────────
   "contextManager:getConfig": unsupported("我们没有 Percho 的上下文蒸发配置"),
@@ -194,11 +148,11 @@ export const UI_SUPPORT = Object.freeze({
   "update:exportDiagnostics": unsupported("我们以 pi package 分发，没有内置更新器"),
 
   // ── UI 插件 ─────────────────────────────────────────────────────────────
-  "uiPlugins:getConfig": unsupported("我们没有 Percho 的 UI 插件运行时"),
-  "uiPlugins:setEnabled": unsupported("我们没有 Percho 的 UI 插件运行时"),
-  "uiPlugins:list": unsupported("我们没有 Percho 的 UI 插件运行时"),
-  "uiPlugins:readCode": unsupported("我们没有 Percho 的 UI 插件运行时"),
-  "uiPlugins:setPluginEnabled": unsupported("我们没有 Percho 的 UI 插件运行时"),
+  "uiPlugins:getConfig": implemented("/api/plugin-config"),
+  "uiPlugins:setEnabled": implemented("/api/plugin"),
+  "uiPlugins:list": implemented("/api/plugin"),
+  "uiPlugins:readCode": implemented("/api/plugin-resources"),
+  "uiPlugins:setPluginEnabled": implemented("/api/plugin"),
   "uiPlugins:assignSlot": unsupported("我们没有 Percho 的 UI 插件运行时"),
   "uiPlugins:rebuild": unsupported("我们没有 Percho 的 UI 插件运行时"),
   "uiPlugins:openDir": unsupported("我们没有 Percho 的 UI 插件运行时"),

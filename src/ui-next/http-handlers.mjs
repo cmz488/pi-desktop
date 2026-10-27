@@ -24,6 +24,12 @@ export function toSessionMeta(row) {
  * @param {(path: string) => Promise<any>} io.get
  * @param {(path: string, body: unknown) => Promise<any>} io.post
  */
+/** `/api/providers` 返回的 revision 是配置文档版本，写 provider 时必须回传。 */
+async function providerRevision(get) {
+  const body = await get("/api/providers");
+  return body?.revision;
+}
+
 export function createHttpHandlers({ get, post }) {
   /** 当前会话 id：多条路由以 `?sessionId=` 绑定目标。 */
   const sessionId = async () => {
@@ -104,6 +110,108 @@ export function createHttpHandlers({ get, post }) {
     },
     // `/api/mcp` 实测返回 { pending, revisions, rows, supported }。
     "mcp:configList": async () => (await get("/api/mcp"))?.rows ?? [],
+
+    // ── 包管理 ────────────────────────────────────────────────────────────
+    // `/api/package` 的 body 是 { action, ...params }，由 packageManagement 解释。
+    "packages:listConfigured": async () => {
+      const body = await get("/api/package");
+      return body?.rows ?? [];
+    },
+    "packages:install": async (args) =>
+      await post("/api/package", { action: "install", name: String(args?.name ?? "") }),
+    "packages:remove": async (args) =>
+      await post("/api/package", {
+        action: "remove",
+        source: String(args?.source ?? ""),
+        scope: String(args?.scope ?? "user"),
+      }),
+    // 目录搜索是 GET `/api/package-catalog?name=`；结果是 HTML，不是结构化列表。
+    "packages:searchCatalog": async (args) =>
+      await get(`/api/package-catalog?name=${encodeURIComponent(String(args?.query ?? ""))}`),
+
+    // ── MCP ───────────────────────────────────────────────────────────────
+    "mcp:configUpsert": async (args) =>
+      await post("/api/mcp-action", args ?? {}),
+    "mcp:configRemove": async (args) =>
+      await post("/api/mcp-action", { ...args, remove: true }),
+    "mcp:configReload": async () => await get("/api/mcp"),
+
+    // ── 权限与信任 ────────────────────────────────────────────────────────
+    // /api/approval 的 body 是 { mode }；只支持切换审批模式，不支持单次 allow/deny。
+    "permission:getConfig": async () => {
+      const state = await get("/api/state");
+      return { mode: state?.approvalMode ?? "ask-risky" };
+    },
+    "permission:getMode": async () => (await get("/api/state"))?.approvalMode ?? null,
+    "permission:setMode": async (args) =>
+      await post("/api/approval", { mode: String(args?.mode ?? "") }),
+    "trust:respond": async (args) =>
+      await post("/api/project-trust", {
+        trusted: args?.answer === 1 || args?.answer === true,
+        id: args?.requestId,
+      }),
+    "extension-dialog:respond": async (args) =>
+      await post("/api/interaction-reply", args ?? {}),
+
+    // ── 项目 ──────────────────────────────────────────────────────────────
+    "project:ensureTrust": async (args) =>
+      await post("/api/project-trust", { trusted: true, id: args?.cwd }),
+    "project:validateDirectory": async (args) =>
+      await post("/api/workspace/command", {
+        command: "validate",
+        path: String(args?.path ?? ""),
+      }),
+    "project:checkoutBranch": async (args) =>
+      await post("/api/command", { command: "git", action: "checkout", branch: args?.branch }),
+
+    // ── 设置：provider 与登录 ─────────────────────────────────────────────
+    // /api/provider 与 /api/provider-remove 都要 revision（配置版本围栏）。
+    "settings:saveApiKey": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider", { ...args, revision });
+    },
+    "settings:removeCredential": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider-remove", { id: args?.providerId, revision });
+    },
+    "settings:addCustomProvider": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider", { ...args?.input, revision });
+    },
+    "settings:updateCustomProvider": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider", { ...args?.input, revision });
+    },
+    "settings:removeCustomProvider": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider-remove", { id: args?.id, revision });
+    },
+    "settings:setProviderBaseUrl": async (args) => {
+      const revision = await providerRevision(get);
+      return await post("/api/provider", { id: args?.providerId, baseUrl: args?.baseUrl, revision });
+    },
+    // 刷新模型目录（可能联网），由宿主决定时机。
+    "settings:testProvider": async (args) =>
+      await post("/api/refresh-models", { provider: args?.providerId }),
+    "settings:loginStart": async (args) =>
+      await post("/api/auth-start", { provider: args?.providerId }),
+    "settings:loginCancel": async () => await post("/api/auth-logout", {}),
+    "settings:loginRespond": async (args) =>
+      await post("/api/interaction-reply", args ?? {}),
+
+    // ── 资源清单（插件／技能） ────────────────────────────────────────────
+    "settings:listSubagents": async () => (await get("/api/subagent-history"))?.rows ?? [],
+    "uiPlugins:getConfig": async () => await get("/api/plugin-config"),
+    "uiPlugins:list": async () => {
+      const body = await get("/api/plugin");
+      return body?.rows ?? body ?? [];
+    },
+    "uiPlugins:setEnabled": async (args) =>
+      await post("/api/plugin", { id: args?.id, enabled: args?.enabled === true, revision: args?.revision }),
+    "uiPlugins:setPluginEnabled": async (args) =>
+      await post("/api/plugin", { id: args?.id, enabled: args?.enabled === true, revision: args?.revision }),
+    "uiPlugins:readCode": async (args) =>
+      await get(`/api/plugin-resources?id=${encodeURIComponent(String(args?.id ?? ""))}`),
     // 以下五个由工作空间数据目录承载：页面刷新后必须读回同一份值。
     "uiState:load": async () => (await get("/api/ui-state"))?.value ?? null,
     "uiState:save": async (args) =>

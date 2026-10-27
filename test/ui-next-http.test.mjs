@@ -140,10 +140,15 @@ test("未实现通道抛可诊断错误，不返回空数据", async (t) => {
       return true;
     },
   );
-  // Percho 独有的子系统（UI 插件）同理：没有实现，也不伪造。
+  // Percho 独有的子系统（更新器）同理：我们以 pi package 分发，没有内置更新器。
   await assert.rejects(
-    () => f.api.uiPluginsList({}),
-    (error) => error instanceof HostApiUnsupported,
+    () => f.api.checkForUpdates({}),
+    (error) => {
+      assert.ok(error instanceof HostApiUnsupported);
+      assert.equal(error.channel, "update:check");
+      assert.match(error.message, /尚未在此 Host 上实现/);
+      return true;
+    },
   );
 });
 
