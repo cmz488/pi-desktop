@@ -16,6 +16,7 @@
 - [native-custom-context-review.md](native-custom-context-review.md)
 - [native-extension-lifecycle.md](native-extension-lifecycle.md)
 - [package-sidebar-review.md](package-sidebar-review.md)
+- [percho-ui-migration.md](percho-ui-migration.md)
 - [performance-check.md](performance-check.md)
 - [pi-audit-remediation.md](pi-audit-remediation.md)
 - [pi-boundary-deepening-review.md](pi-boundary-deepening-review.md)
