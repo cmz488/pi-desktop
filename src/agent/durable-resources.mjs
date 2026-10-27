@@ -212,8 +212,10 @@ export function createDurableResources({
               },
               ctx,
             );
+            // Durable 1.4.0 的 ToolExecutionResult 用 output（旧版为 content）；
+            // 这里处在 Durable ToolTask 边界，所以要转成 output。Pi SDK 工具仍返回 content。
             return {
-              content:
+              output:
                 result.content ??
                 (output ? [{ type: "text", text: output }] : []),
               details: result.details ?? {},
@@ -489,7 +491,8 @@ export function createDurableResources({
                   document.entries = nativeRuntime.stateEntries();
                 }, context);
                 return {
-                  content: result.content,
+                  // Durable 1.4.0 的工具执行结果用 output；result 来自 Pi 的原生工具。
+                  output: result.content,
                   ...(result.usage === undefined
                     ? {}
                     : { usage: result.usage }),
