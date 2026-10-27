@@ -76,7 +76,14 @@ try {
   // Check Node/TypeScript references inside the tarball, where temporary
   // migration aliases cannot conceal an import of a removed source path.
   for (const file of files) {
-    if (!/\.(?:mjs|cjs|ts)$/.test(file) || file.startsWith("src/ui/")) continue;
+    // src/ui/ 与 src/ui-next/percho/ 都是浏览器端源码：前者按公共 URL 加载，后者经 vite
+    // 打包。两者都不按 Node 的模块解析规则运行，所以不参与"包内 import 必须可解析"的检查。
+    if (
+      !/\.(?:mjs|cjs|ts)$/.test(file) ||
+      file.startsWith("src/ui/") ||
+      file.startsWith("src/ui-next/percho/")
+    )
+      continue;
     const content = await readFile(join(directory, file), "utf8");
     const tree = ts.createSourceFile(
       file,

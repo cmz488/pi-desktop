@@ -14,5 +14,8 @@
     "src/**/*.ts",
     "src/server/bridge.mjs",
     "src/config/config-store.mjs"
+  ],
+  "exclude": [
+    "src/ui-next/percho"
   ]
 }

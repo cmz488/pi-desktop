@@ -10,7 +10,7 @@
 
 1. 含消息的历史分支已有独立 Pi JSONL 和稳定的原生 session ID，仍与根会话共用一个 worker／Durable SQLite／writer。缺少独立归档菜单不是因为分支未持久化。[转录族](../../src/session/native-transcript-family.mjs)、[默认 worker 接入](../../src/server/durable-server.mjs)
 2. 默认目录为 `~/.pi/agent/sessions/`，不是仅单数 `session/`；项目同时兼容旧目录。已复现根文件在 `session/`、新分支在 `sessions/` 的混合布局，不能只查其中一个目录。[目录选择](../../src/session/pi-session-storage.mjs)
-3. 现有 Agent 归档已经包含根与历史分支；独立分支归档尚未实现。底层文件归档 adapter 可以复用，但整族恢复策略、分支持久管理状态和转录导出生命周期都需要接入，不能只复制菜单或移动 JSONL。[族迁移](../../src/control-plane/family-archives.mjs)、[分支菜单](../../src/ui/workspace.js)
+3. 现有 Agent 归档已经包含根与历史分支；独立分支归档尚未实现。底层文件归档 adapter 可以复用，但整族恢复策略、分支持久管理状态和转录导出生命周期都需要接入，不能只复制菜单或移动 JSONL。[族迁移](../../src/control-plane/family-archives.mjs)、旧工作区页的分支菜单（该页面已删除）
 
 ## 文件位置与生成时机
 
@@ -41,7 +41,7 @@
 
 隔离实验向 `agent.archive` 额外传入一个分支的 `conversationId`，结果仍是三个族成员全部归档；附加参数不会收窄这个 API 的目标。随后整族恢复的三份文件摘要与归档前完全一致，启动后的原生身份和路径也保持一致。
 
-当前左侧分支菜单只提供创建分支；归档／恢复仍是 Agent 级入口。上轮为避免把进程级操作错误施加给分支而隔离了菜单，这留下的是独立分支管理的功能缺口。[菜单实现](../../src/ui/workspace.js)、[上轮边界](../history/sidebar-branch-ui.md)
+当前左侧分支菜单只提供创建分支；归档／恢复仍是 Agent 级入口。上轮为避免把进程级操作错误施加给分支而隔离了菜单，这留下的是独立分支管理的功能缺口。旧工作区页的菜单实现（该页面已删除）、[上轮边界](../history/sidebar-branch-ui.md)
 
 ### 为什么不能仅归档一个文件
 

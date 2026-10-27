@@ -24,7 +24,7 @@ Pi Desktop 0.26.6 的本机工作区、静态资源和 Agent 状态均正常；�
 
 重新执行真实 `createTailscaleFunnel().prepare()`，首先稳定复现 TLS Health 拦截失败。分开比较直连与本机 HTTP CONNECT 代理：`derp3g`／`derp3h` 的直连超时，但现有 `127.0.0.1:7897` 代理上的 HTTPS 严格校验成功；控制面 HTTPS 两条路径均正常。系统 tailscaled 未配置代理，仍记录 `Web secure CA` 替换证书。这次证据与 10 月 5 日不同，不能沿用上次代理不可用的结论。
 
-用户在自己的终端执行 [configure-tailscale-proxy.sh](../../scripts/configure-tailscale-proxy.sh)，管理员密码未交给 Agent。脚本先严格验证中继／控制面，只接受现有本机 HTTP 代理，然后安装独立 systemd drop-in 并短暂重启 tailscaled；没有重置节点身份、Serve 配置或 tailnet 权限。重新执行原始复现得到 `BackendState=Running`、`Health=[]`，日志显示中继连接建立。没有添加拦截 CA，也没有关闭证书校验。
+用户在自己的终端执行 `configure-tailscale-proxy.sh`（该脚本已随后续的隧道移除一并删除，本节只保留当时的测量结论），管理员密码未交给 Agent。脚本先严格验证中继／控制面，只接受现有本机 HTTP 代理，然后安装独立 systemd drop-in 并短暂重启 tailscaled；没有重置节点身份、Serve 配置或 tailnet 权限。重新执行原始复现得到 `BackendState=Running`、`Health=[]`，日志显示中继连接建立。没有添加拦截 CA，也没有关闭证书校验。
 
 Desktop 的公网 HTTPS 检查原来忽略代理环境。`tailscale-network.mjs` 复用锁定版本 `https-proxy-agent` 和 `proxy-from-env`，按 `HTTPS_PROXY`／`https_proxy`／`NO_PROXY` 等环境配置发送 CONNECT；仅作用于公网检查，不修改回环代理、模型全局 dispatcher 或系统代理。代理与目标 TLS 都显式启用证书验证；即使父进程误设 `NODE_TLS_REJECT_UNAUTHORIZED=0`，仍拒绝测试拦截证书。请求结束、超时和取消会终止正在等待 CONNECT 的 socket。
 
