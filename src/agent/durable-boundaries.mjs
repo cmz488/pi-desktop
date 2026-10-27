@@ -21,6 +21,7 @@ import { patchEntrySource } from "./durable-entry-source.mjs";
  */
 const API_VERSION = 1;
 const MIN_NATIVE_GENERATION_VERSION = 2;
+const MIN_NATIVE_INBOX_VERSION = 2;
 const PATCHED = Symbol.for("pi-desktop.durable-committed-boundary-patch");
 /**
  * 已核实的 Durable 发布版本 → 受影响源码摘要。
@@ -36,6 +37,8 @@ const SUPPORTED_VERSIONS = {
       "96daba50b8e169864371dc93879cd9ee42cb60aec1864b380cee84db24253f99",
     harness:
       "472fe31f5525045ec4b27437a2049236f4f58cce4920aa9bd49e41445097574d",
+    submissions:
+      "d171c6a0b3438471911277091117ad48d73f2af853d5b6b7a0f547c28782c9ac",
     inbox:
       "f4de5603e1dd5f1072b24757a057074a3360a20720327ef58152e067f16d2454",
   },
@@ -58,10 +61,15 @@ export async function ensureDurableRequests() {
 }
 export async function ensureDurableInputs() {
   const support = await ensureDurableRequests();
-  if (Harness.capabilities?.entryInput !== API_VERSION)
+  // entry input 需要：准入能力 + inbox 检查点迁移契约（旧补丁的 v2 数据要能恢复）。
+  if (
+    Harness.capabilities?.entryInput !== API_VERSION ||
+    InboxDoc.definition.version < MIN_NATIVE_INBOX_VERSION ||
+    typeof InboxDoc.definition.migrate !== "function"
+  )
     throw new DeskError(
       501,
-      "当前 Durable SDK 缺少 entry 输入准入接口",
+      "当前 Durable SDK 缺少 entry 输入准入与 inbox 迁移接口",
     );
   return support;
 }
