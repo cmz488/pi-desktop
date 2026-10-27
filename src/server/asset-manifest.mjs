@@ -6,6 +6,19 @@ export const packageRoot = new URL("../../", import.meta.url);
 export const assetFile = (file) => new URL(file, packageRoot);
 const javascript = "text/javascript";
 export const sharedAssets = new Map([
+  ...[
+    "chat-dialog",
+    "agent-config",
+    "preferences-settings",
+    "provider-settings",
+    "resource-settings",
+    "package-settings",
+    "git-pane",
+  ].map((name) => [`/${name}.js`, [`src/ui/shared/${name}.js`, javascript]]),
+  [
+    "/settings-schema.json",
+    ["src/ui/shared/settings-schema.json", "application/json"],
+  ],
   ["/lazy-data.mjs", ["src/shared/lazy-data.mjs", javascript]],
   [
     "/extension-adapters.mjs",

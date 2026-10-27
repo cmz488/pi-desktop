@@ -25,18 +25,25 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 	const [atFilesCwd, setAtFilesCwd] = useState<string | null>(null);
 	const [atSelected, setAtSelected] = useState(0);
 	const [atDismissed, setAtDismissed] = useState(false);
+	const [atError, setAtError] = useState("");
+	const directory = atToken?.query.includes("/")
+		? atToken.query.slice(0, atToken.query.lastIndexOf("/"))
+		: "";
+	const filesOwner = JSON.stringify([cwd, directory]);
 
 	/** @ 菜单：token 仍与当前文本一致才有效（程序化清空文本后自动失效），slash 打开时不竞争 */
 	const atOpen =
 		atToken !== null &&
 		tokenOwner === owner &&
-		atFilesCwd === cwd &&
+		atFilesCwd === filesOwner &&
 		text.slice(atToken.start, atToken.end) === `@${atToken.query}` &&
 		!atDismissed &&
 		!slashOpen;
 	const atFiltered =
 		atOpen && atToken
-			? filterFiles(atFiles, atToken.query).filter((path) => path !== atToken.query || !path.endsWith("/"))
+			? filterFiles(atFiles, atToken.query).filter(
+					(path) => path !== atToken.query || !path.endsWith("/"),
+				)
 			: [];
 
 	// 旧菜单不能作用于另一会话或另一项目。
@@ -48,20 +55,23 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 
 	// @ token 出现时拉取项目文件列表（每 cwd 一次，backend TTL 缓存；atToken 击键频变但条件拦截）
 	useEffect(() => {
-		if (!atToken || !cwd || atFilesCwd === cwd) return;
+		if (!atToken || !cwd || atFilesCwd === filesOwner) return;
 		let cancelled = false;
+		setAtError("");
 		void getExecutionApi(cwd)
-			.listProjectFiles({ cwd })
+			.listProjectFiles({ cwd, path: directory })
 			.then((list) => {
 				if (cancelled) return;
 				setAtFiles(list);
-				setAtFilesCwd(cwd);
+				setAtFilesCwd(filesOwner);
 			})
-			.catch(() => {});
+			.catch((error: Error) => {
+				if (!cancelled) setAtError(error.message);
+			});
 		return () => {
 			cancelled = true;
 		};
-	}, [atToken, cwd, atFilesCwd]);
+	}, [atToken, cwd, atFilesCwd, directory, filesOwner]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: @ 查询词变化时重置选中项
 	useEffect(() => {
@@ -78,7 +88,7 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 	const handleAtPick = (path: string) => {
 		if (!atToken || !atOpen) return;
 		const isDir = path.endsWith("/");
-		if (!cwd || atFilesCwd !== cwd || !atFiltered.includes(path)) return;
+		if (!cwd || atFilesCwd !== filesOwner || !atFiltered.includes(path)) return;
 		if (!isDir) {
 			const absolute = `${displayPath(cwd).replace(/[\\/]$/, "")}/${path}`;
 			options.editorRef.current?.insertReference(atToken.start, atToken.end, {
@@ -89,8 +99,16 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 			setAtToken(null);
 			return;
 		}
-		options.editorRef.current?.replaceText(atToken.start, atToken.end, `@${path}`);
-		setAtToken({ start: atToken.start, end: atToken.start + path.length + 1, query: path });
+		options.editorRef.current?.replaceText(
+			atToken.start,
+			atToken.end,
+			`@${path}`,
+		);
+		setAtToken({
+			start: atToken.start,
+			end: atToken.start + path.length + 1,
+			query: path,
+		});
 	};
 
 	/** @ 菜单键盘导航：↑↓ 移动，Enter/Tab 选中，Esc 折叠（保留文本）；消费事件返回 true */
@@ -122,6 +140,7 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 
 	return {
 		atToken,
+		atError: atToken ? atError : "",
 		atOpen,
 		atFiltered,
 		atSelected,

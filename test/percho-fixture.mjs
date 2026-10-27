@@ -8,6 +8,7 @@ export function perchoConsumers() {
       contents: `
       export { parseEnvironmentUiState } from "./src/ui-next/percho/shared/environment-ui-state.ts";
       export { messagesToUIMessages } from "./src/ui-next/percho/shared/transcript/mapping.ts";
+      export { filterCommands } from "./src/ui-next/percho/renderer/src/components/composer/slash-filter.ts";
       export { buildChatRows } from "./src/ui-next/percho/shared/transcript/chat-rows.ts";
       export { reduceEvent } from "./src/ui-next/percho/shared/transcript/reducer.ts";
       export { emptyTranscript } from "./src/ui-next/percho/shared/transcript/types.ts";

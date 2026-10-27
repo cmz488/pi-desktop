@@ -1,10 +1,22 @@
-import { isModelVisible, type ModelPrefs, type ProviderInfo, providerModelVisibility } from "@percho/shared";
+import {
+	isModelVisible,
+	type ModelPrefs,
+	type ProviderInfo,
+	providerModelVisibility,
+} from "@percho/shared";
+import { supportsHostChannel } from "../../../api";
 import { useState } from "react";
 import { useEnvironment } from "../../../environment-context";
 import { useT } from "../../../i18n";
 import { useProviderLoginStore } from "../../../stores/provider-login";
 import { useSettingsStore } from "../../../stores/settings";
-import { EditIcon, ExpandArrowIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
+import {
+	EditIcon,
+	ExpandArrowIcon,
+	LoginIcon,
+	TestIcon,
+	TrashIcon,
+} from "../../icons";
 import { Switch } from "../../ui/Switch";
 import { Tooltip } from "../../ui/Tooltip";
 import { BuiltinProviderEditForm } from "./BuiltinProviderEditForm";
@@ -60,7 +72,9 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
 	const modelPrefs = useSettingsStore((s) => s.modelPrefs) ?? EMPTY_MODEL_PREFS;
 	const setModelHidden = useSettingsStore((s) => s.setModelHidden);
-	const setProviderModelsHidden = useSettingsStore((s) => s.setProviderModelsHidden);
+	const setProviderModelsHidden = useSettingsStore(
+		(s) => s.setProviderModelsHidden,
+	);
 	/** 有效可见性三态；中间态点击全藏，零目录也可设定源默认策略。 */
 	const visibility = providerModelVisibility(
 		modelPrefs,
@@ -106,11 +120,19 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 								onClick={() => setModelsOpen((open) => !open)}
 								aria-expanded={modelsOpen}
 							>
-								{t("settings.providers.modelCount", { count: provider.models.length })}
-								<ExpandArrowIcon className={`transition-transform ${modelsOpen ? "rotate-90" : ""}`} />
+								{t("settings.providers.modelCount", {
+									count: provider.models.length,
+								})}
+								<ExpandArrowIcon
+									className={`transition-transform ${modelsOpen ? "rotate-90" : ""}`}
+								/>
 							</button>
 						) : (
-							<span>{t("settings.providers.modelCount", { count: provider.models.length })}</span>
+							<span>
+								{t("settings.providers.modelCount", {
+									count: provider.models.length,
+								})}
+							</span>
 						)}
 						{provider.configured && provider.authLabel ? ` · ${provider.authLabel}` : ""}
 					</div>
@@ -122,19 +144,20 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 				>
 					{provider.configured ? t("settings.providers.configured") : t("settings.providers.unconfigured")}
 				</span>
-				{provider.configured && (
-					<IconAction
-						label={t("settings.providers.test")}
-						disabled={testResult === "testing"}
-						onClick={() => void test(provider.id)}
-					>
-						{testResult === "testing" ? (
-							<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-						) : (
-							<TestIcon />
-						)}
-					</IconAction>
-				)}
+				{provider.configured &&
+					supportsHostChannel("settings:testProvider") && (
+						<IconAction
+							label={t("settings.providers.test")}
+							disabled={testResult === "testing"}
+							onClick={() => void test(provider.id)}
+						>
+							{testResult === "testing" ? (
+								<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+							) : (
+								<TestIcon />
+							)}
+						</IconAction>
+					)}
 				{/* label 与 store/backend 的 loginKind 判定同构（oauth 优先）：oauth provider 即使无 loginLabel 也走「订阅登录」文案 */}
 				{!provider.custom && (provider.oauth || provider.apiKeyLogin) && (
 					<IconAction
@@ -173,25 +196,33 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 				)}
 				{/* 行末批量开关：一键全显示/全隐藏该 provider 的所有模型（openrouter 这类几百个模型的供应商先全藏再挑）。
 					tooltip 右对齐（align=end）：开关紧贴滚动容器右缘，居中气泡会向右溢出 */}
-				<Tooltip
-					label={
-						allHidden
-							? t("settings.providers.showAllModels", { name: provider.name })
-							: t("settings.providers.hideAllModels", { name: provider.name })
-					}
-					align="end"
-				>
-					<Switch
-						checked={allVisible}
-						indeterminate={mixed}
-						onCheckedChange={() => void setProviderModelsHidden(provider.id, !allHidden)}
-						aria-label={
+				{supportsHostChannel("settings:setModelHidden") && (
+					<Tooltip
+						label={
 							allHidden
 								? t("settings.providers.showAllModels", { name: provider.name })
 								: t("settings.providers.hideAllModels", { name: provider.name })
 						}
-					/>
-				</Tooltip>
+						align="end"
+					>
+						<Switch
+							checked={allVisible}
+							indeterminate={mixed}
+							onCheckedChange={() =>
+								void setProviderModelsHidden(provider.id, !allHidden)
+							}
+							aria-label={
+								allHidden
+									? t("settings.providers.showAllModels", {
+											name: provider.name,
+										})
+									: t("settings.providers.hideAllModels", {
+											name: provider.name,
+										})
+							}
+						/>
+					</Tooltip>
+				)}
 			</div>
 			{testResult && testResult !== "testing" && (
 				<p
@@ -200,8 +231,12 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					}`}
 				>
 					{testResult.ok
-						? t("settings.providers.testOk", { modelId: testResult.modelId ?? "" })
-						: t("settings.providers.testFailed", { error: testResult.error ?? "" })}
+						? t("settings.providers.testOk", {
+								modelId: testResult.modelId ?? "",
+							})
+						: t("settings.providers.testFailed", {
+								error: testResult.error ?? "",
+							})}
 				</p>
 			)}
 			{provider.configured && modelsOpen && provider.models.length > 0 && (
@@ -217,6 +252,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 									<div className="flex items-center gap-2 rounded px-1 py-1 text-ui-11 text-ink-dim hover:bg-surface">
 										<span className="min-w-0 flex-1 truncate">{model.name}</span>
 										<Switch
+											disabled={!supportsHostChannel("settings:setModelHidden")}
 											checked={visible}
 											aria-label={model.name}
 											onCheckedChange={(nextVisible) =>

@@ -458,11 +458,16 @@ export async function openNativeTranscript({
           // 自定义条目对模型不可见，使 Pi 与 Durable 看到同一份上下文。
           const native = mapping.get(entry.data?.rewindTo);
           if (native !== undefined) {
-            manager.branch(native);
+            const leaf = entry.data.rewindBefore
+              ? manager.getEntry(native)?.parentId
+              : native;
+            if (leaf == null) manager.resetLeaf();
+            else manager.branch(leaf);
             manager.appendCustomEntry("pi-desktop-rewind", {
               conversation: id,
               rewindTo: entry.data.rewindTo,
-              native,
+              ...(entry.data.rewindBefore ? { before: true } : {}),
+              native: leaf,
             });
           }
           through = entry.id;
@@ -638,12 +643,13 @@ export async function openNativeTranscript({
       }
       return origins;
     };
-    const rewindContext = (entryId) => {
+    const rewindContext = (entryId, { before = false } = {}) => {
       const native = mapping.get(entryId);
       if (native === undefined || !manager.getEntry(native)) return undefined;
       const entries = manager.getEntries();
       const byId = new Map(entries.map((entry) => [entry.id, entry]));
-      const projection = sdk.buildSessionProjection(entries, native, byId);
+      const leaf = before ? byId.get(native).parentId : native;
+      const projection = sdk.buildSessionProjection(entries, leaf, byId);
       // mapping 保留每个贡献的首个原生条目，后续消息由原有导出检查点归属。
       const origins = nativeOrigins();
       const visibleOrigins = projection.entries.flatMap(

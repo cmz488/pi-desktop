@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNativeToolDisclosure } from "../native/native-ui";
 import { useT } from "../../i18n";
 import type { UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
@@ -87,7 +88,9 @@ export function summarizeArgs(args: string): string {
 	} catch {
 		// 流式中的不完整 JSON：按优先级正则抽取字段值（值允许未闭合，随流式增长原地更新）
 		for (const key of ["command", "cmd", "filePath", "path", "file", "url"]) {
-			const value = args.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`))?.[1];
+			const value = args.match(
+				new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`),
+			)?.[1];
 			if (value) return value;
 		}
 	}
@@ -103,6 +106,8 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	/** 内容是否超过一行（决定渐变 + 箭头是否贴行尾） */
 	const [overflowing, setOverflowing] = useState(false);
 	const textRef = useRef<HTMLSpanElement>(null);
+	const detailsRef = useRef<HTMLDetailsElement>(null);
+	useNativeToolDisclosure(detailsRef);
 	const rowRef = useRef<HTMLElement>(null);
 
 	// 挂载时 args 可能为空（流式 toolcall，textRef 未渲染）→ 随 summary 变化重测；
@@ -131,7 +136,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		"relative overflow-hidden whitespace-nowrap font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink";
 
 	return (
-		<details className="group/dets drawer-details">
+		<details ref={detailsRef} className="group/dets drawer-details">
 			<summary
 				ref={rowRef}
 				className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"

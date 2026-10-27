@@ -105,6 +105,53 @@ export function patchProvider(data, input, options = {}) {
       throw new DeskError(422, "请使用密钥或环境变量引用，不支持命令式密钥");
     next.apiKey = input.apiKey;
   }
+  if (input.models !== undefined) {
+    if (
+      !Array.isArray(input.models) ||
+      !input.models.length ||
+      input.models.length > 256
+    )
+      throw new DeskError(422, "自定义服务需要 1 至 256 个模型");
+    const ids = new Set();
+    next.models = input.models.map((model) => {
+      if (
+        !model ||
+        typeof model.id !== "string" ||
+        !model.id ||
+        model.id.length > 256 ||
+        /[\x00-\x1f]/.test(model.id) ||
+        ids.has(model.id)
+      )
+        throw new DeskError(422, "模型 ID 无效或重复");
+      ids.add(model.id);
+      if (
+        (model.name !== undefined &&
+          (typeof model.name !== "string" || model.name.length > 256)) ||
+        ["contextWindow", "maxTokens"].some(
+          (key) =>
+            model[key] !== undefined &&
+            (!Number.isSafeInteger(model[key]) || model[key] <= 0),
+        ) ||
+        ["reasoning", "imageInput"].some(
+          (key) => model[key] !== undefined && typeof model[key] !== "boolean",
+        )
+      )
+        throw new DeskError(422, "模型参数无效");
+      const previous = prior.models?.find((row) => row.id === model.id) ?? {};
+      return {
+        ...previous,
+        id: model.id,
+        ...Object.fromEntries(
+          ["name", "reasoning", "contextWindow", "maxTokens"]
+            .filter((key) => model[key] !== undefined)
+            .map((key) => [key, model[key]]),
+        ),
+        ...(model.imageInput === undefined
+          ? {}
+          : { input: model.imageInput ? ["text", "image"] : ["text"] }),
+      };
+    });
+  }
   if (input.modelId) {
     if (
       typeof input.modelId !== "string" ||

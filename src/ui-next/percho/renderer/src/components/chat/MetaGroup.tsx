@@ -1,5 +1,11 @@
-import { dotsFromItems, type MetaDot, type MetaItem, summarizeCategories } from "@percho/shared";
-import { Fragment, memo, useMemo } from "react";
+import {
+	dotsFromItems,
+	type MetaDot,
+	type MetaItem,
+	summarizeCategories,
+} from "@percho/shared";
+import { Fragment, memo, useMemo, useRef } from "react";
+import { useNativeUi, useNativeToolDisclosure } from "../native/native-ui";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
@@ -15,13 +21,19 @@ import { useSweepHighlight } from "./use-sweep-highlight";
 export type { MetaItem };
 
 /** 思考过程行（内层折叠，与 tool call 行同风格） */
-function ThinkingRow({ thinking }: { thinking: string }) {
+function ThinkingRow({
+	thinking,
+	label,
+}: {
+	thinking: string;
+	label?: string;
+}) {
 	const t = useT();
 	return (
 		<details className="group/dets drawer-details">
 			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 				<span className="shrink-0 text-ui-13 font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
-					{t("message.thinking")}
+					{label || t("message.thinking")}
 				</span>
 				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
@@ -53,8 +65,18 @@ function dotClass(state: MetaDot["state"]): string {
  * 语言切换不受影响：useT/i18n 订阅在组件内部，父级 memo 拦不住也不需要拦。
  */
 function metaGroupPropsEqual(
-	a: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
-	b: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
+	a: {
+		items: MetaItem[];
+		working: boolean;
+		endImmediately?: boolean;
+		subagentCount?: number;
+	},
+	b: {
+		items: MetaItem[];
+		working: boolean;
+		endImmediately?: boolean;
+		subagentCount?: number;
+	},
 ): boolean {
 	if (
 		a.working !== b.working ||
@@ -82,20 +104,38 @@ export const MetaGroup = memo(function MetaGroup({
 	subagentCount?: number;
 }) {
 	const t = useT();
-	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
+	const count = items.reduce(
+		(n, item) => n + (item.thinking ? 1 : 0) + item.tools.length,
+		0,
+	);
+	const nativeUi = useNativeUi();
+	const detailsRef = useRef<HTMLDetailsElement>(null);
+	useNativeToolDisclosure(detailsRef);
 	// 圆点序列：组内工具按到达顺序展开（working 期实时追加；组结束后随 items 冻结在原位）
 	const dots = useMemo(() => dotsFromItems(items), [items]);
 	// 分类汇总：worked 态标题行（working 期不显示；展开组时标题仍在）
-	const segments = useMemo(() => summarizeCategories(items, subagentCount), [items, subagentCount]);
+	const segments = useMemo(
+		() => summarizeCategories(items, subagentCount),
+		[items, subagentCount],
+	);
 
 	// 滞后缓冲：working 信号消失后需保持缓冲才显示 worked（turn 间隙内不闪烁）；
 	// 与 CenterOrb 中央动画共用同一 hook，两处显隐节奏一致
-	const shownWorking = useShownWorking(working, endImmediately);
+	const shownWorking = useShownWorking(
+		working && nativeUi.workingVisible !== false,
+		endImmediately,
+	);
 	// 状态行小 orb 恒显示：中央动画开关（centerOrbEnabled）与本行解耦，互不让位
 
 	const rows = items.flatMap((item, i) => [
 		// biome-ignore lint/suspicious/noArrayIndexKey: 折叠组内项无独立 id，列表顺序稳定
-		item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
+		item.thinking ? (
+			<ThinkingRow
+				key={`thinking-${i}`}
+				thinking={item.thinking}
+				label={nativeUi.hiddenThinkingLabel}
+			/>
+		) : null,
 		...item.tools.map((tool) => (
 			<Slot key={tool.key} name={UI_SLOTS.ToolCallCard} props={{ tool }} fallback={ToolCallCard} />
 		)),
@@ -113,7 +153,9 @@ export const MetaGroup = memo(function MetaGroup({
 		}
 		return undefined;
 	}, [items]);
-	const isTool = latestActivity?.kind === "tool";
+	const isTool =
+		latestActivity?.kind === "tool" ||
+		items.some((item) => item.tools.some((tool) => tool.state === "running"));
 	const orbState: OrbState = isTool ? "connecting" : "working";
 	const labelKey = isTool ? "message.working" : "message.thinkingLabel";
 
@@ -127,7 +169,12 @@ export const MetaGroup = memo(function MetaGroup({
 				if (entry.kind === "thinking") {
 					out.push({ kind: "thinking", id: entry.id, text: entry.text });
 				} else {
-					out.push({ kind: "tool", id: entry.id, name: entry.name, text: entry.args });
+					out.push({
+						kind: "tool",
+						id: entry.id,
+						name: entry.name,
+						text: entry.args,
+					});
 				}
 			}
 		}
@@ -136,14 +183,20 @@ export const MetaGroup = memo(function MetaGroup({
 
 	// 扫光目标集合（预览行 id）标识：集合变化 → hook 内同帧补样式，消除新行首帧实色闪烁
 	const liveKey = liveItems.map((i) => i.id).join(",");
-	const { labelRef, wrapRef: tickerWrapRef } = useSweepHighlight(shownWorking, liveKey);
+	const { labelRef, wrapRef: tickerWrapRef } = useSweepHighlight(
+		shownWorking,
+		liveKey,
+	);
 
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
 	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */
 	// 纯子代理调用不带普通 tool/thinking，仍须保留折叠状态行作为卡片的时间锚点。
 	// show_image 即使是唯一工具也只放在折叠明细，不能走单条裸行展示。
-	const hasShowImage = items.some((item) => item.tools.some((tool) => tool.name === "show_image"));
-	const showWrapper = count >= 2 || shownWorking || subagentCount > 0 || hasShowImage;
+	const hasShowImage = items.some((item) =>
+		item.tools.some((tool) => tool.name === "show_image"),
+	);
+	const showWrapper =
+		count >= 2 || shownWorking || subagentCount > 0 || hasShowImage;
 	if (!showWrapper) {
 		return <div className="-mb-4 flex flex-col gap-1.5">{rows}</div>;
 	}
@@ -151,7 +204,7 @@ export const MetaGroup = memo(function MetaGroup({
 	return (
 		// -mb-4：抵消容器 gap-6 的一部分，折叠行与后续正文净距 8px（成组与单行一致）
 		<div className="-mb-4">
-			<details className="group/outer peer drawer-details">
+			<details ref={detailsRef} className="group/outer peer drawer-details">
 				<summary className="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden">
 					{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
 					<div className="flex min-h-6 w-full items-center gap-2 py-0.5">

@@ -11,10 +11,7 @@ import {
   UI_SUPPORT,
   UI_SUBSCRIPTION_SUPPORT,
 } from "../src/ui-next/support.mjs";
-import {
-  buildHostApi,
-  HostApiUnsupported,
-} from "../src/ui-next/host-api.mjs";
+import { buildHostApi, HostApiUnsupported } from "../src/ui-next/host-api.mjs";
 
 /**
  * GUI 移植契约：每个 Percho 通道都必须有明确的支持状态。
@@ -67,7 +64,11 @@ test("通道表与支持表一一对应", () => {
     subs,
     "订阅支持表必须覆盖并从属于订阅表",
   );
-  assert.equal(UI_CHANNEL_NAMES.length, 123, "Percho 契约有 123 条 invoke 通道");
+  assert.equal(
+    UI_CHANNEL_NAMES.length,
+    123,
+    "Percho 契约有 123 条 invoke 通道",
+  );
   assert.equal(UI_SUBSCRIPTION_NAMES.length, 17, "Percho 契约有 17 条订阅");
 });
 
@@ -76,6 +77,13 @@ test("implemented 必须指向真实存在的路由或 workspace 命令", async 
   const broken = [];
   for (const [channel, row] of Object.entries(UI_SUPPORT)) {
     if (row.status !== "implemented") continue;
+    if (row.runtime === "browser") {
+      assert(
+        ["window.open", "browser.download", "package.json"].includes(row.route),
+        `未知的浏览器入口 ${row.route}`,
+      );
+      continue;
+    }
     if (!routes.has(row.route) && !commands.has(row.route))
       broken.push(`${channel} → ${row.route}`);
   }
@@ -95,14 +103,18 @@ test("每个通道的状态合法，unsupported 必须写明原因", () => {
       );
     if (row.status === "implemented")
       assert.ok(
-        typeof row.route === "string" && row.route.startsWith("/"),
+        typeof row.route === "string" &&
+          (row.runtime === "browser" || row.route.startsWith("/")),
         `${channel} 标为 implemented 时必须给出 Host 路由`,
       );
   }
   for (const [name, row] of Object.entries(UI_SUBSCRIPTION_SUPPORT)) {
     assert.ok(["implemented", "unsupported"].includes(row.status), name);
     if (row.status === "unsupported")
-      assert.ok(row.reason?.length > 0, `${name} 标为 unsupported 时必须给出原因`);
+      assert.ok(
+        row.reason?.length > 0,
+        `${name} 标为 unsupported 时必须给出原因`,
+      );
   }
 });
 
@@ -159,8 +171,13 @@ test("buildHostApi 为每条通道与订阅生成方法，未实现的抛带通�
 });
 
 test("标成 implemented 的通道必须有真实处理函数，反之亦然", async () => {
-  const { createHttpHandlers } = await import("../src/ui-next/http-handlers.mjs");
-  const handlers = createHttpHandlers({ get: async () => ({}), post: async () => ({}) });
+  const { createHttpHandlers } = await import(
+    "../src/ui-next/http-handlers.mjs"
+  );
+  const handlers = createHttpHandlers({
+    get: async () => ({}),
+    post: async () => ({}),
+  });
   const implemented = Object.entries(UI_SUPPORT)
     .filter(([, row]) => row.status === "implemented")
     .map(([channel]) => channel);

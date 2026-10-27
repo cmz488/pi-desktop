@@ -248,9 +248,21 @@ export const en: Messages = {
 		noMatch: "No matching commands",
 		argPlaceholder: "Type arguments…",
 		builtin: {
-			compact: { label: "compact", description: "Compress session context", argumentHint: "[focus]" },
-			name: { label: "name", description: "Set session display name", argumentHint: "<name>" },
-			export: { label: "export", description: "Export session (.html/.jsonl)", argumentHint: "[path]" },
+			compact: {
+				label: "compact",
+				description: "Compress session context",
+				argumentHint: "[focus]",
+			},
+			name: {
+				label: "name",
+				description: "Set session display name",
+				argumentHint: "<name>",
+			},
+			export: {
+				label: "export",
+				description: "Export session (.html/.jsonl)",
+				argumentHint: "[path]",
+			},
 			settings: {
 				label: "settings",
 				description: "Open settings",
@@ -432,7 +444,12 @@ export const en: Messages = {
 		copyDiagnostics: "Copy diagnostics",
 		delete: "Delete session",
 		deleteTitle: "Delete this session?",
-		deleteDesc: "Its transcript and session file will be deleted permanently. This cannot be undone.",
+		deleteDesc:
+			"Its transcript and session file will be deleted permanently. This cannot be undone.",
+		archive: "Archive session",
+		archiveTitle: "Archive this session?",
+		archiveDesc:
+			"Stop the idle session process and archive its record. History is preserved and can be restored from the Pi workbench.",
 	},
 	sidebar: {
 		title: "Navigation",

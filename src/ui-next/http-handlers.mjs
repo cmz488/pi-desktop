@@ -1,4 +1,17 @@
+import { webCommands } from "../shared/pi-commands.mjs";
+import packageInfo from "../../package.json" with { type: "json" };
 import { createSessionTransport, toSessionMeta } from "./session-transport.mjs";
+import {
+  slashCommandViews,
+  providerViews,
+  mcpView,
+  projectFiles,
+  composerInput,
+  createProviderLogins,
+  checkoutBranch,
+  referencedMessage,
+  exportSession,
+} from "./native-contracts.mjs";
 import { toSessionMessages } from "./session-projection.mjs";
 import { parseDialogRequestId, toDialogs } from "./interactions.mjs";
 export { toSessionMeta };
@@ -27,16 +40,55 @@ export function createHttpHandlers({
   get: rawGet,
   post: rawPost,
   sessions = createSessionTransport({ get: rawGet, post: rawPost }),
+  emit,
+  logins = createProviderLogins({ sessions, emit }),
+  confirmGit = async () => false,
+  confirmTrust = async () => false,
+  parseCatalog = () => {
+    throw new Error("包目录 HTML 需要浏览器解析器");
+  },
+  desktop = globalThis.window?.piDesk,
+  openExternal = (url) =>
+    globalThis.window?.open(url, "_blank", "noopener,noreferrer"),
 }) {
   const get = (path) => sessions.get(path);
   const post = (path, input) => sessions.post(path, input);
   return {
+    "project:pickDirectory": async () =>
+      desktop?.pickDirectory
+        ? desktop.pickDirectory()
+        : (await rawPost("/api/workspace/directory", {})).path,
+    "app:openExternal": async (args) => {
+      const url = new URL(args.url);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password
+      )
+        throw new Error("只支持无凭据的 HTTP(S) 链接");
+      openExternal(url.href);
+    },
+    "app:getInfo": async () => ({
+      name: "Pi Desktop",
+      version: packageInfo.version,
+      platform: globalThis.navigator?.platform ?? "",
+      electron: "",
+      chrome: "",
+      node: "",
+      arch: "",
+      repoUrl: "",
+    }),
     "session:list": async (args) =>
       (await sessions.list()).filter(
         (row) => !args?.cwd || row.cwd === args.cwd,
       ),
     "session:listAll": () => sessions.list(),
     "session:getLoaded": () => sessions.loaded(),
+    "session:getLoadedResources": async (args) => {
+      const resources = (await sessions.state(args.sessionId)).loadedResources;
+      if (!resources) throw new Error("原生资源尚未加载，请等待 Agent 就绪");
+      return resources;
+    },
     "session:getMessages": async (args) =>
       toSessionMessages((await sessions.state(args.sessionId)).messages),
     "session:stats": async (args) => {
@@ -55,7 +107,9 @@ export function createHttpHandlers({
         await Promise.all(
           active.map(async (row) =>
             toDialogs(
-              (await sessions.get("/api/interactions", row.sessionId)).rows,
+              (
+                await sessions.get("/api/interactions", row.sessionId)
+              ).rows.filter((job) => !logins.owns(row.sessionId, job.id)),
               row.sessionId,
             ),
           ),
@@ -64,23 +118,41 @@ export function createHttpHandlers({
       return { revision: 0, permissions: [], dialogs, trust: [] };
     },
     "session:listSlashCommands": async (args) =>
-      (await sessions.get("/api/commands", args.sessionId)).rows ?? [],
-    "session:listSlashCommandsForCwd": async () =>
-      (await get("/api/commands")).rows ?? [],
+      slashCommandViews(
+        (await sessions.get("/api/commands", args.sessionId)).rows ?? [],
+      ),
+    "session:listSlashCommandsForCwd": async (args) => {
+      const id = await sessions.forCwd(args?.cwd, { required: false });
+      return slashCommandViews(
+        id
+          ? ((await sessions.get("/api/commands", id)).rows ?? [])
+          : webCommands,
+      );
+    },
     "session:create": (args) => sessions.create(args.options),
     "session:prompt": async (args) => {
       await sessions.flushComposer(args.sessionId);
       return sessions.post(
         "/api/prompt",
         {
-          message: String(args?.text ?? ""),
-          ...(Array.isArray(args?.images) && args.images.length
+          message:
+            composerInput(args) ||
+            (args.files?.length
+              ? `附件：${args.files.map((file) => file.name).join("、")}`
+              : ""),
+          ...(args.document && composerInput(args) !== args.text
+            ? { original: args.text, document: args.document }
+            : {}),
+          ...((args.images?.length ?? 0) + (args.files?.length ?? 0)
             ? {
-                attachments: args.images.map((image, index) => ({
-                  name: `paste-${index}`,
-                  type: image.mimeType,
-                  data: image.data,
-                })),
+                attachments: [
+                  ...(args.images ?? []).map((image, index) => ({
+                    name: `paste-${index}`,
+                    type: image.mimeType,
+                    data: image.data,
+                  })),
+                  ...(args.files ?? []),
+                ],
               }
             : {}),
         },
@@ -99,15 +171,47 @@ export function createHttpHandlers({
       ),
     "session:setThinkingLevel": (args) =>
       sessions.post("/api/thinking", { level: args.level }, args.sessionId),
-    "session:compact": (args) => sessions.command("compact", args),
+    "session:compact": (args) =>
+      sessions.post(
+        "/api/prompt",
+        {
+          message: `/compact${args.customInstructions ? ` ${args.customInstructions}` : ""}`,
+        },
+        args.sessionId,
+      ),
+    "file:saveDialog": async (args) => {
+      if (desktop?.saveFile) return desktop.saveFile(args);
+      const link = globalThis.document.createElement("a");
+      const url = URL.createObjectURL(
+        new Blob([args.content], { type: "text/plain;charset=utf-8" }),
+      );
+      link.download = args.defaultName;
+      link.href = url;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return args.defaultName;
+    },
+    "session:export": (args) => exportSession(sessions, args),
+    "session:recall": async (args) => {
+      const message = await referencedMessage(sessions, args, "user");
+      await sessions.command("rewind", {
+        sessionId: args.sessionId,
+        entryId: Number(message.entryId),
+        before: true,
+      });
+      return {
+        text: message.text,
+        images: (message.blocks ?? message.content ?? [])
+          .filter((part) => part.type === "image")
+          .map(({ data, mimeType }) => ({ data, mimeType })),
+      };
+    },
     "session:fork": async (args) => {
+      const message = await referencedMessage(sessions, args, "assistant");
       const selected = await sessions.target(args.sessionId);
       const result = await sessions.command("fork", {
         ...args,
-        entryId:
-          args.ref?.entryId === undefined
-            ? undefined
-            : Number(args.ref.entryId),
+        entryId: Number(message.entryId),
         generation: selected.owner
           ? ((await rawGet("/api/workspace")).agents.find(
               (row) => row.id === selected.owner,
@@ -145,69 +249,172 @@ export function createHttpHandlers({
       return rows.sort((a, b) => Number(current(b)) - Number(current(a)));
     },
     // `/api/providers` 实测返回 { revision, rows: [] }。
-    "settings:listProviders": async () =>
-      (await get("/api/providers"))?.rows ?? [],
-    // `/api/files` 空路径返回目录列表（kind: "directory", entries）。
-    "project:listFiles": async () => await get("/api/files"),
-    "project:getGitBranch": async () => {
-      const body = await get("/api/git");
+    "settings:listProviders": async (args) => {
+      if (args?.options?.forceNetwork) await post("/api/refresh-models", {});
+      return providerViews(await get("/api/providers"));
+    },
+    "project:listFiles": async (args) => {
+      const id = await sessions.forCwd(args.cwd);
+      return projectFiles((route) => sessions.get(route, id), args.path ?? "");
+    },
+    "project:getGitBranch": async (args) => {
+      const body = await sessions.get(
+        "/api/git",
+        await sessions.forCwd(args.cwd),
+      );
       return body?.branch ?? null;
     },
-    "project:listGitBranches": async () => {
-      const body = await get("/api/git");
+    "project:listGitBranches": async (args) => {
+      const body = await sessions.get(
+        "/api/git",
+        await sessions.forCwd(args.cwd),
+      );
       return { current: body?.branch ?? null, branches: body?.branches ?? [] };
     },
     // `/api/mcp` 实测返回 { pending, revisions, rows, supported }。
-    "mcp:configList": async () => (await get("/api/mcp"))?.rows ?? [],
+    "mcp:configList": async (args) =>
+      mcpView(await sessions.get("/api/mcp", await sessions.forCwd(args?.cwd))),
 
     // ── 包管理 ────────────────────────────────────────────────────────────
     // `/api/package` 的 body 是 { action, ...params }，由 packageManagement 解释。
+    "packages:listConfigured": async () =>
+      (await get("/api/plugins")).rows
+        .filter((row) => row.type === "package")
+        .map((row) => ({
+          source: row.source,
+          scope: row.scope === "global" ? "user" : "project",
+        })),
     "packages:install": async (args) =>
       await post("/api/package", {
         action: "install",
-        name: String(args?.name ?? ""),
+        source: String(
+          args?.source ??
+            (String(args?.name ?? "").startsWith("npm:")
+              ? args.name
+              : `npm:${args?.name ?? ""}`),
+        ),
+        scope: args?.scope === "project" ? "project" : "global",
       }),
     "packages:remove": async (args) =>
       await post("/api/package", {
         action: "remove",
         source: String(args?.source ?? ""),
-        scope: String(args?.scope ?? "user"),
+        scope: args?.scope === "project" ? "project" : "global",
       }),
     // 目录搜索是 GET `/api/package-catalog?name=`；结果是 HTML，不是结构化列表。
-    "packages:searchCatalog": async (args) =>
-      await get(
-        `/api/package-catalog?name=${encodeURIComponent(String(args?.query ?? ""))}`,
-      ),
+    "packages:searchCatalog": async (args) => {
+      const value = await get(
+        `/api/package-catalog?q=${encodeURIComponent(String(args?.query ?? ""))}&type=${encodeURIComponent(args?.type ?? "")}&page=${args?.page ?? 1}`,
+      );
+      const parsed = await parseCatalog(value);
+      return {
+        packages: parsed.rows.map((row) => ({
+          ...row,
+          installSource: row.source,
+          updatedAt: row.published ?? 0,
+          downloads: row.downloads ?? 0,
+        })),
+        total: Number(/\/\s*(\d+)/.exec(parsed.count)[1]),
+        page: parsed.page,
+        pageSize: 50,
+      };
+    },
 
     // ── MCP ───────────────────────────────────────────────────────────────
-    "mcp:configUpsert": async (args) =>
-      await post("/api/mcp-action", args ?? {}),
-    "mcp:configRemove": async (args) =>
-      await post("/api/mcp-action", { ...args, remove: true }),
-    "mcp:configReload": async () => await get("/api/mcp"),
+    "mcp:configUpsert": async (args) => {
+      const id = await sessions.forCwd(args.cwd);
+      const inventory = await sessions.get("/api/mcp", id);
+      const scope = args.scope === "project" ? "project" : "global";
+      const config = Object.fromEntries(
+        ["command", "args", "url", "description", "enabled", "exposure"]
+          .filter((key) => args[key] !== undefined)
+          .map((key) => [key, args[key]]),
+      );
+      if (args.url !== undefined)
+        Object.assign(config, { command: null, args: null });
+      if (args.command !== undefined) config.url = null;
+      await sessions.post(
+        "/api/mcp",
+        {
+          action: "save",
+          scope,
+          revision: inventory.revisions[scope],
+          name: args.name,
+          config,
+        },
+        id,
+      );
+      return {
+        config: mcpView(await sessions.get("/api/mcp", id)),
+        reload: { reloaded: 0, skipped: [] },
+      };
+    },
+    "mcp:configRemove": async (args) => {
+      const id = await sessions.forCwd(args.cwd);
+      const inventory = await sessions.get("/api/mcp", id);
+      const scope = args.scope === "project" ? "project" : "global";
+      await sessions.post(
+        "/api/mcp",
+        {
+          action: "remove",
+          name: args.name,
+          scope,
+          revision: inventory.revisions[scope],
+        },
+        id,
+      );
+      return {
+        config: mcpView(await sessions.get("/api/mcp", id)),
+        reload: { reloaded: 0, skipped: [] },
+      };
+    },
+    "mcp:configReload": async (args) => {
+      const id = await sessions.forCwd(args?.cwd);
+      await sessions.post("/api/reload", {}, id);
+      return {
+        config: mcpView(await sessions.get("/api/mcp", id)),
+        reload: { reloaded: 1, skipped: [] },
+      };
+    },
 
     // ── 权限与信任 ────────────────────────────────────────────────────────
     // /api/approval 的 body 是 { mode }；审批模式在 /api/agent 的 active.approvalMode 上。
-    "permission:getConfig": async () => ({ enabled: true }),
-    "permission:getMode": async (args) =>
-      (await sessions.get("/api/agent", args.sessionId)).active
+    "permission:getConfig": async () => {
+      const state = await sessions.state();
+      return {
+        enabled:
+          state.capabilities?.durable === true &&
+          state.capabilities?.readOnly !== true,
+      };
+    },
+    "permission:getMode": async (args) => {
+      const state = await sessions.state(args.sessionId);
+      if (state.host !== "durable") return "default";
+      return (await sessions.get("/api/agent", args.sessionId)).active
         ?.approvalMode === "yolo"
         ? "fullAccess"
-        : "default",
+        : "default";
+    },
     "permission:setMode": async (args) => {
+      if ((await sessions.state(args.sessionId)).host !== "durable")
+        throw new Error("当前会话的权限由原 Pi TUI／SDK 宿主管理");
       if (!["default", "fullAccess"].includes(args.mode))
         throw new Error("权限模式无效");
+      const current = (await sessions.get("/api/agent", args.sessionId)).active
+        ?.approvalMode;
       return sessions.post(
         "/api/approval",
-        { mode: args.mode === "fullAccess" ? "yolo" : "ask-risky" },
+        {
+          mode:
+            args.mode === "fullAccess"
+              ? "yolo"
+              : current === "ask-all"
+                ? "ask-all"
+                : "ask-risky",
+        },
         args.sessionId,
       );
     },
-    "trust:respond": async (args) =>
-      await post("/api/project-trust", {
-        trusted: args?.answer === 1 || args?.answer === true,
-        id: args?.requestId,
-      }),
     "extension-dialog:respond": async (args) => {
       const ref = parseDialogRequestId(args.requestId);
       const job = (
@@ -236,33 +443,46 @@ export function createHttpHandlers({
     },
 
     // ── 项目 ──────────────────────────────────────────────────────────────
-    "project:ensureTrust": async (args) =>
-      await post("/api/project-trust", { trusted: true, id: args?.cwd }),
+    "project:ensureTrust": async (args) => {
+      const id = await sessions.forCwd(args.cwd);
+      if ((await sessions.state(id)).projectTrusted) return true;
+      if (!(await confirmTrust(args.cwd))) return false;
+      await sessions.post("/api/project-trust", { trusted: true }, id);
+      return true;
+    },
     "project:validateDirectory": async (args) =>
-      await post("/api/workspace/command", {
-        command: "validate",
-        path: String(args?.path ?? ""),
-      }),
-    "project:checkoutBranch": async (args) =>
-      await post("/api/command", {
-        command: "git",
-        action: "checkout",
-        branch: args?.branch,
-      }),
+      (await rawPost("/api/workspace/validate-directory", { path: args.path }))
+        .path,
+    "project:checkoutBranch": (args) =>
+      checkoutBranch(sessions, args, confirmGit),
 
     // ── 设置：provider 与登录 ─────────────────────────────────────────────
     // /api/provider 与 /api/provider-remove 都要 revision（配置版本围栏）。
     "settings:saveApiKey": async (args) => {
-      const revision = await providerRevision(get);
-      return await post("/api/provider", { ...args, revision });
-    },
-    "settings:removeCredential": async (args) => {
-      const revision = await providerRevision(get);
-      return await post("/api/provider-remove", {
-        id: args?.providerId,
-        revision,
+      const inventory = await get("/api/providers");
+      const row = inventory.rows.find((row) => row.id === args.providerId);
+      const native = [...inventory.rows, ...(inventory.catalog ?? [])].find(
+        (row) => row.id === args.providerId && row.auth?.apiKey,
+      );
+      if (native) {
+        const result = await logins.start(
+          { providerId: args.providerId, loginId: `key-${args.providerId}` },
+          args.key,
+        );
+        if (!result.ok) throw new Error(result.error ?? "凭据未保存");
+        return result;
+      }
+      if (!row) throw new Error("请先添加自定义提供商，或使用原生提供商登录");
+      return post("/api/provider", {
+        id: row.id,
+        baseUrl: row.baseUrl,
+        api: row.api,
+        apiKey: args.key,
+        revision: inventory.revision,
       });
     },
+    "settings:removeCredential": (args) =>
+      post("/api/auth-logout", { provider: args.providerId }),
     "settings:addCustomProvider": async (args) => {
       const revision = await providerRevision(get);
       return await post("/api/provider", { ...args?.input, revision });
@@ -276,47 +496,22 @@ export function createHttpHandlers({
       return await post("/api/provider-remove", { id: args?.id, revision });
     },
     "settings:setProviderBaseUrl": async (args) => {
-      const revision = await providerRevision(get);
-      return await post("/api/provider", {
-        id: args?.providerId,
-        baseUrl: args?.baseUrl,
-        revision,
+      const inventory = await get("/api/providers");
+      const row = inventory.rows.find((row) => row.id === args.providerId);
+      if (!row) throw new Error("请先配置提供商");
+      return post("/api/provider", {
+        id: row.id,
+        api: row.api,
+        baseUrl: args.baseUrl,
+        revision: inventory.revision,
       });
     },
     // 刷新模型目录（可能联网），由宿主决定时机。
-    "settings:testProvider": async (args) =>
-      await post("/api/refresh-models", { provider: args?.providerId }),
-    "settings:loginStart": async (args) =>
-      await post("/api/auth-start", { provider: args?.providerId }),
-    "settings:loginCancel": async () => await post("/api/auth-logout", {}),
-    "settings:loginRespond": async (args) =>
-      await post("/api/interaction-reply", args ?? {}),
+    "settings:loginStart": (args) => logins.start(args),
+    "settings:loginCancel": (args) => logins.cancel(args),
+    "settings:loginRespond": (args) => logins.respond(args),
 
     // ── 资源清单（插件／技能） ────────────────────────────────────────────
-    "settings:listSubagents": async () =>
-      (await get("/api/subagent-history"))?.rows ?? [],
-    "uiPlugins:getConfig": async () => await get("/api/plugin-config"),
-    // 读取端是 /api/plugins（复数）；/api/plugin（单数）只做启停写入。
-    "uiPlugins:list": async () => {
-      const body = await get("/api/plugins");
-      return body?.rows ?? body ?? [];
-    },
-    "uiPlugins:setEnabled": async (args) =>
-      await post("/api/plugin", {
-        id: args?.id,
-        enabled: args?.enabled === true,
-        revision: args?.revision,
-      }),
-    "uiPlugins:setPluginEnabled": async (args) =>
-      await post("/api/plugin", {
-        id: args?.id,
-        enabled: args?.enabled === true,
-        revision: args?.revision,
-      }),
-    "uiPlugins:readCode": async (args) =>
-      await get(
-        `/api/plugin-resources?id=${encodeURIComponent(String(args?.id ?? ""))}`,
-      ),
     // ── 会话：Host 级工作空间命令 ────────────────────────────────────────
     // 会话由 Host 的 supervisor 管理（不是 worker 路由）；命令名与参数见
     // src/control-plane/server.mjs 的 remoteWorkspaceCommands 与 supervisor.execute。

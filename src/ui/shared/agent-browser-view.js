@@ -241,9 +241,10 @@ export function createAgentBrowserView({
       void frames();
     }
   }, 700);
-  document.addEventListener("visibilitychange", () => {
+  const visibilityChanged = () => {
     if (document.hidden) controller?.abort();
-  });
+  };
+  document.addEventListener("visibilitychange", visibilityChanged);
   return {
     configure(value) {
       enabled = value;
@@ -287,6 +288,7 @@ export function createAgentBrowserView({
     },
     close() {
       disposed = true;
+      document.removeEventListener("visibilitychange", visibilityChanged);
       clearInterval(timer);
       clearTimeout(inputTimer);
       clearTimeout(resizeTimer);

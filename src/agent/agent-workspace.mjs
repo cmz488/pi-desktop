@@ -1533,20 +1533,26 @@ export async function openAgentWorkspace(options) {
       )
         ? messages
         : undefined;
-      const marker = await selected.commit(
-        (tx) =>
-          tx.appendEntry(selected.id, {
-            kind: "desk.rewind",
-            head: "self",
-            model: convertToLlm(messages),
-            data: {
-              rewindTo: input.entryId,
-              origins,
-              ...(nativeMessages ? { nativeMessages } : {}),
-            },
-          }),
-        context,
-      );
+      const marker = await selected.commit(async (tx) => {
+        for (const status of ["pending", "running", "waiting", "completing"]) {
+          if (
+            (await tx.scanTasks({ conversationId: selected.id, status }, 1))
+              .items.length
+          )
+            throw new DeskError(409, "请等待 Agent 空闲后退回会话");
+        }
+        return tx.appendEntry(selected.id, {
+          kind: "desk.rewind",
+          head: "self",
+          model: convertToLlm(messages),
+          data: {
+            rewindTo: input.entryId,
+            ...(input.before === true ? { rewindBefore: true } : {}),
+            origins,
+            ...(nativeMessages ? { nativeMessages } : {}),
+          },
+        });
+      }, context);
       return { id: selected.id, entryId: marker.id, rewindTo: input.entryId };
     }
     if (command === "wait") {

@@ -123,7 +123,9 @@ test("已实现通道在真实 Host 上返回可用数据", async (t) => {
   assert.ok(Array.isArray(providers), "settings:listProviders 必须返回数组");
 
   const mcp = await f.api.mcpConfigList({});
-  assert.ok(Array.isArray(mcp));
+  assert.ok(Array.isArray(mcp.global));
+  assert.ok(Array.isArray(mcp.project));
+  assert.ok(Array.isArray(mcp.errors));
 });
 
 test("未实现通道抛可诊断错误，不返回空数据", async (t) => {

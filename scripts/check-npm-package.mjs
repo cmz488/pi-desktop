@@ -26,8 +26,11 @@ let server;
 try {
   // A real tarball, extracted away from the repository, exposes missing files
   // that a source-tree check or dry-run-only assertion would silently mask.
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  // Verify freshly built UI, rather than passing with assets from an earlier edit.
+  run(npm, ["run", "prepack"]);
   const data = JSON.parse(
-    run(process.platform === "win32" ? "npm.cmd" : "npm", [
+    run(npm, [
       "pack",
       "--json",
       "--ignore-scripts",

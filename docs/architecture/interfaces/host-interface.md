@@ -31,7 +31,7 @@ host 表面（`Object.freeze` 后）：
 host.state; // snapshot、effectiveSettings、projectTrusted、canWrite、canSaveSettings、
 // canManageSessions、canSetThinking、canDeferConfiguration、validateTarget、
 // settingsChanged、gitChanged、revision、canEditShared
-host.sessions; // list、create、switch、command
+host.sessions; // list、create、switch、command、tree
 host.resources; // skills、mcpRegistered、mcpTools、mcpAction、packageAction、packageRoot、
 // packageUpdates、interactions、trustProject、reload
 host.models; // inventory、catalog、save、remove、authStart、authLogout、refresh、set、setThinking
@@ -47,9 +47,9 @@ host.require(name, message); // 返回操作函数；没有对应操作时抛 De
 
 **操作名与 capability 对应**（`host.require(name)` 的合法取值）：
 
-`listSessions`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`tasks`、`packageAction`、`packageUpdates`、`packageRoot`、`skillInventory`、`mcpAction`、`mcpRegistered`、`mcpTools`、`trustProject`、`reload`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`authStart`、`authLogout`、`refreshModels`、`setModel`、`setThinking`、`prompt`、`abort`、`btw`、`requestContext`、`route`。
+`listSessions`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`sessionExport`、`tasks`、`packageAction`、`packageUpdates`、`packageRoot`、`skillInventory`、`mcpAction`、`mcpRegistered`、`mcpTools`、`trustProject`、`reload`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`authStart`、`authLogout`、`refreshModels`、`setModel`、`setThinking`、`prompt`、`abort`、`btw`、`requestContext`、`route`。
 
-`HOST_CAPABILITY_KEYS`：`sessions`、`remote`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`tasks`、`taskDetails`、`canManageSessions`、`packageManagement`、`packageUpdates`、`packageRoot`、`skills`、`mcp`、`interactions`、`reload`、`auth`、`authLogout`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`model`、`thinking`、`trustProject`、`prompt`、`abort`、`btw`、`settings`、`canSaveSettings`、`revision`、`projectTrusted`、`canWrite`、`canEditShared`、`validateTarget`、`canSetThinking`、`canDeferConfiguration`、`settingsChanged`、`gitChanged`、`route`、`requestContext`。
+`HOST_CAPABILITY_KEYS`：`sessions`、`newSession`、`switchSession`、`sessionCommand`、`sessionTree`、`sessionExport`、`tasks`、`taskDetails`、`canManageSessions`、`packageManagement`、`packageUpdates`、`packageRoot`、`skills`、`mcp`、`interactions`、`reload`、`auth`、`authLogout`、`providerInventory`、`providerCatalog`、`providerSave`、`providerRemove`、`model`、`thinking`、`trustProject`、`prompt`、`abort`、`btw`、`settings`、`canSaveSettings`、`revision`、`projectTrusted`、`canWrite`、`canEditShared`、`validateTarget`、`canSetThinking`、`canDeferConfiguration`、`settingsChanged`、`gitChanged`、`route`、`requestContext`。
 
 ## 不变量
 

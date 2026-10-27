@@ -1,4 +1,9 @@
-import { buildChatRows, deriveTurnChanges, deriveTurnTimings, isAgentWorking } from "@percho/shared";
+import {
+	buildChatRows,
+	deriveTurnChanges,
+	deriveTurnTimings,
+	isAgentWorking,
+} from "@percho/shared";
 import {
 	type CSSProperties,
 	type MouseEvent,
@@ -9,6 +14,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useNativeUi } from "../native/native-ui";
 import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { Slot } from "../../plugins/Slot";
@@ -21,7 +27,12 @@ import { HistoryImageRootProvider } from "./history-image/history-image-root";
 import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
-import { clampWindowStart, expandWindowStart, MOUNT_TRIGGER_PX, tailWindowStart } from "./mount-window";
+import {
+	clampWindowStart,
+	expandWindowStart,
+	MOUNT_TRIGGER_PX,
+	tailWindowStart,
+} from "./mount-window";
 import { RetryNote } from "./RetryNote";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
@@ -47,7 +58,9 @@ const BOTTOM_THRESHOLD = 48;
 export function MessageList() {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
+	const transcript = useTranscriptStore((s) =>
+		selectTranscript(s, activeSessionId),
+	);
 	const streaming = transcript.streaming;
 	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
 	const agentWorking = isAgentWorking(transcript);
@@ -57,6 +70,7 @@ export function MessageList() {
 	// 滞后缓冲只在 run 存活期内生效：正文在输出或 run 已终结（!agentActive）时立即结束——
 	// 杜绝结束/中止后的 1.5s 滞留；resetKey=会话 id：切会话立即对齐新信号，不滞留旧动画
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
+	const nativeUi = useNativeUi();
 	const shownWorking = useShownWorking(
 		agentWorking,
 		transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive,
@@ -67,12 +81,16 @@ export function MessageList() {
 	const contentRef = useRef<HTMLDivElement>(null);
 	// 历史图片的私有 root：滚动容器元素本身。用 state 而不是只存 ref —— 挂载顺序上
 	// 后代 effect 需要拿到**已存在**的 DOM 元素才能建立观察，state 变化会触发它们重跑
-	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(null);
+	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(
+		null,
+	);
 	// ref 用 useCallback 固定：否则每次渲染都是新函数，React 会先 detach 再 attach，
 	// 既让 setHistoryImageRoot 反复触发，也会让历史图的观察目标重挂
 	const attachScroller = useCallback((element: HTMLDivElement | null) => {
 		scrollRef.current = element;
-		setHistoryImageRoot((previous) => (previous === element ? previous : element));
+		setHistoryImageRoot((previous) =>
+			previous === element ? previous : element,
+		);
 	}, []);
 	// 对话正文的边界淡出：**只淡上沿**（在顶栏下渐隐）——
 	// 下沿紧贴输入框，那里不要淡出（用户明确不要）；28px < 内容区 pt-8（32px），
@@ -140,14 +158,20 @@ export function MessageList() {
 	// 轮次数据：文件变更 + 计时。进场动画只给「本会话查看期间新出现的最后一轮」播：基线在切会话/
 	// 历史重建时对齐，不随渲染更新（防 turn_end 紧随的二次渲染摘掉动画类）；行定位/上提规则全部在
 	// shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
-	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
+	const turnChanges = useMemo(
+		() => deriveTurnChanges(transcript.messages),
+		[transcript.messages],
+	);
 	const turnTimings = useMemo(
 		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
 		[transcript.messages, transcript.runEndedAt],
 	);
 	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
 	if (turnBaselineRef.current.sid !== activeSessionId) {
-		turnBaselineRef.current = { sid: activeSessionId, count: turnTimings.length };
+		turnBaselineRef.current = {
+			sid: activeSessionId,
+			count: turnTimings.length,
+		};
 	}
 	const enteringTurn =
 		turnTimings.length > turnBaselineRef.current.count
@@ -208,7 +232,9 @@ export function MessageList() {
 	const renderedFromRef = useRef(renderedFrom);
 	renderedFromRef.current = renderedFrom;
 	/** 补挂前的锚点：旧首行元素 + 它的视口相对 top。DOM 更新后若浏览器滚动锚定没把它钉住，用它补差 */
-	const prependAnchorRef = useRef<{ el: Element; viewportTop: number } | null>(null);
+	const prependAnchorRef = useRef<{ el: Element; viewportTop: number } | null>(
+		null,
+	);
 
 	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
 	const requestEarlierRows = () => {
@@ -320,7 +346,9 @@ export function MessageList() {
 		<div className="relative h-full">
 			{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
 			    凸显动画本体（用户规格：工作中不看文字）；pointer-events-none 不拦截交互 */}
-			{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
+			{centerOrbEnabled && nativeUi.workingVisible !== false && (
+				<CenterOrb visible={shownWorking} />
+			)}
 			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
 			{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
 			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
@@ -353,7 +381,11 @@ export function MessageList() {
 					type="button"
 					onClick={() => {
 						updateFollowing(true);
-						pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+						pinToBottom(
+							window.matchMedia("(prefers-reduced-motion: reduce)").matches
+								? "auto"
+								: "smooth",
+						);
 					}}
 					className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-ui-12 leading-[calc(1_/_0.75)] text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"
 					aria-label={t("message.scrollToBottom")}

@@ -82,14 +82,18 @@ async function fixture(t) {
   return { app, api, origin, request };
 }
 
-test("插件与技能清单从 /api/plugins 读取（复数路由）", async (t) => {
+test("已加载资源来自 SDK，Percho UI 插件不误接原生包接口", async (t) => {
   const f = await fixture(t);
-  const plugins = await f.api.uiPluginsList({});
-  assert.ok(Array.isArray(plugins), "uiPlugins:list 必须是数组");
-  // getConfig 需要具体插件 id；无插件时明确报错是正确行为，不是实现缺陷。
+  const session = (await f.api.listAllSessions())[0];
+  const resources = await f.api.getLoadedResources({
+    sessionId: session.sessionId,
+  });
+  assert.ok(Array.isArray(resources.extensions));
+  assert.ok(Array.isArray(resources.skills));
+  assert.ok(Array.isArray(await f.api.listConfiguredPackages()));
   await assert.rejects(
-    () => f.api.uiPluginsGetConfig({}),
-    /插件未声明 Web 配置表单|接口不存在|插件/,
+    () => f.api.uiPluginsList({}),
+    (error) => error.code === "HOST_API_UNSUPPORTED",
   );
 });
 
@@ -116,7 +120,8 @@ test("provider 写入自带 revision 围栏", async (t) => {
 test("MCP 与权限只读通道返回可用数据", async (t) => {
   const f = await fixture(t);
   const mcp = await f.api.mcpConfigList({});
-  assert.ok(Array.isArray(mcp));
+  assert.ok(Array.isArray(mcp.global));
+  assert.ok(Array.isArray(mcp.project));
 
   const config = await f.api.getPermissionConfig({});
   assert.equal(config.enabled, true);
@@ -132,7 +137,7 @@ test("未实现通道保持可诊断的拒绝，且原因非空", async (t) => {
     ["uiPluginsAssignSlot", "uiPlugins:assignSlot"],
     ["checkForUpdates", "update:check"],
     ["getContextManagerConfig", "contextManager:getConfig"],
-    ["listConfiguredPackages", "packages:listConfigured"],
+    ["uiPluginsGetConfig", "uiPlugins:getConfig"],
   ]) {
     await assert.rejects(
       () => f.api[method]({}),

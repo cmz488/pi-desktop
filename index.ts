@@ -146,10 +146,11 @@ export default function piDesktop(pi: ExtensionAPI) {
           id: model.id,
           name: model.name,
           api: model.api,
+          input: model.input,
+          thinkingLevels: getSupportedThinkingLevels(model),
         })),
       capabilities: {
         sessions: true,
-        remote: true,
         reload: true,
         auth: false,
         marketplace: true,
@@ -320,7 +321,7 @@ export default function piDesktop(pi: ExtensionAPI) {
       autoPort: !process.env.PI_DESK_PORT,
       capabilities: {
         sessions: true,
-        remote: true,
+        sessionExport: true,
         newSession: true,
         switchSession: true,
         sessionCommand: true,
@@ -451,9 +452,20 @@ export default function piDesktop(pi: ExtensionAPI) {
           await runNativePackageAction(manager, settings, input);
           packageInventory = undefined;
         }),
+      sessionExport: () =>
+        host.request(
+          async (ctx) => ({
+            header: ctx.sessionManager.getHeader(),
+            entries: ctx.sessionManager.getEntries(),
+          }),
+          { exclusive: false },
+        ),
       listSessions: async () =>
         (await sessions()).slice(0, 100).map((entry) => ({
           id: entry.id,
+          path: entry.path,
+          cwd: entry.cwd,
+          createdAt: entry.created,
           name: entry.name ?? entry.firstMessage ?? "会话",
           modified: entry.modified,
           messageCount: entry.messageCount,

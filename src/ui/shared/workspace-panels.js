@@ -49,6 +49,8 @@ export function createWorkspacePanels({
 }) {
   const tabs = new Map(),
     calls = new Map();
+  const lifetime = new AbortController();
+  let disposed = false;
   let intent = 0;
   let selected,
     native = false,
@@ -193,6 +195,12 @@ export function createWorkspacePanels({
     localStorage.setItem(storageKey, JSON.stringify(recent));
   }
   function nativeCommand(action, extra = {}) {
+    if (window.piDesk?.browserCommand)
+      return window.piDesk.browserCommand({
+        action,
+        id: active()?.id,
+        ...extra,
+      });
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -211,11 +219,14 @@ export function createWorkspacePanels({
     });
   }
   function layout(force = false) {
+    if (disposed) return;
     const tab = active();
     const visible =
       tab?.kind === "web" &&
       !pane.inert &&
-      !document.querySelector("dialog[open]") &&
+      ![...document.querySelectorAll("dialog[open]")].some(
+        (dialog) => !dialog.contains(pane),
+      ) &&
       !document.body.classList.contains("settings-open") &&
       viewport.getBoundingClientRect().width > 0;
     if (agentBrowser) {
@@ -253,7 +264,15 @@ export function createWorkspacePanels({
     subtree: true,
     attributeFilter: ["class", "hidden", "open"],
   });
-  window.addEventListener("resize", () => layout(true));
+  window.addEventListener("resize", () => layout(true), {
+    signal: lifetime.signal,
+  });
+  const browserOff = window.piDesk?.onBrowserState?.((state) =>
+    window.postMessage(
+      { type: "pi-desktop:browser-state", state },
+      location.origin,
+    ),
+  );
   function add(tab) {
     intent++;
     if (tabs.size >= 12) {
@@ -844,63 +863,87 @@ export function createWorkspacePanels({
       filePicker.value = "";
     }
   };
-  window.addEventListener("message", (event) => {
-    if (event.origin !== location.origin || event.source !== window.parent)
-      return;
-    if (event.data?.type === "pi-desktop:browser-response") {
-      const call = calls.get(event.data.requestId);
-      if (!call) return;
-      clearTimeout(call.timer);
-      calls.delete(event.data.requestId);
-      event.data.error
-        ? call.reject(new Error(event.data.error))
-        : call.resolve(event.data.result);
-    }
-    if (event.data?.type === "pi-desktop:browser-state") {
-      const data = event.data.state,
-        tab = tabs.get(data.id);
-      if (!tab || tab.kind !== "web") return;
-      Object.assign(tab, {
-        ...data,
-        url: data.url || tab.url,
-        title: data.title || tab.title,
-      });
-      record(tab.url, tab.title);
-      const label = strip.querySelector(`[data-panel-tab="${tab.id}"]`);
-      if (label) {
-        label.textContent = tab.title || new URL(tab.url).hostname;
-        label.title = tab.title;
+  window.addEventListener(
+    "message",
+    (event) => {
+      if (event.origin !== location.origin || event.source !== window.parent)
+        return;
+      if (event.data?.type === "pi-desktop:browser-response") {
+        const call = calls.get(event.data.requestId);
+        if (!call) return;
+        clearTimeout(call.timer);
+        calls.delete(event.data.requestId);
+        event.data.error
+          ? call.reject(new Error(event.data.error))
+          : call.resolve(event.data.result);
       }
-      if (tab.id === selected) {
-        input.value = tab.url || input.value;
-        back.disabled = !tab.back;
-        forward.disabled = !tab.forward;
-        report(tab.error || (tab.loading ? "正在加载…" : ""));
+      if (event.data?.type === "pi-desktop:browser-state") {
+        const data = event.data.state,
+          tab = tabs.get(data.id);
+        if (!tab || tab.kind !== "web") return;
+        Object.assign(tab, {
+          ...data,
+          url: data.url || tab.url,
+          title: data.title || tab.title,
+        });
+        record(tab.url, tab.title);
+        const label = strip.querySelector(`[data-panel-tab="${tab.id}"]`);
+        if (label) {
+          label.textContent = tab.title || new URL(tab.url).hostname;
+          label.title = tab.title;
+        }
+        if (tab.id === selected) {
+          input.value = tab.url || input.value;
+          back.disabled = !tab.back;
+          forward.disabled = !tab.forward;
+          report(tab.error || (tab.loading ? "正在加载…" : ""));
+        }
       }
-    }
-    if (event.data?.type === "pi-desktop:panel-visibility") layout(true);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (
-      !(event.ctrlKey || event.metaKey) ||
-      document.body.classList.contains("settings-open")
-    )
-      return;
-    if (event.key.toLowerCase() === "p") {
-      event.preventDefault();
-      void openDirectory("");
-    }
-    if (event.shiftKey && event.key.toLowerCase() === "g") {
-      event.preventDefault();
-      openBuiltin("review");
-      document.dispatchEvent(new CustomEvent("pi-desktop:open-git"));
-    }
-  });
+      if (event.data?.type === "pi-desktop:panel-visibility") layout(true);
+    },
+    { signal: lifetime.signal },
+  );
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        document.body.classList.contains("settings-open")
+      )
+        return;
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        void openDirectory("");
+      }
+      if (event.shiftKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        openBuiltin("review");
+        document.dispatchEvent(new CustomEvent("pi-desktop:open-git"));
+      }
+    },
+    { signal: lifetime.signal },
+  );
   const initial = { id: crypto.randomUUID(), kind: "home", title: "新标签页" };
   tabs.set(initial.id, initial);
   selected = initial.id;
   render();
   return {
+    openDirectory,
+    dispose() {
+      disposed = true;
+      lifetime.abort();
+      resize.disconnect();
+      observe.disconnect();
+      browserOff?.();
+      browserView.close();
+      if (native)
+        void nativeCommand("hide").catch((error) => report(error.message));
+      for (const call of calls.values()) {
+        clearTimeout(call.timer);
+        call.reject(new Error("工作台已关闭"));
+      }
+      calls.clear();
+    },
     get rendering() {
       return rendering;
     },

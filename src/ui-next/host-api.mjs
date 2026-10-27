@@ -80,6 +80,7 @@ export function buildHostApi({
   subscriptionSupport,
   subscribe,
   platform = "linux",
+  desktop = globalThis.window?.piDesk,
 }) {
   const unsupportedChannel = (channel) => {
     const row = support[channel];
@@ -97,7 +98,10 @@ export function buildHostApi({
       if (row?.status !== "implemented") throw unsupportedChannel(channel);
       const handler = handlers[channel];
       if (typeof handler !== "function")
-        throw new HostApiUnsupported(channel, "支持表标记为已实现但缺少处理函数");
+        throw new HostApiUnsupported(
+          channel,
+          "支持表标记为已实现但缺少处理函数",
+        );
       return handler(args ?? {});
     };
   }
@@ -126,8 +130,9 @@ export function buildHostApi({
   }
 
   api.platform = platform;
+  api.supports = (channel) => support[channel]?.status === "implemented";
   // Percho 的 renderer 用 `getPathForFile` 处理拖入文件的路径；GUI 宿主没有真实文件路径。
-  api.getPathForFile = () => undefined;
+  api.getPathForFile = (file) => desktop?.filePath?.(file) ?? "";
   /**
    * `forEnvironment(ref)`：Percho 多环境版的执行入口。
    *
@@ -140,7 +145,10 @@ export function buildHostApi({
     Object.fromEntries(
       [...unsupportedSubscriptions.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, used]) => [name, { used, reason: subscriptionSupport[name].reason }]),
+        .map(([name, used]) => [
+          name,
+          { used, reason: subscriptionSupport[name].reason },
+        ]),
     );
   return api;
 }

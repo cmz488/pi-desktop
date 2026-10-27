@@ -253,6 +253,8 @@ function presentation(value) {
     ? { mode: "state", key: value.key.slice(0, 160) }
     : { mode: "message" };
 }
+// SDK widgets are bounded by ui-context to 40 lines of at most 400 units each.
+const MAX_WIDGET_BODY_UNITS = 16_000;
 function normalizeCard(card) {
   if (!asRecord(card) || typeof card.title !== "string") return null;
   const items = Array.isArray(card.items)
@@ -282,7 +284,8 @@ function normalizeCard(card) {
     label: text(card.label ?? "扩展", 48),
     title: text(card.title, 1200),
     status: text(card.status, 48),
-    body: text(card.body, 1200),
+    body: text(card.body, card.widget === true ? MAX_WIDGET_BODY_UNITS : 1200),
+    ...(card.widget === true ? { widget: true } : {}),
     items,
     progress,
     metrics: Array.isArray(card.metrics)
@@ -595,6 +598,19 @@ const goalPanel = {
 
 /** Extensions can emit details.piDesktop v1 without registering UI code. */
 function genericCardView(message) {
+  if (
+    message.role === "custom" &&
+    message.customType === "pi-widget" &&
+    message.details?.key !== "goal" &&
+    Array.isArray(message.details?.lines)
+  )
+    return normalizeCard({
+      widget: true,
+      label: "扩展组件",
+      title: String(message.details.key ?? "组件"),
+      body: message.details.lines.join("\n"),
+      presentation: { mode: "state", key: `widget:${message.details.key}` },
+    });
   const card = asRecord(asRecord(message.details)?.piDesktop);
   return card?.version === 1 ? normalizeCard(card) : null;
 }

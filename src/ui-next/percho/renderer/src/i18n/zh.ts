@@ -235,9 +235,21 @@ export const zh = {
 		noMatch: "没有匹配的命令",
 		argPlaceholder: "输入参数…",
 		builtin: {
-			compact: { label: "压缩", description: "压缩会话上下文", argumentHint: "[关注重点]" },
-			name: { label: "重命名", description: "设置会话名称", argumentHint: "<名称>" },
-			export: { label: "导出", description: "导出会话（.html/.jsonl）", argumentHint: "[路径]" },
+			compact: {
+				label: "压缩",
+				description: "压缩会话上下文",
+				argumentHint: "[关注重点]",
+			},
+			name: {
+				label: "重命名",
+				description: "设置会话名称",
+				argumentHint: "<名称>",
+			},
+			export: {
+				label: "导出",
+				description: "导出会话（.html/.jsonl）",
+				argumentHint: "[路径]",
+			},
 			settings: {
 				label: "设置",
 				description: "打开设置",
@@ -420,6 +432,9 @@ export const zh = {
 		delete: "删除会话",
 		deleteTitle: "删除会话？",
 		deleteDesc: "该会话的记录与文件会被永久删除，无法恢复。",
+		archive: "归档会话",
+		archiveTitle: "归档此会话？",
+		archiveDesc: "将停止空闲会话的进程并归档记录。历史不会删除，可从 Pi 工作台恢复。",
 	},
 	sidebar: {
 		title: "导航",

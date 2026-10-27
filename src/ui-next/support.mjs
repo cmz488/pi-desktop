@@ -26,7 +26,7 @@ export const UI_SUPPORT = Object.freeze({
   "session:abort": implemented("/api/abort"),
   "session:setModel": implemented("/api/model"),
   "session:setThinkingLevel": implemented("/api/thinking"),
-  "session:compact": implemented("/api/workspace/command"),
+  "session:compact": implemented("/api/prompt"),
   "session:fork": implemented("/api/workspace/command"),
   "session:stats": implemented("/api/state"),
   "session:getContextUsage": implemented("/api/state"),
@@ -35,9 +35,7 @@ export const UI_SUPPORT = Object.freeze({
   "session:getPendingInteractions": implemented("/api/interactions"),
   "session:listSlashCommands": implemented("/api/commands"),
   "session:listSlashCommandsForCwd": implemented("/api/commands"),
-  "session:getLoadedResources": unsupported(
-    "尚未接入：Host 有对应路由（/api/plugin-resources），但通道的请求／响应形状还没实测核实",
-  ),
+  "session:getLoadedResources": implemented("/api/state"),
   "session:historyReady": unsupported(
     "我们的会话装载以 HTTP 快照为单位，没有 Percho 的 history-ready ACK 协议",
   ),
@@ -54,10 +52,8 @@ export const UI_SUPPORT = Object.freeze({
     "队列由 Durable 拥有，没有公开读取入口",
   ),
   "session:setName": implemented("/api/workspace/command"),
-  "session:export": unsupported("会话导出走 workspace 命令，通道名未对齐"),
-  "session:recall": unsupported(
-    "撤回走 workspace rewind 命令，语义与 Percho recall 不同",
-  ),
+  "session:export": implemented("/api/session-export"),
+  "session:recall": implemented("/api/command"),
   "session:getChannelSubscriptionSessionIds":
     unsupported("我们没有频道订阅模型"),
   "session:getChannelSubscriptions": unsupported("我们没有频道订阅模型"),
@@ -71,24 +67,24 @@ export const UI_SUPPORT = Object.freeze({
   "project:ensureTrust": implemented("/api/project-trust"),
   "project:getGitBranch": implemented("/api/git"),
   "project:listGitBranches": implemented("/api/git"),
-  "project:checkoutBranch": implemented("/api/command"),
-  "project:validateDirectory": implemented("/api/workspace/command"),
+  "project:checkoutBranch": implemented("/api/git"),
+  "project:validateDirectory": implemented("/api/workspace/validate-directory"),
 
   // ── 包与 MCP ────────────────────────────────────────────────────────────
   "packages:searchCatalog": implemented("/api/package-catalog"),
-  "packages:listConfigured": unsupported(
-    "Host 的 /api/package 只接受写操作（install/remove），没有配置清单读取端",
-  ),
+  "packages:listConfigured": implemented("/api/plugins"),
   "packages:install": implemented("/api/package"),
   "packages:remove": implemented("/api/package"),
   "mcp:configList": implemented("/api/mcp"),
-  "mcp:configUpsert": implemented("/api/mcp-action"),
-  "mcp:configRemove": implemented("/api/mcp-action"),
-  "mcp:configReload": implemented("/api/mcp"),
+  "mcp:configUpsert": implemented("/api/mcp"),
+  "mcp:configRemove": implemented("/api/mcp"),
+  "mcp:configReload": implemented("/api/reload"),
 
   // ── 交互与权限 ──────────────────────────────────────────────────────────
   "extension-dialog:respond": implemented("/api/interaction-reply"),
-  "trust:respond": implemented("/api/project-trust"),
+  "trust:respond": unsupported(
+    "项目信任在当前项目上明确确认，不产生 Percho trust request ID",
+  ),
   "permission:respond": unsupported(
     "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
   ),
@@ -99,19 +95,21 @@ export const UI_SUPPORT = Object.freeze({
   // ── 设置 ────────────────────────────────────────────────────────────────
   "settings:listProviders": implemented("/api/providers"),
   "settings:saveApiKey": implemented("/api/provider"),
-  "settings:removeCredential": implemented("/api/provider-remove"),
+  "settings:removeCredential": implemented("/api/auth-logout"),
   "settings:addCustomProvider": implemented("/api/provider"),
   "settings:updateCustomProvider": implemented("/api/provider"),
   "settings:removeCustomProvider": implemented("/api/provider-remove"),
   "settings:loginStart": implemented("/api/auth-start"),
-  "settings:loginCancel": implemented("/api/auth-logout"),
+  "settings:loginCancel": implemented("/api/interaction-reply"),
   "settings:getModelPrefs": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setProviderModelsHidden":
     unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setProviderBaseUrl": implemented("/api/provider"),
-  "settings:testProvider": implemented("/api/refresh-models"),
+  "settings:testProvider": unsupported(
+    "宿主没有模型连通性测试；刷新目录不能代替测试",
+  ),
   "settings:setSubagentModel": unsupported(
     "子代理模型选择随 workspace configure，没有独立通道",
   ),
@@ -120,7 +118,9 @@ export const UI_SUPPORT = Object.freeze({
   ),
   "settings:setSubagentPreferBuiltin":
     unsupported("我们没有内置／原生子代理二选一开关"),
-  "settings:listSubagents": implemented("/api/subagent-history"),
+  "settings:listSubagents": unsupported(
+    "子代理运行记录在原生任务工作台中，不是 Percho 的代理定义清单",
+  ),
   "settings:loginRespond": implemented("/api/interaction-reply"),
 
   // ── 上下文管理／频道观察 ────────────────────────────────────────────────
@@ -130,14 +130,12 @@ export const UI_SUPPORT = Object.freeze({
   "channelWatch:setEnabled": unsupported("我们没有频道观察配置"),
 
   // ── 桌面外壳（Electron / preload 拥有） ─────────────────────────────────
-  "project:pickDirectory": unsupported(
-    "目录选择是 Electron 原生能力，不在 Host HTTP 上",
-  ),
-  "file:saveDialog": unsupported("保存对话框是 Electron 原生能力"),
-  "app:openExternal": unsupported("外部链接由桌面壳处理"),
+  "project:pickDirectory": implemented("/api/workspace/directory"),
+  "file:saveDialog": { ...implemented("browser.download"), runtime: "browser" },
+  "app:openExternal": { ...implemented("window.open"), runtime: "browser" },
   "app:openPath": unsupported("在文件管理器中打开是桌面壳能力"),
   "app:revealPath": unsupported("定位文件是桌面壳能力"),
-  "app:getInfo": unsupported("应用信息由桌面壳提供"),
+  "app:getInfo": { ...implemented("package.json"), runtime: "browser" },
   "app:getDailyDir": implemented("/api/daily-dir"),
   "app:resolvePath": unsupported("路径解析由桌面壳提供"),
   "app:setQuitGuard": unsupported("退出确认是桌面壳行为"),
@@ -161,11 +159,13 @@ export const UI_SUPPORT = Object.freeze({
   ),
 
   // ── UI 插件 ─────────────────────────────────────────────────────────────
-  "uiPlugins:getConfig": implemented("/api/plugin-config"),
-  "uiPlugins:setEnabled": implemented("/api/plugin"),
-  "uiPlugins:list": implemented("/api/plugin"),
-  "uiPlugins:readCode": implemented("/api/plugin-resources"),
-  "uiPlugins:setPluginEnabled": implemented("/api/plugin"),
+  "uiPlugins:getConfig": unsupported(
+    "Pi 扩展由原生资源工作台管理，不执行 Percho UI 插件",
+  ),
+  "uiPlugins:setEnabled": unsupported("Pi 扩展由原生资源工作台管理"),
+  "uiPlugins:list": unsupported("Pi 扩展清单不是 Percho UI 插件清单"),
+  "uiPlugins:readCode": unsupported("此宿主不加载 Percho UI 插件代码"),
+  "uiPlugins:setPluginEnabled": unsupported("Pi 扩展由原生资源工作台管理"),
   "uiPlugins:assignSlot": unsupported("我们没有 Percho 的 UI 插件运行时"),
   "uiPlugins:rebuild": unsupported("我们没有 Percho 的 UI 插件运行时"),
   "uiPlugins:openDir": unsupported("我们没有 Percho 的 UI 插件运行时"),
@@ -236,7 +236,7 @@ export const UI_SUBSCRIPTION_SUPPORT = Object.freeze({
   ),
   onStorageStartup: unsupported("我们没有首启数据迁移步骤"),
   onRemoteConnectionStatus: unsupported("我们的远程路线由手机端方案取代"),
-  onProviderLoginEvent: unsupported("登录事件走 /api/events 的其它类型"),
+  onProviderLoginEvent: implemented("/api/interactions"),
   onChannelSubscriptionsChanged: unsupported("我们没有频道订阅模型"),
   onUiPluginsEvent: unsupported("我们没有 Percho 的 UI 插件运行时"),
   onQuitRequested: unsupported("退出确认是桌面壳行为"),

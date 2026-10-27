@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useSessionBusy, useSessionReadOnly } from "../../hooks/use-session-state";
+import {
+	useSessionBusy,
+	useSessionReadOnly,
+} from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { CopyActionIcon, CopyCheckIcon, ForkIcon, UndoIcon } from "../icons";
@@ -30,13 +33,23 @@ export function CopyButton({ text }: { text: string }) {
 			aria-label={copied ? t("message.copied") : t("message.copy")}
 			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
 		>
-			{copied ? <CopyCheckIcon className="text-green-500" /> : <CopyActionIcon />}
+			{copied ? (
+				<CopyCheckIcon className="text-green-500" />
+			) : (
+				<CopyActionIcon />
+			)}
 		</button>
 	);
 }
 
 /** 分叉按钮：以该 assistant 消息为结尾生成新会话并切换；agent 运行、压缩或分叉中禁用 */
-export function ForkButton({ entryId, matchText }: { entryId?: string; matchText: string }) {
+export function ForkButton({
+	entryId,
+	matchText,
+}: {
+	entryId?: string;
+	matchText: string;
+}) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const sessionBusy = useSessionBusy(activeSessionId);
@@ -44,13 +57,20 @@ export function ForkButton({ entryId, matchText }: { entryId?: string; matchText
 	const [forking, setForking] = useState(false);
 	// 只读会话（subagent 检视）不提供分叉
 	const readOnly = useSessionReadOnly();
-	if (readOnly) return null;
+	const branching = useSessionsStore(
+		(s) =>
+			s.sessions.find((row) => row.sessionId === s.activeSessionId)
+				?.branching !== false,
+	);
+	if (readOnly || !branching) return null;
 
 	const handleFork = () => {
 		if (forking || sessionBusy) return;
 		setForking(true);
 		// entryId 精确定位（历史消息）；流式刚提交的消息无 entryId，按正文文本兜底匹配
-		void forkSession(entryId ? { entryId } : { text: matchText }).finally(() => setForking(false));
+		void forkSession(entryId ? { entryId } : { text: matchText }).finally(() =>
+			setForking(false),
+		);
 	};
 
 	return (
@@ -83,15 +103,22 @@ export function RecallButton({
 	const [recalling, setRecalling] = useState(false);
 	// 只读会话（subagent 检视）不提供撤回
 	const readOnly = useSessionReadOnly();
-	if (readOnly) return null;
+	const branching = useSessionsStore(
+		(s) =>
+			s.sessions.find((row) => row.sessionId === s.activeSessionId)
+				?.branching !== false,
+	);
+	if (readOnly || !branching) return null;
 
 	const handleRecall = () => {
 		if (recalling || sessionBusy) return;
 		setRecalling(true);
 		// entryId 精确定位（历史消息）；实时消息无 entryId，按持久化文本+时间戳兑底匹配
-		void recallMessage({ entryId, text: matchText || undefined, timestamp }).finally(() =>
-			setRecalling(false),
-		);
+		void recallMessage({
+			entryId,
+			text: matchText || undefined,
+			timestamp,
+		}).finally(() => setRecalling(false));
 	};
 
 	return (

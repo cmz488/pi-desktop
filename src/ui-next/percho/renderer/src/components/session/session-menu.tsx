@@ -31,7 +31,9 @@ export function canOpenSessionMenu(session: SessionMeta | undefined): boolean {
  * - `session`：普通真实会话的完整菜单；
  * - `none`：找不到会话或只读子会话，不给菜单。
  */
-export function sidebarMenuKind(session: SessionMeta | undefined): "session" | "none" {
+export function sidebarMenuKind(
+	session: SessionMeta | undefined,
+): "session" | "none" {
 	return canOpenSessionMenu(session) ? "session" : "none";
 }
 
@@ -70,7 +72,9 @@ export function renameSession(sessionId: string, name: string): void {
 
 /** 复制诊断信息（纯文本，用户直接贴给 agent 排查）：剪贴板不可用（权限/非安全上下文）时静默不报错，
  *  成功也不弹 toast —— 与项目页会话行同语义（阶段 3 已把项目页退役，这里是唯一实现） */
-export async function copySessionDiagnostics(session: SessionMeta): Promise<void> {
+export async function copySessionDiagnostics(
+	session: SessionMeta,
+): Promise<void> {
 	try {
 		// 版本经既有 AppGetInfo 通道取（无专用 getVersion IPC）；失败不阻塞其余字段
 		const info = await getPi()
@@ -96,10 +100,16 @@ export function sessionMenuItems(
 		onRename: () => void;
 		onCopyDiagnostics?: () => void;
 		onDelete?: () => void;
+		deleteLabel?: string;
 	},
 ): ContextMenuItem[] {
 	return [
-		{ key: "rename", label: t("tabbar.rename"), icon: <PencilIcon size={13} />, onSelect: options.onRename },
+		{
+			key: "rename",
+			label: t("tabbar.rename"),
+			icon: <PencilIcon size={13} />,
+			onSelect: options.onRename,
+		},
 		{
 			key: "pin",
 			label: options.pinned ? t("tabbar.unpin") : t("tabbar.pin"),
@@ -120,7 +130,7 @@ export function sessionMenuItems(
 			? [
 					{
 						key: "delete",
-						label: t("sessionMenu.delete"),
+						label: options.deleteLabel ?? t("sessionMenu.delete"),
 						icon: <TrashIcon size={13} />,
 						separatorBefore: true,
 						danger: true,

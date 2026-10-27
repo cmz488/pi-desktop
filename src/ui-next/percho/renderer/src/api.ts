@@ -6,6 +6,15 @@ declare global {
 	}
 }
 
+/** Optional Percho services must not be probed against unrelated native endpoints. */
+export function supportsHostChannel(channel: string): boolean {
+	return (
+		(getPi() as PiApi & { supports?: (channel: string) => boolean }).supports?.(
+			channel,
+		) ?? true
+	);
+}
+
 /** window.pi 类型化访问（未在 preload 注入时给出可读错误） */
 export function getPi(): PiApi {
 	if (!window.pi) {

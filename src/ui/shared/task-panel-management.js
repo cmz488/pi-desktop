@@ -28,6 +28,7 @@ export function createTaskPanelManagement({
   capture,
   isCurrent,
   canManage,
+  drafts: savedDrafts,
 }) {
   let owner = "",
     selected = "",
@@ -43,7 +44,7 @@ export function createTaskPanelManagement({
     launching = false,
     launchRequest,
     inspectionEpoch = 0;
-  const drafts = new Map();
+  const drafts = savedDrafts ?? new Map();
   const inspector = createSessionPanelLoader({
     read: (id, options) => fetchDetail(owner, Number(id), options),
     onChange: paint,
@@ -411,7 +412,7 @@ export function createTaskPanelManagement({
     dispose() {
       this.reset();
       inspector.dispose();
-      drafts.clear();
+      if (!savedDrafts) drafts.clear();
     },
   };
 }

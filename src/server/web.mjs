@@ -1,3 +1,5 @@
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
+import { loadedResources } from "../resources/loaded-resources.mjs";
 import { createApprovalExtension } from "../agent/pi-permissions.mjs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -545,6 +547,7 @@ export async function startWebSlot(options = {}) {
         workingVisible: uiState.workingVisible,
         hiddenThinkingLabel: uiState.hiddenThinkingLabel,
         toolsExpanded: uiState.toolsExpanded,
+        toolsExpansionVersion: uiState.toolsExpansionVersion,
         title: uiState.title,
         autocompleteProviders: uiState.autocompleteProviders,
         // 声明层级 + 本次会话实际触达的降级／拒绝成员。
@@ -588,6 +591,8 @@ export async function startWebSlot(options = {}) {
           id: model.id,
           name: model.name,
           api: model.api,
+          input: model.input,
+          thinkingLevels: getSupportedThinkingLevels(model),
         })),
       messages: current.sessionManager
         .getBranch()
@@ -619,7 +624,11 @@ export async function startWebSlot(options = {}) {
         commands: true,
         attachments: attachmentLimits,
       },
-      extra: { widgets },
+      extra: {
+        widgets,
+        sessionFile: current.sessionManager.getSessionFile(),
+        loadedResources: loadedResources(session()),
+      },
     });
   };
   async function exclusive(run) {
@@ -706,6 +715,7 @@ export async function startWebSlot(options = {}) {
       newSession: true,
       switchSession: true,
       sessionCommand: false,
+      sessionExport: true,
       canManageSessions: false,
       packageManagement: true,
       packageUpdates:
@@ -912,6 +922,10 @@ export async function startWebSlot(options = {}) {
         },
       );
     },
+    sessionExport: () => ({
+      header: session().sessionManager.getHeader(),
+      entries: session().sessionManager.getEntries(),
+    }),
     listSessions: async () => {
       const entries = await SessionManager.list(
         runtime.cwd,
@@ -919,6 +933,9 @@ export async function startWebSlot(options = {}) {
       );
       return entries.slice(0, 100).map((entry) => ({
         id: entry.id,
+        path: entry.path,
+        cwd: entry.cwd,
+        createdAt: entry.created,
         name: entry.name ?? entry.firstMessage ?? "会话",
         modified: entry.modified,
         messageCount: entry.messageCount,

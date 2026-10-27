@@ -28,6 +28,7 @@ export function createTaskPanel({
   command,
   toast,
   currentSession,
+  drafts,
 }) {
   const CONFIRM_MS = 4000;
   let armed;
@@ -49,6 +50,7 @@ export function createTaskPanel({
     capture: () => loader.capture(),
     isCurrent: (identity) => loader.isCurrent(identity),
     canManage: () => loader.canManage,
+    drafts,
   });
 
   const element = (tag, className, text) => {

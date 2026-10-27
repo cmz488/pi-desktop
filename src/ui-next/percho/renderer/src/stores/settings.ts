@@ -1,3 +1,4 @@
+import { supportsHostChannel } from "../api";
 import type {
 	ContextManagerMode,
 	CustomProviderInput,
@@ -86,10 +87,22 @@ interface SettingsStore {
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	/** 内置 provider 的可选 baseUrl 覆写（留空 = 清除覆写回官方） */
-	setProviderBaseUrl: (providerId: string, baseUrl: string, apiKey?: string) => Promise<void>;
+	setProviderBaseUrl: (
+		providerId: string,
+		baseUrl: string,
+		apiKey?: string,
+	) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
-	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
-	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
+	setModelHidden: (
+		provider: string,
+		modelId: string,
+		hidden: boolean,
+	) => Promise<void>;
+	setModelsHidden: (
+		provider: string,
+		modelIds: string[],
+		hidden: boolean,
+	) => Promise<void>;
 	setProviderModelsHidden: (provider: string, hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
 	/** 逐代理思考深度覆盖；null = 跟随 agent 定义 */
@@ -116,7 +129,10 @@ interface CatalogPayload {
  *  剥掉它只留后端原文 —— 表单校验提示（provider ID 非法 / 旧 provider 已改名 等）才读得懂 */
 function errorMessage(error: unknown): string {
 	const raw = error instanceof Error ? error.message : String(error);
-	return raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, "");
+	return raw.replace(
+		/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/,
+		"",
+	);
 }
 
 /**
@@ -136,7 +152,11 @@ function errorMessage(error: unknown): string {
 function createCatalogCoordinator(deps: {
 	load: (kind: "local" | "network") => Promise<CatalogPayload>;
 	publish: (payload: CatalogPayload) => void;
-	setFlags: (flags: { loading?: boolean; refreshing?: boolean; error?: string | null }) => void;
+	setFlags: (flags: {
+		loading?: boolean;
+		refreshing?: boolean;
+		error?: string | null;
+	}) => void;
 }) {
 	type Kind = "local" | "network";
 	/** `token` = 该次请求的全局号：多个入口 await 同一个在途请求时，调用方靠它去重「每个有效发布只做一次副作用」 */
@@ -236,6 +256,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 		};
 		const readPrefs = () =>
 			enqueuePrefs(async () => {
+				if (!supportsHostChannel("settings:getModelPrefs")) return;
 				confirmedPrefs = await getExecutionApi(environment).getModelPrefs();
 				publishPrefs();
 			});
@@ -303,6 +324,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 		 */
 		let subagentsSeq = 0;
 		const loadSubagents = async (): Promise<void> => {
+			if (!supportsHostChannel("settings:listSubagents")) return;
 			const token = ++subagentsSeq;
 			try {
 				const subagents = await getExecutionApi(environment).listSubagents();
@@ -317,15 +339,25 @@ function createSettingsStore(environment: EnvironmentRef) {
 			const activeSessionId = useSessionsStore.getState().activeSessionId;
 			if (
 				!activeSessionId ||
-				!sameEnvironment(environmentEntityRef(activeSessionId).environment, environment)
+				!sameEnvironment(
+					environmentEntityRef(activeSessionId).environment,
+					environment,
+				)
 			) {
-				set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
+				set({
+					skills: null,
+					skillDiagnostics: [],
+					extensions: null,
+					extensionErrors: [],
+				});
 				return;
 			}
 			try {
-				const resources = await getExecutionApi(environment).getLoadedResources({
-					sessionId: activeSessionId,
-				});
+				const resources = await getExecutionApi(environment).getLoadedResources(
+					{
+						sessionId: activeSessionId,
+					},
+				);
 				// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
 				if (useSessionsStore.getState().activeSessionId === activeSessionId) {
 					set({
@@ -336,7 +368,11 @@ function createSettingsStore(environment: EnvironmentRef) {
 					});
 				}
 			} catch (error) {
-				pushToast("warning", "toast.loadedResourcesFailed", errorMessage(error));
+				pushToast(
+					"warning",
+					"toast.loadedResourcesFailed",
+					errorMessage(error),
+				);
 			}
 		};
 
@@ -369,7 +405,9 @@ function createSettingsStore(environment: EnvironmentRef) {
 				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
 				.catch(() => {});
 		};
-		const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
+		const loadModelsData = async (
+			mode: "local" | "mutation",
+		): Promise<void> => {
 			void readPrefs().catch((error) =>
 				pushToast("warning", "toast.modelPrefsLoadFailed", errorMessage(error)),
 			);
@@ -498,7 +536,9 @@ function createSettingsStore(environment: EnvironmentRef) {
 				const previous = get().channelWatchEnabled;
 				set({ channelWatchEnabled: enabled });
 				try {
-					await getExecutionApi(environment).setChannelWatchEnabled({ enabled });
+					await getExecutionApi(environment).setChannelWatchEnabled({
+						enabled,
+					});
 				} catch (error) {
 					set({
 						channelWatchEnabled: previous,
@@ -521,7 +561,10 @@ function createSettingsStore(environment: EnvironmentRef) {
 					const lanStatus = await getPi().lanSetEnabled({ enabled });
 					set({ lanStatus, lanSaving: false });
 				} catch (error) {
-					set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+					set({
+						lanSaving: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
 				}
 			},
 
@@ -531,7 +574,10 @@ function createSettingsStore(environment: EnvironmentRef) {
 					const lanStatus = await getPi().lanSetRemoteControl({ enabled });
 					set({ lanStatus, lanSaving: false });
 				} catch (error) {
-					set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+					set({
+						lanSaving: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
 				}
 			},
 
@@ -575,7 +621,9 @@ function createSettingsStore(environment: EnvironmentRef) {
 
 			removeCustom: async (providerId) => {
 				try {
-					await getExecutionApi(environment).removeCustomProvider({ providerId });
+					await getExecutionApi(environment).removeCustomProvider({
+						providerId,
+					});
 					await afterMutation();
 				} catch (error) {
 					set({ error: errorMessage(error) });
@@ -584,7 +632,11 @@ function createSettingsStore(environment: EnvironmentRef) {
 
 			setProviderBaseUrl: async (providerId, baseUrl, apiKey) => {
 				try {
-					await getExecutionApi(environment).setProviderBaseUrl({ providerId, baseUrl, apiKey });
+					await getExecutionApi(environment).setProviderBaseUrl({
+						providerId,
+						baseUrl,
+						apiKey,
+					});
 					await afterMutation();
 				} catch (error) {
 					set({ error: errorMessage(error) });
@@ -595,7 +647,12 @@ function createSettingsStore(environment: EnvironmentRef) {
 			setModelHidden: async (provider, modelId, hidden) =>
 				changePrefs(
 					(prefs) => withModelHidden(prefs, provider, modelId, hidden),
-					() => getExecutionApi(environment).setModelHidden({ provider, modelId, hidden }),
+					() =>
+						getExecutionApi(environment).setModelHidden({
+							provider,
+							modelId,
+							hidden,
+						}),
 					true,
 				),
 
@@ -603,7 +660,12 @@ function createSettingsStore(environment: EnvironmentRef) {
 				const ids = [...modelIds]; // 固定点击时的意图，不受调用方后续数组修改影响
 				return changePrefs(
 					(prefs) => withModelsHidden(prefs, provider, ids, hidden),
-					() => getExecutionApi(environment).setModelsHidden({ provider, modelIds: ids, hidden }),
+					() =>
+						getExecutionApi(environment).setModelsHidden({
+							provider,
+							modelIds: ids,
+							hidden,
+						}),
 					true,
 				);
 			},
@@ -611,14 +673,21 @@ function createSettingsStore(environment: EnvironmentRef) {
 			setProviderModelsHidden: async (provider, hidden) =>
 				changePrefs(
 					(prefs) => withProviderModelsHidden(prefs, provider, hidden),
-					() => getExecutionApi(environment).setProviderModelsHidden({ provider, hidden }),
+					() =>
+						getExecutionApi(environment).setProviderModelsHidden({
+							provider,
+							hidden,
+						}),
 					true,
 				),
 
 			setSubagentModel: async (agent, modelRef) =>
 				changePrefs(
 					(prefs) => {
-						const next = { ...prefs, subagentModels: { ...prefs.subagentModels } };
+						const next = {
+							...prefs,
+							subagentModels: { ...prefs.subagentModels },
+						};
 						if (modelRef) next.subagentModels[agent] = modelRef;
 						else delete next.subagentModels[agent];
 						return next;
@@ -646,15 +715,24 @@ function createSettingsStore(environment: EnvironmentRef) {
 				),
 
 			test: async (providerId) => {
-				set((state) => ({ testResults: { ...state.testResults, [providerId]: "testing" } }));
+				set((state) => ({
+					testResults: { ...state.testResults, [providerId]: "testing" },
+				}));
 				try {
-					const result = await getExecutionApi(environment).testProvider({ providerId });
-					set((state) => ({ testResults: { ...state.testResults, [providerId]: result } }));
+					const result = await getExecutionApi(environment).testProvider({
+						providerId,
+					});
+					set((state) => ({
+						testResults: { ...state.testResults, [providerId]: result },
+					}));
 				} catch (error) {
 					set((state) => ({
 						testResults: {
 							...state.testResults,
-							[providerId]: { ok: false, error: error instanceof Error ? error.message : String(error) },
+							[providerId]: {
+								ok: false,
+								error: error instanceof Error ? error.message : String(error),
+							},
 						},
 					}));
 				}
@@ -664,7 +742,9 @@ function createSettingsStore(environment: EnvironmentRef) {
 }
 
 const stores = new Map<string, ReturnType<typeof createSettingsStore>>();
-export function getSettingsStore(reference: EnvironmentRef = LOCAL_ENVIRONMENT) {
+export function getSettingsStore(
+	reference: EnvironmentRef = LOCAL_ENVIRONMENT,
+) {
 	const environment = environmentRef(reference);
 	const key = environmentKey(environment);
 	let store = stores.get(key);
@@ -676,9 +756,14 @@ export function getSettingsStore(reference: EnvironmentRef = LOCAL_ENVIRONMENT) 
 }
 const localStore = getSettingsStore();
 export const useLocalSettingsStore = localStore;
-function useBoundSettingsStore<T = SettingsStore>(selector?: (state: SettingsStore) => T): T {
+function useBoundSettingsStore<T = SettingsStore>(
+	selector?: (state: SettingsStore) => T,
+): T {
 	const store = getSettingsStore(useEnvironment());
 	return useStore(store, selector ?? ((state) => state as unknown as T));
 }
 // Static access is the local compatibility entry. Environment operations use getSettingsStore(ref).
-export const useSettingsStore = Object.assign(useBoundSettingsStore, localStore);
+export const useSettingsStore = Object.assign(
+	useBoundSettingsStore,
+	localStore,
+);

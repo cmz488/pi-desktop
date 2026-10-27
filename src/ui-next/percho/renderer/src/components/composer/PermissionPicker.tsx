@@ -4,7 +4,6 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { CheckIcon, ShieldIcon, WarningIcon } from "../icons";
-import { Tooltip } from "../ui/Tooltip";
 
 /** 档位定义：glyph / 标题 / 描述（spec permission-mode §6） */
 const MODES: PermissionMode[] = ["default", "fullAccess"];
@@ -23,8 +22,12 @@ export function PermissionPicker() {
 			? (s.newSessionDraft?.permissionMode ?? "default")
 			: (s.permissionModes[s.activeSessionId] ?? "default"),
 	);
-	const setSessionPermissionMode = useSessionsStore((s) => s.setSessionPermissionMode);
-	const setDraftPermissionMode = useSessionsStore((s) => s.setDraftPermissionMode);
+	const setSessionPermissionMode = useSessionsStore(
+		(s) => s.setSessionPermissionMode,
+	);
+	const setDraftPermissionMode = useSessionsStore(
+		(s) => s.setDraftPermissionMode,
+	);
 	const gateOff = useSettingsStore((s) => s.permissionGateOff);
 	const loadPermissionGate = useSettingsStore((s) => s.loadPermissionGate);
 	useEffect(() => {
@@ -49,17 +52,24 @@ export function PermissionPicker() {
 		};
 	}, [open]);
 
+	if (gateOff === true) return null;
+
 	const chip = (
 		<button
 			type="button"
 			className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-ui-12 leading-[calc(1_/_0.75)] transition-colors hover:bg-hover ${
-				mode === "fullAccess" ? "text-warn hover:text-warn" : "text-ink-dim hover:text-ink"
-			} ${gateOff ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
+				mode === "fullAccess"
+					? "text-warn hover:text-warn"
+					: "text-ink-dim hover:text-ink"
+			}`}
 			aria-label={t("composer.permissionMode")}
-			disabled={gateOff === true}
 			onClick={() => setOpen((v) => !v)}
 		>
-			{mode === "fullAccess" ? <WarningIcon size={12} /> : <ShieldIcon size={12} />}
+			{mode === "fullAccess" ? (
+				<WarningIcon size={12} />
+			) : (
+				<ShieldIcon size={12} />
+			)}
 			<span>
 				{mode === "fullAccess" ? t("composer.permissionFullAccess") : t("composer.permissionDefault")}
 			</span>
@@ -68,13 +78,7 @@ export function PermissionPicker() {
 
 	return (
 		<div ref={ref} className="relative">
-			{gateOff === true ? (
-				<Tooltip label={t("composer.permissionGateOff")} align="end">
-					{chip}
-				</Tooltip>
-			) : (
-				chip
-			)}
+			{chip}
 			{open && !gateOff && (
 				<div
 					data-composer-overlay=""

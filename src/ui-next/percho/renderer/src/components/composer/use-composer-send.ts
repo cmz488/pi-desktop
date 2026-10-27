@@ -20,7 +20,8 @@ import {
 } from "../../stores/drafts";
 import { isSessionSynchronizing } from "../../stores/session-event-boundary";
 import { useSessionsStore } from "../../stores/sessions";
-import { useSettingsStore } from "../../stores/settings";
+import { desktopSessions } from "../../pi-http-bridge";
+import { openDesktopWorkbench } from "../native/desktop-navigation";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { buildQuoteBlock } from "./quote";
@@ -40,9 +41,16 @@ export interface UseComposerSendOptions {
  */
 export function useComposerSend(options: UseComposerSendOptions) {
 	const t = useT();
-	const sending = useDraftStore((s) => s.pendingBySession[options.draftKey] === true);
-	const error = useDraftStore((s) => s.errorsBySession[options.draftKey] ?? null);
-	const [feedback, setFeedback] = useState<{ message: string; tone: "info" | "warn" } | null>(null);
+	const sending = useDraftStore(
+		(s) => s.pendingBySession[options.draftKey] === true,
+	);
+	const error = useDraftStore(
+		(s) => s.errorsBySession[options.draftKey] ?? null,
+	);
+	const [feedback, setFeedback] = useState<{
+		message: string;
+		tone: "info" | "warn";
+	} | null>(null);
 	const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	/** 发送的同步锁（见 send-guard.ts：state 挡不住 await 窗口里的重复触发） */
 	const sendGuard = useRef(createSendGuard());
@@ -50,7 +58,10 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 统一信封：发送失败也走 UiError（内联条 + 与消息流错误卡同语言）；传 null 清除 */
 	const setError = (message: string | null, key = options.draftKey) =>
 		useDraftStore.setState((s) => ({
-			errorsBySession: { ...s.errorsBySession, [key]: message ? buildSendUiError(message) : undefined },
+			errorsBySession: {
+				...s.errorsBySession,
+				[key]: message ? buildSendUiError(message) : undefined,
+			},
 		}));
 	const setPending = (key: string, pending: boolean) =>
 		useDraftStore.setState((s) => {
@@ -84,18 +95,16 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */
-	const runSlashCommand = async (content: string, sessionId: string): Promise<boolean> => {
+	const runSlashCommand = async (
+		content: string,
+		sessionId: string,
+	): Promise<boolean> => {
 		const [name, ...rest] = content.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
 		const pi = getExecutionApi(sessionId);
 		switch (name) {
 			case "compact":
-				// 输入框上方不提醒（成功/失败都不提醒）：对话区的压缩分割线已经把「在干什么、成没成」说全了
-				try {
-					await pi.compact({ sessionId, customInstructions: arg || undefined });
-				} catch {
-					// 静默，理由见上
-				}
+				await pi.compact({ sessionId, customInstructions: arg || undefined });
 				return true;
 			case "name":
 				if (arg) {
@@ -112,12 +121,64 @@ export function useComposerSend(options: UseComposerSendOptions) {
 					defaultName: `pi-session-${Date.now()}.${format}`,
 					content: contentOut,
 				});
-				showFeedback(path ? t("slash.feedback.exported", { path }) : t("slash.feedback.exportCancelled"));
+				showFeedback(
+					path
+						? t("slash.feedback.exported", { path })
+						: t("slash.feedback.exportCancelled"),
+				);
 				return true;
 			}
-			case "settings":
-				useSettingsStore.getState().openWith();
+			case "git":
+				openDesktopWorkbench("git", undefined, undefined, sessionId);
 				return true;
+			case "settings":
+				openDesktopWorkbench("settings", "general", undefined, sessionId);
+				return true;
+			case "model":
+			case "models":
+			case "login":
+			case "logout":
+				openDesktopWorkbench("settings", "providers", undefined, sessionId);
+				return true;
+			case "skills":
+			case "mcp":
+				openDesktopWorkbench("settings", name, undefined, sessionId);
+				return true;
+			case "resume":
+			case "sessions":
+				openDesktopWorkbench("agents", undefined, undefined, sessionId);
+				return true;
+			case "new":
+				useSessionsStore.getState().activateNewSessionDraft();
+				return true;
+			case "btw":
+				openDesktopWorkbench("btw", undefined, arg, sessionId);
+				return true;
+			case "help": {
+				const commands = await pi.listSlashCommands({ sessionId });
+				showFeedback(
+					`Enter 发送，Shift+Enter 换行，@ 引用文件。\n${commands.map((row) => `/${row.name} · ${row.description}`).join("\n")}`,
+				);
+				return true;
+			}
+			case "session": {
+				const state = await desktopSessions.state(sessionId);
+				showFeedback(
+					`会话：${sessionId}\n目录：${state.cwd}\n模型：${state.model?.provider ?? ""}/${state.model?.id ?? state.model?.modelId ?? ""}\n原生记录：${state.sessionFile ?? "尚未写入"}`,
+				);
+				return true;
+			}
+			case "copy": {
+				const rows = await pi.getSessionMessages({ sessionId });
+				const text = rows.findLast(
+					(row) => row.role === "assistant" && row.text.trim(),
+				)?.text;
+				if (text) {
+					await navigator.clipboard.writeText(text);
+					showFeedback("已复制最后一条回复");
+				} else showFeedback("当前没有可复制的回复", "warn");
+				return true;
+			}
 			default:
 				// 模板/skill/扩展命令由 SDK 原生处理，原样透传
 				return false;
@@ -160,6 +221,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				!document &&
 				content.startsWith("/") &&
 				draft.images.length === 0 &&
+				(draft.files?.length ?? 0) === 0 &&
 				(await runSlashCommand(content, sessionId))
 			)
 				return;
@@ -168,14 +230,17 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			optimisticId =
 				wasActive || (!document && content.startsWith("/"))
 					? null
-					: useTranscriptStore
-							.getState()
-							.appendOptimisticUser(sessionId, { text: content, images: draft.images, document });
+					: useTranscriptStore.getState().appendOptimisticUser(sessionId, {
+							text: content,
+							images: draft.images,
+							document,
+						});
 			await getExecutionApi(sessionId).prompt({
 				sessionId,
 				text: content,
 				document,
 				images: draft.images.length ? draft.images : undefined,
+				files: draft.files,
 			});
 		} catch (error) {
 			if (sessionId && markedActive) {
@@ -186,9 +251,14 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			restoreRejectedDraft(
 				recoveryKey,
 				draft,
-				!options.activeSessionId && recoveryKey === options.draftKey && generation !== newGeneration,
+				!options.activeSessionId &&
+					recoveryKey === options.draftKey &&
+					generation !== newGeneration,
 			);
-			setError(error instanceof Error ? error.message : String(error), recoveryKey);
+			setError(
+				error instanceof Error ? error.message : String(error),
+				recoveryKey,
+			);
 		} finally {
 			setPending(options.draftKey, false);
 			if (recoveryKey !== options.draftKey) setPending(recoveryKey, false);
@@ -209,20 +279,34 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		// 选区引用置于正文前；文件和 skill 保留在正文原位置。
 		const quoteBlock = buildQuoteBlock(quotes);
 		const body = text.trim();
-		let content = [quoteBlock, slashCommand ? `/${slashCommand}${body ? ` ${body}` : ""}` : body]
+		let content = [
+			quoteBlock,
+			slashCommand ? `/${slashCommand}${body ? ` ${body}` : ""}` : body,
+		]
 			.filter(Boolean)
 			.join("\n\n");
-		const hasReferences = currentDraft.document.parts.some((p) => p.type !== "text");
-		const prefix = [quoteBlock ? `${quoteBlock}\n\n` : "", slashCommand ? `/${slashCommand} ` : ""].join("");
+		const hasReferences = currentDraft.document.parts.some(
+			(p) => p.type !== "text",
+		);
+		const prefix = [
+			quoteBlock ? `${quoteBlock}\n\n` : "",
+			slashCommand ? `/${slashCommand} ` : "",
+		].join("");
 		const document = hasReferences
 			? normalizeComposerDocument({
 					version: 1,
-					parts: [{ type: "text", text: prefix }, ...currentDraft.document.parts],
+					parts: [
+						{ type: "text", text: prefix },
+						...currentDraft.document.parts,
+					],
 				})
 			: undefined;
 		if (document) content = composerDocumentText(document);
 		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
-		if ((!content && images.length === 0) || useDraftStore.getState().pendingBySession[options.draftKey])
+		if (
+			(!content && images.length === 0 && !currentDraft.files?.length) ||
+			useDraftStore.getState().pendingBySession[options.draftKey]
+		)
 			return;
 		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
 		if (compacting) {
@@ -245,7 +329,13 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		try {
 			const generation = useSessionsStore.getState().newSessionDraft?.generation;
 			const draft = takeDraft(options.draftKey);
-			await sendNow({ content, document, draft, generation, wasActive: agentActive });
+			await sendNow({
+				content,
+				document,
+				draft,
+				generation,
+				wasActive: agentActive,
+			});
 		} finally {
 			sendGuard.current.release();
 		}
@@ -255,18 +345,34 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		const cleared = await getExecutionApi(sessionId).clearQueue({ sessionId });
 		const inputs =
 			cleared.followUpInputs ??
-			cleared.followUp.map((text) => ({ document: composerDocumentFromText(text), images: [] }));
-		useDraftStore.getState().updateDraft(sessionId, (d) => inputs.reduce(appendDraftInput, d));
+			cleared.followUp.map((text) => ({
+				document: composerDocumentFromText(text),
+				images: [],
+			}));
+		useDraftStore
+			.getState()
+			.updateDraft(sessionId, (d) => inputs.reduce(appendDraftInput, d));
 	};
 	/** 清队列成功后才回填，保留新编辑；所有异步结果都绑定原目标。 */
 	const handleStop = async () => {
 		const sessionId = options.activeSessionId;
 		if (!sessionId) return;
 		try {
-			await restoreQueue(sessionId);
+			try {
+				await restoreQueue(sessionId);
+			} catch (error) {
+				if ((error as { code?: string }).code !== "HOST_API_UNSUPPORTED")
+					setError(
+						error instanceof Error ? error.message : String(error),
+						sessionId,
+					);
+			}
 			await getExecutionApi(sessionId).abort({ sessionId });
 		} catch (error) {
-			setError(error instanceof Error ? error.message : String(error), sessionId);
+			setError(
+				error instanceof Error ? error.message : String(error),
+				sessionId,
+			);
 		}
 	};
 	const handleRestoreQueue = async (focus: () => void) => {
@@ -278,7 +384,10 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				if (useSessionsStore.getState().activeSessionId === sessionId) focus();
 			});
 		} catch (error) {
-			setError(error instanceof Error ? error.message : String(error), sessionId);
+			setError(
+				error instanceof Error ? error.message : String(error),
+				sessionId,
+			);
 		}
 	};
 

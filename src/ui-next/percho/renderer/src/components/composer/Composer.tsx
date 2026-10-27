@@ -6,11 +6,20 @@ import {
 	normalizeComposerDocument,
 	sameEnvironment,
 } from "@percho/shared";
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
-import { mirrorComposerText } from "../../pi-http-bridge";
+import {
+	type MouseEvent as ReactMouseEvent,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
+import { mirrorComposerText, nativeRequest } from "../../pi-http-bridge";
 import { getPi } from "../../api";
 import { EnvironmentContext } from "../../environment-context";
-import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
+import {
+	useActiveModelInfo,
+	useSessionReadOnly,
+} from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { prepareImageAttachment } from "../../lib/image-attachment";
@@ -19,6 +28,7 @@ import { UI_REGIONS } from "../../plugins/slots";
 import {
 	COMPOSER_FOCUS_EVENT,
 	draftText,
+	type DraftEntry,
 	EMPTY_DRAFT,
 	newSessionDraftKey,
 	restoreFailedDraft,
@@ -68,7 +78,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const cwd = useSessionsStore(selectActiveCwd);
 	/** 信任决策应答后递增：新会话页的斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
-	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
+	const transcript = useTranscriptStore((s) =>
+		selectTranscript(s, activeSessionId),
+	);
 	/** 扩展 setEditorText 预填来源（一次性提示；用户首次键入清除） */
 	const extensionPrefillSource = transcript.extensionPrefillSource;
 	/** 图片门控数据源：当前生效模型（会话覆写 ?? 全局默认 → models 表解析，useActiveModelInfo 收拢点） */
@@ -103,17 +115,24 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
 	const { document, images, slashCommand, quotes } = draft;
 	const text = draftText(draft);
-  useEffect(() => {
-    if (activeSessionId)
-      void mirrorComposerText(activeSessionId, text).catch((error: unknown) => console.error("输入框镜像失败", error));
-  }, [activeSessionId, text]);
+	useEffect(() => {
+		if (activeSessionId)
+			void mirrorComposerText(activeSessionId, text).catch((error: unknown) =>
+				console.error("输入框镜像失败", error),
+			);
+	}, [activeSessionId, text]);
 	const updateDraft = useDraftStore((s) => s.updateDraft);
 	const setText = (updater: string | ((prev: string) => string)) => {
 		updateDraft(draftKey, (d) =>
-			withDraftText(d, typeof updater === "function" ? updater(draftText(d)) : updater),
+			withDraftText(
+				d,
+				typeof updater === "function" ? updater(draftText(d)) : updater,
+			),
 		);
 	};
-	const setImages = (updater: ImageInput[] | ((prev: ImageInput[]) => ImageInput[])) => {
+	const setImages = (
+		updater: ImageInput[] | ((prev: ImageInput[]) => ImageInput[]),
+	) => {
 		updateDraft(draftKey, (d) => ({
 			...d,
 			images: typeof updater === "function" ? updater(d.images) : updater,
@@ -125,21 +144,37 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const appendAttachments = useCallback(
 		(paths: string[]) => {
 			if (!paths.length) return;
-			updateDraft(draftKey, (d) => ({
-				...d,
+			const append = (entry: DraftEntry) => ({
+				...entry,
 				document: normalizeComposerDocument({
 					version: 1,
 					parts: [
-						...d.document.parts,
+						...entry.document.parts,
 						...paths.flatMap((path) => [
 							{ type: "text" as const, text: " " },
-							{ type: "file" as const, path, label: path.split(/[\\/]/).at(-1) },
+							{
+								type: "file" as const,
+								path,
+								label: path.split(/[\\/]/).at(-1),
+							},
 						]),
 					],
 				}),
-			}));
+			});
+			if (
+				activeSessionId === null &&
+				draftConfig?.generation !==
+					useSessionsStore.getState().newSessionDraft?.generation
+			) {
+				useDraftStore.setState((state) => ({
+					failedBySession: {
+						...state.failedBySession,
+						[draftKey]: append(state.failedBySession[draftKey] ?? EMPTY_DRAFT),
+					},
+				}));
+			} else updateDraft(draftKey, append);
 		},
-		[draftKey, updateDraft],
+		[activeSessionId, draftConfig?.generation, draftKey, updateDraft],
 	);
 	const setQuotes = (updater: string[] | ((prev: string[]) => string[])) => {
 		updateDraft(draftKey, (d) => ({
@@ -156,27 +191,66 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 压缩进行中：禁发（SDK 拒绝压缩中的 prompt；提前拦截保住草稿，warn 提示代替报错丢文本） */
 	const compacting = transcript.compacting;
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
-	const hasContent = Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || quotes.length > 0;
+	const hasContent =
+		Boolean(text.trim()) ||
+		images.length > 0 ||
+		Boolean(draft.files?.length) ||
+		Boolean(slashCommand) ||
+		quotes.length > 0;
 
 	const send = useComposerSend({
 		draftKey,
 		activeSessionId,
 		imagesSupported,
 	});
-	const { sending, error, setError, feedback, showFeedback, ensureSession, runSlashCommand, handleSend } =
-		send;
+	const {
+		sending,
+		error,
+		setError,
+		feedback,
+		showFeedback,
+		ensureSession,
+		runSlashCommand,
+		handleSend,
+	} = send;
 	// 附件预处理（缩图）在途的 promise：发送前要等它们落地，否则「粘图立刻回车」会把图丢了
 	// （预处理要几百 ms，以前 FileReader 只需几 ms，这个窗口可忽略；现在不能）
-	const preparingRef = useRef<{ key: string; generation: number | undefined; promise: Promise<unknown> }[]>(
-		[],
-	);
+	const preparingRef = useRef<
+		{ key: string; generation: number | undefined; promise: Promise<unknown> }[]
+	>([]);
+	function trackPreparation(promise: Promise<unknown>) {
+		const generation =
+			activeSessionId === null
+				? useSessionsStore.getState().newSessionDraft?.generation
+				: undefined;
+		preparingRef.current.push({ key: draftKey, generation, promise });
+		void promise
+			.catch((error: Error) => setError(error.message))
+			.finally(() => {
+				preparingRef.current = preparingRef.current.filter(
+					(entry) => entry.promise !== promise,
+				);
+			});
+	}
 	const sendWhenReady = async () => {
 		if (readOnly) return;
 		const generation =
-			activeSessionId === null ? useSessionsStore.getState().newSessionDraft?.generation : undefined;
-		const inFlight = preparingRef.current.filter((p) => p.key === draftKey && p.generation === generation);
-		await Promise.all(inFlight.map((p) => p.promise));
-		if (activeSessionId === null && generation !== useSessionsStore.getState().newSessionDraft?.generation)
+			activeSessionId === null
+				? useSessionsStore.getState().newSessionDraft?.generation
+				: undefined;
+		const inFlight = preparingRef.current.filter(
+			(p) => p.key === draftKey && p.generation === generation,
+		);
+		try {
+			await Promise.all(inFlight.map((p) => p.promise));
+		} catch (error) {
+			setError(error instanceof Error ? error.message : String(error));
+			return;
+		}
+		if (
+			activeSessionId === null &&
+			generation !== useSessionsStore.getState().newSessionDraft?.generation
+		)
 			return;
 		await handleSend();
 	};
@@ -223,8 +297,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		setError,
 	});
 
-	const selectedSlashCommand = slash.slashCommands.find((command) => command.name === slashCommand);
-	const slashLabel = selectedSlashCommand ? slashPresentation(selectedSlashCommand, t).label : slashCommand;
+	const selectedSlashCommand = slash.slashCommands.find(
+		(command) => command.name === slashCommand,
+	);
+	const slashLabel = selectedSlashCommand
+		? slashPresentation(selectedSlashCommand, t).label
+		: slashCommand;
 
 	const at = useAtCompletion({
 		cwd,
@@ -261,8 +339,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	}, [slash.slashOpen, at.atOpen, setSlashDismissed, setAtDismissed]);
 
 	/** 文本变化：重置菜单折叠态 + 探测光标前 @ / slash token（驱动两个菜单）；同时清预填来源提示 */
-	const handleTextChange = (next: ComposerDocument, value: string, cursor: number) => {
-		if (extensionPrefillSource) useTranscriptStore.getState().clearExtensionPrefill(activeSessionId ?? "");
+	const handleTextChange = (
+		next: ComposerDocument,
+		value: string,
+		cursor: number,
+	) => {
+		if (extensionPrefillSource)
+			useTranscriptStore
+				.getState()
+				.clearExtensionPrefill(activeSessionId ?? "");
 		slash.setSlashDismissed(false);
 		at.setAtDismissed(false);
 		updateDraft(draftKey, (d) => ({ ...d, document: next }));
@@ -305,10 +390,108 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const handleFiles = useCallback(
 		(files: FileList | File[] | null) => {
 			if (!files || files.length === 0) return;
-			// 图片门控入口防御：+ 按钮/粘贴之外的路径不再存在，仍早退兜底
-			if (!imagesSupported) return;
 			for (const file of Array.from(files)) {
-				if (!file.type.startsWith("image/")) continue;
+				const desktop = (window as any).piDesk;
+				if (desktop?.cacheContextFile) {
+					if (file.size > 4 * 1024 * 1024) {
+						setError("剪贴板附件不能超过 4 MiB，请保存后选择本地文件引用");
+						continue;
+					}
+					const generation =
+						activeSessionId === null
+							? useSessionsStore.getState().newSessionDraft?.generation
+							: undefined;
+					const prepared = file
+						.arrayBuffer()
+						.then((bytes) =>
+							desktop.cacheContextFile({
+								name: file.name,
+								bytes: new Uint8Array(bytes),
+							}),
+						)
+						.then((path: string) =>
+							nativeRequest(
+								"/api/context/files",
+								{ paths: [path] },
+								activeSessionId ?? undefined,
+							),
+						)
+						.then((value: any) =>
+							appendAttachments(value.files.map((row: any) => row.path)),
+						);
+					preparingRef.current.push({
+						key: draftKey,
+						generation,
+						promise: prepared,
+					});
+					void prepared
+						.catch((error: Error) => setError(error.message))
+						.finally(() => {
+							preparingRef.current = preparingRef.current.filter(
+								(entry) => entry.promise !== prepared,
+							);
+						});
+					continue;
+				}
+				if (!file.type.startsWith("image/")) {
+					if (file.size > 512 * 1024) {
+						setError("文本附件不能超过 512 KiB");
+						continue;
+					}
+					const generation =
+						activeSessionId === null
+							? useSessionsStore.getState().newSessionDraft?.generation
+							: undefined;
+					const prepared = new Promise<string>((resolve, reject) => {
+						const reader = new FileReader();
+						reader.onerror = () =>
+							reject(new Error(`无法读取附件：${file.name}`));
+						reader.onload = () =>
+							resolve(String(reader.result).split(",")[1] ?? "");
+						reader.readAsDataURL(file);
+					})
+						.then((data) => {
+							const attachment = { name: file.name, type: file.type, data };
+							if (
+								activeSessionId === null &&
+								generation !==
+									useSessionsStore.getState().newSessionDraft?.generation
+							) {
+								useDraftStore.setState((state) => {
+									const entry = state.failedBySession[draftKey] ?? EMPTY_DRAFT;
+									return {
+										failedBySession: {
+											...state.failedBySession,
+											[draftKey]: {
+												...entry,
+												files: [...(entry.files ?? []), attachment],
+											},
+										},
+									};
+								});
+							} else
+								updateDraft(draftKey, (entry) => ({
+									...entry,
+									files: [...(entry.files ?? []), attachment],
+								}));
+						})
+						.catch((error: Error) => setError(error.message));
+					preparingRef.current.push({
+						key: draftKey,
+						generation,
+						promise: prepared,
+					});
+					void prepared.then(() => {
+						preparingRef.current = preparingRef.current.filter(
+							(entry) => entry.promise !== prepared,
+						);
+					});
+					continue;
+				}
+				if (!imagesSupported) {
+					setError("当前模型不支持图片附件");
+					continue;
+				}
 				// 在粘贴/选择时就先把图缩到模型规格（见 lib/image-attachment.ts）：
 				// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
 				// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
@@ -326,21 +509,40 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								...state.failedBySession,
 								[draftKey]: {
 									...(state.failedBySession[draftKey] ?? original),
-									images: [...(state.failedBySession[draftKey]?.images ?? original.images), image],
+									images: [
+										...(state.failedBySession[draftKey]?.images ??
+											original.images),
+										image,
+									],
 								},
 							},
 						}));
 						return;
 					}
-					updateDraft(draftKey, (d) => ({ ...d, images: [...d.images, image] }));
+					updateDraft(draftKey, (d) => ({
+						...d,
+						images: [...d.images, image],
+					}));
 				});
-				preparingRef.current.push({ key: draftKey, generation, promise: prepared });
+				preparingRef.current.push({
+					key: draftKey,
+					generation,
+					promise: prepared,
+				});
 				void prepared.finally(() => {
-					preparingRef.current = preparingRef.current.filter((p) => p.promise !== prepared);
+					preparingRef.current = preparingRef.current.filter(
+						(p) => p.promise !== prepared,
+					);
 				});
 			}
 		},
-		[imagesSupported, activeSessionId, draftKey, updateDraft],
+		[
+			imagesSupported,
+			activeSessionId,
+			draftKey,
+			updateDraft,
+			appendAttachments,
+		],
 	);
 
 	// Electron sandbox 中 File.path 已移除；preload 通过 webUtils 恢复原生路径并送入现有附件管线。
@@ -360,7 +562,23 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				if (files.some((file) => !file.type.startsWith("image/")))
 					pushToast("warning", "remote.localFileRejected");
 				handleFiles(files.filter((file) => file.type.startsWith("image/")));
-			} else appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
+			} else {
+				const paths = resolveDroppedFilePaths(
+					event.dataTransfer.files,
+					getPi().getPathForFile,
+				);
+				if (paths.length)
+					trackPreparation(
+						nativeRequest(
+							"/api/context/files",
+							{ paths },
+							activeSessionId ?? undefined,
+						).then((value) =>
+							appendAttachments(value.files.map((file) => file.path)),
+						),
+					);
+				else handleFiles(event.dataTransfer.files);
+			}
 		};
 		window.addEventListener("dragover", onDragOver);
 		window.addEventListener("drop", onDrop);
@@ -368,7 +586,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			window.removeEventListener("dragover", onDragOver);
 			window.removeEventListener("drop", onDrop);
 		};
-	}, [appendAttachments, readOnly, environment.kind, handleFiles]);
+	}, [
+		appendAttachments,
+		readOnly,
+		environment.kind,
+		handleFiles,
+		activeSessionId,
+	]);
 
 	/** 截图/复制图片后 Ctrl+V 粘贴到输入框 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -376,19 +600,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (!items) return;
 		const files: File[] = [];
 		for (const item of items) {
-			if (item.type.startsWith("image/")) {
+			if (item.kind === "file") {
 				const file = item.getAsFile();
 				if (file) files.push(file);
 			}
 		}
 		if (files.length === 0) return;
-		// 图片门控：纯文本模型拦截粘贴（默认行为可能把图片数据塞进文本框，必须 preventDefault）
-		if (!imagesSupported) {
-			e.preventDefault();
-			// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
-			pushToast("warning", "composer.imageUnsupported");
-			return;
-		}
 		e.preventDefault();
 		handleFiles(files);
 	};
@@ -406,7 +623,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						{t("composer.restoreFailedDraft")}
 					</button>
 				)}
-				{error && <SendErrorBar error={error} onRetry={() => void sendWhenReady()} />}
+				{error && (
+					<SendErrorBar error={error} onRetry={() => void sendWhenReady()} />
+				)}
 				{feedback && !error && (
 					<p
 						className={`mb-1.5 text-ui-12 leading-[calc(1_/_0.75)] ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}
@@ -422,6 +641,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						onSelectedIndexChange={slash.setSlashSelected}
 						onPick={(command) => void slash.handleSlashPick(command)}
 					/>
+				)}
+				{at.atError && (
+					<p role="alert" className="mb-2 text-ui-12 text-red-500">
+						{at.atError}
+					</p>
 				)}
 				{at.atOpen && (
 					<AtMenu
@@ -443,6 +667,33 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<PencilIcon size={11} />
 						{t("interaction.prefillNote", { source: extensionPrefillSource })}
 					</div>
+				)}
+				{Boolean(draft.files?.length) && (
+					<ul aria-label="文件附件" className="mb-2 flex flex-wrap gap-2">
+						{draft.files?.map((file, index) => (
+							<li
+								key={`${index}:${file.name}`}
+								className="rounded border border-border px-2 py-1 text-ui-12"
+							>
+								<span>{file.name}</span>
+								<button
+									type="button"
+									className="ml-2"
+									aria-label={`移除附件 ${file.name}`}
+									onClick={() =>
+										updateDraft(draftKey, (entry) => ({
+											...entry,
+											files: entry.files?.filter(
+												(_, position) => position !== index,
+											),
+										}))
+									}
+								>
+									×
+								</button>
+							</li>
+						))}
+					</ul>
 				)}
 				<ImageTray
 					images={images}
@@ -476,7 +727,10 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						>
 							{slashCommand && (
 								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-ui-12 leading-5 text-ink-2 shadow-pop">
-									{slashLabel !== slashCommand && <span className="mr-1.5">{slashLabel}</span>}/{slashCommand}
+									{slashLabel !== slashCommand && (
+										<span className="mr-1.5">{slashLabel}</span>
+									)}
+									/{slashCommand}
 								</span>
 							)}
 
@@ -499,7 +753,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<input
 							ref={fileInputRef}
 							type="file"
-							accept="image/*"
 							multiple
 							className="hidden"
 							onChange={(e) => {
@@ -510,10 +763,29 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<button
 							type="button"
 							className="-ml-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
-							aria-label={t("composer.addImage")}
-							title={!imagesSupported ? t("composer.imageUnsupported") : undefined}
-							disabled={readOnly || !imagesSupported}
-							onClick={() => fileInputRef.current?.click()}
+							aria-label="添加文件或图片"
+							disabled={readOnly}
+							onClick={() => {
+								const desktop = (window as any).piDesk;
+								if (desktop?.pickFiles)
+									trackPreparation(
+										desktop
+											.pickFiles()
+											.then((paths: string[]) =>
+												nativeRequest(
+													"/api/context/files",
+													{ paths },
+													activeSessionId ?? undefined,
+												),
+											)
+											.then((value: any) =>
+												appendAttachments(
+													value.files.map((file: any) => file.path),
+												),
+											),
+									);
+								else fileInputRef.current?.click();
+							}}
 						>
 							<PlusIcon size={18} />
 						</button>
@@ -551,7 +823,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					</div>
 				</div>
 			</div>
-			{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
+			{previewImage && (
+				<ImagePreviewOverlay
+					image={previewImage}
+					onClose={() => setPreviewImage(null)}
+				/>
+			)}
 		</div>
 	);
 }

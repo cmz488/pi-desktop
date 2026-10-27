@@ -1,3 +1,4 @@
+import { projectMessage } from "../shared/conversation.mjs";
 import { HostApiUnsupported } from "./host-api.mjs";
 
 const WORKER_READY_TIMEOUT_MS = 15000;
@@ -20,6 +21,10 @@ export function toSessionMeta(row) {
     name: row.name,
     active: row.active ?? row.status === "running",
     readOnly: row.readOnly === true,
+    ...(row.branching === undefined && row.sessionCommands === undefined
+      ? {}
+      : { branching: row.branching ?? row.sessionCommands }),
+    ...(row.archivable === undefined ? {} : { archivable: row.archivable }),
     model: row.model
       ? {
           provider: row.model.provider,
@@ -39,6 +44,8 @@ export function createSessionTransport({ get, post }) {
   let mode;
   let catalog;
   let lastSession;
+  let legacyState;
+  let legacyRows;
   const detect = () =>
     (mode ??= get("/api/workspace").then(
       () => true,
@@ -61,6 +68,7 @@ export function createSessionTransport({ get, post }) {
             ...row,
             cwd,
             readOnly: row.source === "pi",
+            archivable: row.source !== "pi",
             sessionId: row.id,
           });
           return [
@@ -71,16 +79,48 @@ export function createSessionTransport({ get, post }) {
                 ...branch,
                 cwd,
                 sessionId: `${row.id}/${branch.id}`,
+                archivable: false,
                 sessionFile: `pi-desktop:${row.id}/${branch.id}`,
               }),
             ),
           ];
         });
     }
-    const state = await get("/api/state");
-    return (state.agents ?? []).map((row) =>
-      toSessionMeta({ ...row, active: true }),
-    );
+    legacyState = await get("/api/state");
+    if (legacyState.host === "durable") {
+      legacyRows = (legacyState.agents ?? []).map((row) =>
+        toSessionMeta({ ...row, active: true, archivable: false }),
+      );
+    } else {
+      const history = await get("/api/sessions");
+      legacyRows = (history.rows ?? []).map((row) =>
+        toSessionMeta({
+          ...row,
+          cwd: row.cwd ?? legacyState.cwd,
+          sessionFile: row.sessionFile ?? row.path,
+          modifiedAt: row.modified,
+          active:
+            row.live === true ||
+            String(row.id) === String(legacyState.sessionId),
+          branching: false,
+          archivable: false,
+        }),
+      );
+      if (
+        !legacyRows.some(
+          (row) => row.sessionId === String(legacyState.sessionId),
+        )
+      )
+        legacyRows.push(
+          toSessionMeta({
+            ...legacyState,
+            active: true,
+            branching: false,
+            archivable: false,
+          }),
+        );
+    }
+    return legacyRows;
   }
   async function target(id) {
     if (!id) {
@@ -112,21 +152,51 @@ export function createSessionTransport({ get, post }) {
         prefix: `/agents/${owner}`,
       };
     }
-    if (!/^\d+$/.test(String(id))) throw new Error("会话 ID 无效");
-    return { id: String(id), numeric: Number(id), prefix: "" };
+    await list();
+    if (!legacyRows.some((row) => row.sessionId === String(id)))
+      throw new Error("会话不存在");
+    if (legacyState.host === "durable") {
+      if (!/^\d+$/.test(String(id))) throw new Error("会话 ID 无效");
+      return { id: String(id), numeric: Number(id), prefix: "" };
+    }
+    if (!legacyRows.find((row) => row.sessionId === String(id))?.active)
+      throw new Error("请先打开此会话");
+    return { id: String(id), queryId: String(id), prefix: "" };
   }
   async function path(route, id) {
     const selected = await target(id);
+    const explicit = new URL(route, "http://localhost").searchParams.get(
+      "sessionId",
+    );
+    const expected = selected.queryId ?? selected.numeric;
+    if (
+      explicit !== null &&
+      expected !== undefined &&
+      explicit !== String(expected)
+    )
+      throw new Error("会话参数与目标不一致");
     return (
       selected.prefix +
       route +
-      (selected.numeric === undefined
+      (expected === undefined || explicit !== null
         ? ""
-        : `${route.includes("?") ? "&" : "?"}sessionId=${selected.numeric}`)
+        : `${route.includes("?") ? "&" : "?"}sessionId=${encodeURIComponent(selected.queryId ?? selected.numeric)}`)
     );
   }
   async function state(id) {
-    return get(await path("/api/state", id));
+    const value = await get(await path("/api/state", id));
+    // Widgets are UI state, not transcript entries; combine them only for this view.
+    if (value.widgets?.length)
+      return {
+        ...value,
+        messages: [
+          ...(value.messages ?? []),
+          ...value.widgets.map((row) =>
+            row.extensionView ? row : projectMessage(row, row.id),
+          ),
+        ],
+      };
+    return value;
   }
   async function describe(id) {
     const selected = await target(id);
@@ -158,6 +228,14 @@ export function createSessionTransport({ get, post }) {
       (row) => row.sessionFile === filePath || row.sessionId === filePath,
     );
     if (!row) throw new Error("会话文件不在当前工作空间中");
+    if (
+      !(await detect()) &&
+      legacyState.host !== "durable" &&
+      String(legacyState.sessionId) !== row.sessionId
+    ) {
+      await post("/api/switch-session", { id: row.sessionId });
+      await list();
+    }
     const selected = await target(row.sessionId);
     if (selected.owner && !row.readOnly && !row.active) {
       await post("/api/workspace/command", {
@@ -189,11 +267,23 @@ export function createSessionTransport({ get, post }) {
       id = created.id;
       await list();
     } else {
-      const created = await post("/api/command", {
-        command: "create",
-        ...options,
-      });
-      id = String(created.sessionId ?? created.id);
+      await list();
+      if (
+        legacyState.host !== "durable" &&
+        options.cwd &&
+        options.cwd !== legacyState.cwd
+      )
+        throw new HostApiUnsupported(
+          "session:create",
+          "兼容模式的工作目录由 Pi TUI／SDK 拥有，请在原宿主更改",
+        );
+      const created =
+        legacyState.host === "durable"
+          ? await post("/api/command", { command: "create", ...options })
+          : await post("/api/new-session", {});
+      id = String(
+        created.sessionId ?? created.id ?? (await get("/api/state")).sessionId,
+      );
     }
     lastSession = id;
     if (options.provider && options.modelId)
@@ -208,8 +298,20 @@ export function createSessionTransport({ get, post }) {
     return describe(id);
   }
   return {
+    select(id) {
+      lastSession = id ?? undefined;
+    },
     detect,
     list,
+    async forCwd(cwd, { required = true } = {}) {
+      const rows = await list();
+      const eligible = (row) => row.active && (!cwd || row.cwd === cwd);
+      const row =
+        rows.find((row) => eligible(row) && row.sessionId === lastSession) ??
+        rows.find(eligible);
+      if (!row && required) throw new Error("请先在此项目创建或打开会话");
+      return row?.sessionId;
+    },
     target,
     path,
     state,
@@ -228,10 +330,23 @@ export function createSessionTransport({ get, post }) {
       await composerWrites.get(id);
     },
     async get(route, id) {
-      return get(await path(route, id));
+      const selected = await target(id);
+      if (
+        /^\/api\/git(?:\?|$)/.test(route) &&
+        !new URL(route, "http://localhost").searchParams.has("sessionId")
+      ) {
+        const current = await state(selected.id);
+        route += `${route.includes("?") ? "&" : "?"}sessionId=${encodeURIComponent(current.sessionId)}`;
+      }
+      return get(await path(route, selected.id));
     },
     async post(route, input, id) {
-      return post(await path(route, id), input);
+      const selected = await target(id);
+      if (route === "/api/git") {
+        const current = await state(selected.id);
+        input = { sessionId: String(current.sessionId), ...input };
+      }
+      return post(await path(route, selected.id), input);
     },
     async loaded() {
       const rows = await list();
@@ -250,14 +365,33 @@ export function createSessionTransport({ get, post }) {
               },
               sequence: 0,
               followUpQueue: [],
-              permissionMode: "default",
+              permissionMode:
+                value.active?.approvalMode === "yolo"
+                  ? "fullAccess"
+                  : "default",
               streaming: value.idle === false,
-              compacting: false,
+              compacting: value.activity?.kind === "compacting",
             };
           }),
       );
     },
     async close(id) {
+      if (await detect()) {
+        const owner = String(id).split("/")[0];
+        const current = (await get("/api/workspace")).agents.find(
+          (row) => row.id === owner,
+        );
+        if (!current || current.archived || current.status !== "running")
+          return { closed: true };
+      } else {
+        await list();
+        if (legacyState.host !== "durable")
+          return {
+            closed:
+              String(legacyState.sessionId) !== String(id) ||
+              legacyState.idle !== false,
+          };
+      }
       // 关闭 GUI tab 不停止独立 Agent；GC 同样只释放前端的历史和订阅。
       return { closed: (await state(id)).idle !== false };
     },
@@ -270,6 +404,8 @@ export function createSessionTransport({ get, post }) {
           name,
         });
       const current = await state(id);
+      if (current.host !== "durable")
+        return this.post("/api/prompt", { message: `/name ${name}` }, id);
       return command("configure", {
         sessionId: id,
         revision:

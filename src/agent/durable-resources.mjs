@@ -1,3 +1,4 @@
+import { loadedResources } from "../resources/loaded-resources.mjs";
 import { validateApprovalMode } from "./pi-permissions.mjs";
 import {
   defineExtension,
@@ -630,6 +631,7 @@ export function createDurableResources({
         return {
           snapshot: capabilities.snapshot(),
           commands: commandCatalog(host.app.runtime.session),
+          loadedResources: loadedResources(host.app.runtime.session),
           canWrite: capabilities.canWrite(),
           projectTrusted: capabilities.projectTrusted?.() ?? true,
           effectiveSettings: capabilities.effectiveSettings?.() ?? {},

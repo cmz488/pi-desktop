@@ -6,6 +6,7 @@ export function createSubscriptions({
   sessions,
   EventSource: Source = globalThis.EventSource,
   onError = console.error,
+  ownsInteraction = () => false,
 }) {
   const listeners = new Map(),
     streams = new Map();
@@ -31,6 +32,8 @@ export function createSubscriptions({
           active: value.idle === false,
           streaming: value.idle === false ? value.streamingMessage : undefined,
           compacting: value.activity?.kind === "compacting",
+          activeCalls: value.activeCalls,
+          retrying: value.retrying,
         });
         emit("onEvent", {
           sessionId: client.id,
@@ -39,11 +42,21 @@ export function createSubscriptions({
             transcript,
             usage: value.usage ?? null,
             name: value.name,
+            desktopUi: {
+              ...value.ui,
+              statuses: value.statuses,
+              workingMessage: value.workingMessage,
+              activity: value.activity,
+              recovery: value.recovery,
+            },
           },
         });
         const jobs = (await sessions.get("/api/interactions", client.id)).rows;
         if (streams.get(client.id) !== client) return;
-        const dialogs = toDialogs(jobs, client.id);
+        const dialogs = toDialogs(
+          jobs.filter((job) => !ownsInteraction(client.id, job.id)),
+          client.id,
+        );
         const next = new Set(dialogs.map((row) => row.id));
         for (const request of dialogs)
           if (!client.dialogs.has(request.id))

@@ -10,7 +10,12 @@ import type {
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
-import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
+import type {
+	McpConfigListResult,
+	McpMutationResult,
+	McpServersChangedPayload,
+	McpUpsertInput,
+} from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	MutationReceipt,
@@ -65,7 +70,12 @@ import type {
 } from "./settings";
 import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
-import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
+import type {
+	UiPluginInfo,
+	UiPluginManifest,
+	UiPluginsConfig,
+	UiPluginsEventPayload,
+} from "./ui-plugins";
 import type { UpdateState } from "./update";
 import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
 
@@ -187,10 +197,22 @@ export const SESSION_CHANNELS = {
 		"session:prompt",
 		"environment",
 		"mutation",
-	)<{ sessionId: string; text: string; images?: ImageInput[]; document?: ComposerDocument }, void>({
+	)<
+		{
+			sessionId: string;
+			text: string;
+			images?: ImageInput[];
+			files?: { name: string; type: string; data: string }[];
+			document?: ComposerDocument;
+		},
+		void
+	>({
 		sessionId: input.id,
 		text: input.text,
 		images: input.optional(input.array(input.object({ data: input.text, mimeType: input.text }))),
+		files: input.optional(
+			input.array(input.object({ name: input.text, type: input.text, data: input.text })),
+		),
 		document: input.optional(input.jsonObject<ComposerDocument>()),
 	}),
 	/** 仅重试当前末端模型失败，不新增用户消息；受理即返回，执行结果走事件流。 */
@@ -202,12 +224,19 @@ export const SESSION_CHANNELS = {
 		sessionId: input.id,
 		ref: input.object({ timestamp: input.number, entryId: input.text }),
 	}),
-	abort: ch("session:abort", "environment", "mutation")<{ sessionId: string }, void>({ sessionId: input.id }),
+	abort: ch(
+		"session:abort",
+		"environment",
+		"mutation",
+	)<{ sessionId: string }, void>({ sessionId: input.id }),
 	setThinkingLevel: ch(
 		"session:setThinkingLevel",
 		"environment",
 		"mutation",
-	)<{ sessionId: string; level: string }, void>({ sessionId: input.id, level: input.text }),
+	)<{ sessionId: string; level: string }, void>({
+		sessionId: input.id,
+		level: input.text,
+	}),
 	/** 读取会话历史消息（打开历史会话时回放） */
 	getPendingInteractions: ch("session:getPendingInteractions", "environment", "read")<
 		void,
@@ -303,7 +332,10 @@ export const SESSION_CHANNELS = {
 		"mutation",
 	)<{ sessionId: string; ref: { entryId?: string; text?: string } }, SessionMeta>({
 		sessionId: input.id,
-		ref: input.object({ entryId: input.optional(input.text), text: input.optional(input.text) }),
+		ref: input.object({
+			entryId: input.optional(input.text),
+			text: input.optional(input.text),
+		}),
 	}),
 	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
 	recallMessage: ch(
@@ -311,7 +343,10 @@ export const SESSION_CHANNELS = {
 		"environment",
 		"mutation",
 	)<
-		{ sessionId: string; ref: { entryId?: string; text?: string; timestamp?: number } },
+		{
+			sessionId: string;
+			ref: { entryId?: string; text?: string; timestamp?: number };
+		},
 		{ text: string; images: ImageInput[]; document?: ComposerDocument }
 	>({
 		sessionId: input.id,
@@ -331,10 +366,11 @@ export const SESSION_CHANNELS = {
 	 * 有有效频道订阅的**已加载**会话 ID（renderer 内存策略保护用；顺序不构成契约）。
 	 * 会话被卸载/关闭后不再返回（backend 快照同步清理）。
 	 */
-	getChannelSubscriptionSessionIds: ch("session:getChannelSubscriptionSessionIds", "environment", "read")<
-		void,
-		string[]
-	>(),
+	getChannelSubscriptionSessionIds: ch(
+		"session:getChannelSubscriptionSessionIds",
+		"environment",
+		"read",
+	)<void, string[]>(),
 	/**
 	 * 单会话的频道订阅快照（spec D1）。与上面的 GC 查询**语义不同**：这里不按 registry 过滤 ——
 	 * 扩展可能早于 registry.add 上报，过滤会让「刚打开就有订阅」的会话查到空集（胶囊闪一下才出现）。
@@ -343,7 +379,9 @@ export const SESSION_CHANNELS = {
 		"session:getChannelSubscriptions",
 		"environment",
 		"read",
-	)<{ sessionId: string }, ChannelSubscriptionsSnapshot>({ sessionId: input.id }),
+	)<{ sessionId: string }, ChannelSubscriptionsSnapshot>({
+		sessionId: input.id,
+	}),
 	/** 可用模型列表（providers × models，含 authed/thinkingLevels/imageInput 元数据） */
 	listModels: ch("models:list", "environment", "read")<void, AvailableModel[]>(),
 	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
@@ -351,7 +389,10 @@ export const SESSION_CHANNELS = {
 		"project:listFiles",
 		"environment",
 		"read",
-	)<{ cwd?: string }, string[]>({ cwd: input.optional(input.id) }),
+	)<{ cwd?: string; path?: string }, string[]>({
+		cwd: input.optional(input.id),
+		path: input.optional(input.text),
+	}),
 	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
 	ensureProjectTrust: ch(
 		"project:ensureTrust",
@@ -477,7 +518,10 @@ export const SETTINGS_CHANNELS = {
 		"settings:saveApiKey",
 		"environment",
 		"mutation",
-	)<{ providerId: string; key: string }, void>({ providerId: input.id, key: input.text }),
+	)<{ providerId: string; key: string }, void>({
+		providerId: input.id,
+		key: input.text,
+	}),
 	removeCredential: ch(
 		"settings:removeCredential",
 		"environment",
@@ -487,13 +531,17 @@ export const SETTINGS_CHANNELS = {
 		"settings:addCustomProvider",
 		"environment",
 		"mutation",
-	)<{ input: CustomProviderInput }, void>({ input: input.jsonObject<CustomProviderInput>() }),
+	)<{ input: CustomProviderInput }, void>({
+		input: input.jsonObject<CustomProviderInput>(),
+	}),
 	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变） */
 	updateCustomProvider: ch(
 		"settings:updateCustomProvider",
 		"environment",
 		"mutation",
-	)<{ input: CustomProviderUpdateInput }, void>({ input: input.jsonObject<CustomProviderUpdateInput>() }),
+	)<{ input: CustomProviderUpdateInput }, void>({
+		input: input.jsonObject<CustomProviderUpdateInput>(),
+	}),
 	removeCustomProvider: ch(
 		"settings:removeCustomProvider",
 		"environment",
@@ -544,7 +592,10 @@ export const SETTINGS_CHANNELS = {
 		"settings:setProviderModelsHidden",
 		"environment",
 		"mutation",
-	)<{ provider: string; hidden: boolean }, ModelPrefs>({ provider: input.id, hidden: input.boolean }),
+	)<{ provider: string; hidden: boolean }, ModelPrefs>({
+		provider: input.id,
+		hidden: input.boolean,
+	}),
 	/** 为子代理指定 provider/model；null = 继承父会话模型 */
 	setSubagentModel: ch(
 		"settings:setSubagentModel",
@@ -576,7 +627,10 @@ export const SETTINGS_CHANNELS = {
 		"settings:loginStart",
 		"environment",
 		"mutation",
-	)<{ loginId: string; providerId: string }, LoginResult>({ loginId: input.id, providerId: input.id }),
+	)<{ loginId: string; providerId: string }, LoginResult>({
+		loginId: input.id,
+		providerId: input.id,
+	}),
 	/** 取消进行中的登录流程（未知 loginId 静默忽略） */
 	cancelProviderLogin: ch(
 		"settings:loginCancel",
@@ -628,7 +682,9 @@ export const SETTINGS_CHANNELS = {
 		"contextManager:setMode",
 		"environment",
 		"mutation",
-	)<{ mode: ContextManagerMode }, void>({ mode: input.oneOf("evaporation", "off") }),
+	)<{ mode: ContextManagerMode }, void>({
+		mode: input.oneOf("evaporation", "off"),
+	}),
 	/** channel-watch 跨会话频道唤醒开关 */
 	getChannelWatchConfig: ch("channelWatch:getConfig", "environment", "read")<void, ChannelWatchConfigInfo>(),
 	setChannelWatchEnabled: ch(
@@ -641,7 +697,10 @@ export const SETTINGS_CHANNELS = {
 		"trust:respond",
 		"environment",
 		"mutation",
-	)<{ requestId: string; answer: TrustAnswer }, void>({ requestId: input.id, answer: input.number }),
+	)<{ requestId: string; answer: TrustAnswer }, void>({
+		requestId: input.id,
+		answer: input.number,
+	}),
 } as const;
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
@@ -670,7 +729,10 @@ export const APP_CHANNELS = {
 		"project:checkoutBranch",
 		"environment",
 		"mutation",
-	)<{ cwd: string; branch: string }, string>({ cwd: input.id, branch: input.text }),
+	)<{ cwd: string; branch: string }, string>({
+		cwd: input.id,
+		branch: input.text,
+	}),
 	/** 用系统浏览器打开链接（仅 http(s)，防 file:// 协议滥用） */
 	openExternal: ch("app:openExternal", "desktop")<{ url: string }, void>(),
 	/** 解析文件路径为绝对路径（相对/`~`/`file://`/带 `:行:列` 锚点均可；不存在抛错） */
@@ -678,7 +740,10 @@ export const APP_CHANNELS = {
 		"app:resolvePath",
 		"environment",
 		"read",
-	)<{ target: string; cwd: string | null }, string>({ target: input.text, cwd: input.nullable(input.id) }),
+	)<{ target: string; cwd: string | null }, string>({
+		target: input.text,
+		cwd: input.nullable(input.id),
+	}),
 	/** 用系统默认应用打开文件（路径解析同上；打开失败把系统报错抛给渲染端） */
 	openPath: ch("app:openPath", "desktop")<{ target: string; cwd: string | null }, void>(),
 	/** 在系统文件管理器中显示该文件（macOS = 访达；路径解析同上） */
@@ -836,8 +901,14 @@ export const SUBSCRIPTION_TABLE = {
 		"RemoteConnectionStatus",
 		"remote:statusChanged",
 	),
-	onProviderLoginEvent: subscription<LoginEventPayload>()("SettingsLoginEvent", "settings:loginEvent"),
-	onMcpServersChanged: subscription<McpServersChangedPayload>()("McpServersChanged", "mcp:serversChanged"),
+	onProviderLoginEvent: subscription<LoginEventPayload>()(
+		"SettingsLoginEvent",
+		"settings:loginEvent",
+	),
+	onMcpServersChanged: subscription<McpServersChangedPayload>()(
+		"McpServersChanged",
+		"mcp:serversChanged",
+	),
 	onChannelSubscriptionsChanged: subscription<ChannelSubscriptionsSnapshot>()(
 		"ChannelSubscriptionsChanged",
 		"channel:subscriptionsChanged",
@@ -846,11 +917,21 @@ export const SUBSCRIPTION_TABLE = {
 		"UiPluginsEvent",
 		"uiPlugins:event",
 	),
-	onQuitRequested: subscription<void, "desktop">("desktop")("QuitRequested", "app:quit-requested", true),
+	onQuitRequested: subscription<void, "desktop">("desktop")(
+		"QuitRequested",
+		"app:quit-requested",
+		true,
+	),
 	onUpdateEvent: subscription<UpdateState, "desktop">("desktop")("UpdateEvent", "update:event"),
 	onEvent: subscription<SessionEventEnvelope>()("Event", "pi:event"),
-	onPermissionRequest: subscription<PermissionRequest>()("PermissionRequest", "pi:permission-request"),
-	onPermissionResolved: subscription<PermissionResolved>()("PermissionResolved", "pi:permission-resolved"),
+	onPermissionRequest: subscription<PermissionRequest>()(
+		"PermissionRequest",
+		"pi:permission-request",
+	),
+	onPermissionResolved: subscription<PermissionResolved>()(
+		"PermissionResolved",
+		"pi:permission-resolved",
+	),
 	onTrustResolved: subscription<TrustResolved>()("TrustResolved", "pi:trustResolved"),
 	onTrustRequest: subscription<TrustRequest>()("TrustRequest", "pi:trust-request"),
 	onExtensionDialogRequest: subscription<ExtensionDialogRequest>()(

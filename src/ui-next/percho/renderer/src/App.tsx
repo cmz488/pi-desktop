@@ -1,3 +1,5 @@
+import { supportsHostChannel } from "./api";
+import { NativeDesktopBar } from "./components/native/NativeWorkbench";
 import type { TrustRequest } from "@percho/shared";
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
@@ -76,7 +78,9 @@ export default function App() {
 	const trustRequests = useInteractionStore((state) => state.trustRequests);
 	const selectedTrustId = useInteractionStore((state) => state.selectedTrustId);
 	const activeCwd = useSessionsStore(selectActiveCwd);
-	const foregroundTrustCwd = useInteractionStore((state) => state.foregroundTrustCwd);
+	const foregroundTrustCwd = useInteractionStore(
+		(state) => state.foregroundTrustCwd,
+	);
 	const visibleTrustRequests = trustRequests.filter(
 		(request) =>
 			environmentEntityRef(request.id).environment.kind === "local" ||
@@ -94,7 +98,13 @@ export default function App() {
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
-	useEffect(() => initRemoteConnectionBridge(), []);
+	useEffect(
+		() =>
+			supportsHostChannel("remote:getStatus")
+				? initRemoteConnectionBridge()
+				: undefined,
+		[],
+	);
 
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
@@ -106,24 +116,27 @@ export default function App() {
 		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载
-		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
-			finishSplash(),
-		);
+		void Promise.allSettled([
+			useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT),
+		]).then(() => finishSplash());
 		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
 		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
 		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
 		restoreEnvironmentUiNavigation();
-		initUpdateStore();
+		if (supportsHostChannel("update:check")) initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
-		initAppQuit();
+		if (supportsHostChannel("app:setQuitGuard")) initAppQuit();
 		// 日常空间目录缓存（pill/轨道/侧栏的空间归属判定依赖；失败静默，入口退化为不显示）
 		void initDailyDir();
 		// UI 插件加载链路（总开关关时只订阅事件，零开销）
-		void initUiPlugins();
+		if (supportsHostChannel("uiPlugins:getConfig")) void initUiPlugins();
 	}, []);
 
 	const respondTrust = async (requestId: string, optionIndex: number) => {
-		await getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
+		await getExecutionApi(requestId).respondTrust({
+			requestId,
+			answer: optionIndex,
+		});
 		useInteractionStore.getState().removeTrust(requestId);
 	};
 
@@ -144,6 +157,7 @@ export default function App() {
 				{/* 顶栏常驻（v9）：它承担窗口拖动 / 左栏开合 / 变更侧栏入口，不再整条隐藏；
 				   设置里的开关只控制「是否显示置顶会话胶囊」（见 SessionTabBar） */}
 				<SessionTabBar />
+				<NativeDesktopBar />
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
 					{/* 聊天页容器：会话推/出过渡的动画主体（lib/session-page-slide.ts 认 data-session-page 找它，

@@ -6,6 +6,7 @@ import {
 	type SessionMeta,
 	sameEnvironment,
 } from "@percho/shared";
+import { removeDesktopProject } from "../pi-http-bridge";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
@@ -27,7 +28,10 @@ function loadAddedProjects(): string[] {
 		return Array.isArray(parsed)
 			? parsed.filter((p): p is string => {
 					try {
-						return typeof p === "string" && environmentEntityRef(p).environment.kind === "local";
+						return (
+							typeof p === "string" &&
+							environmentEntityRef(p).environment.kind === "local"
+						);
 					} catch {
 						return false;
 					}
@@ -99,7 +103,9 @@ function nextLoad(environment: EnvironmentRef): number {
 	return seq;
 }
 function localProjects(projects: string[]): string[] {
-	return projects.filter((cwd) => environmentEntityRef(cwd).environment.kind === "local");
+	return projects.filter(
+		(cwd) => environmentEntityRef(cwd).environment.kind === "local",
+	);
 }
 
 export const useProjectsStore = create<ProjectsStore>((set, get) => {
@@ -117,11 +123,18 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			...(environment.kind === "local" ? { loading: value.loading, loaded: value.loaded } : {}),
 		}));
 	};
-	const applyCatalog = (sessions: SessionMeta[], environment: EnvironmentRef): void => {
+	const applyCatalog = (
+		sessions: SessionMeta[],
+		environment: EnvironmentRef,
+	): void => {
 		set((state) => ({
 			allSessions: [
 				...state.allSessions.filter(
-					(session) => !sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
+					(session) =>
+						!sameEnvironment(
+							environmentEntityRef(session.sessionId).environment,
+							environment,
+						),
 				),
 				...sessions,
 			],
@@ -148,7 +161,11 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		load: async (environment = LOCAL_ENVIRONMENT) => {
 			const seq = nextLoad(environment);
 			const key = environmentKey(environment);
-			status(environment, { loading: true, loaded: get().catalogs[key]?.loaded ?? false, failed: false });
+			status(environment, {
+				loading: true,
+				loaded: get().catalogs[key]?.loaded ?? false,
+				failed: false,
+			});
 			try {
 				const [sessions] = await Promise.all([
 					getExecutionApi(environment).listAllSessions(),
@@ -196,7 +213,9 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		/** 重命名成功后同步历史列表：左栏会话行标题取自 `allSessions`，不同步就会「胶囊新名 / 左栏旧名」并存 */
 		applySessionName: (sessionId, name) => {
 			set((state) => ({
-				allSessions: state.allSessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
+				allSessions: state.allSessions.map((s) =>
+					s.sessionId === sessionId ? { ...s, name } : s,
+				),
 			}));
 		},
 
@@ -222,7 +241,9 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				await sessionsState.closeSession(session.sessionId);
 			}
 			set((state) => ({
-				allSessions: state.allSessions.filter((s) => s.sessionId !== session.sessionId),
+				allSessions: state.allSessions.filter(
+					(s) => s.sessionId !== session.sessionId,
+				),
 			}));
 		},
 
@@ -230,9 +251,15 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			// 内置日常空间不可删（侧栏本就不渲染删除钮，这里兜底防 IPC 重放等旁路）
 			if (isDailyCwd(cwd)) return;
 			const { allSessions } = get();
+			await removeDesktopProject(cwd);
+			const loaded = useSessionsStore.getState().sessions;
 			for (const session of allSessions.filter((s) => s.cwd === cwd)) {
-				await get().deleteSession(session);
+				if (loaded.some((row) => row.sessionId === session.sessionId))
+					await useSessionsStore.getState().closeSession(session.sessionId);
 			}
+			set((state) => ({
+				allSessions: state.allSessions.filter((row) => row.cwd !== cwd),
+			}));
 			const added = get().addedProjects.filter((p) => p !== cwd);
 			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(added)));
 			set({ addedProjects: added });
@@ -255,17 +282,24 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				if (!isPrimaryNavigationSession(meta)) return; // 只读子代理检视不进工作区
 				useSessionWorkspaceStore
 					.getState()
-					.addMember({ file: meta.sessionFile, sessionId: meta.sessionId }, { anchorFile, activate });
+					.addMember(
+						{ file: meta.sessionFile, sessionId: meta.sessionId },
+						{ anchorFile, activate },
+					);
 			};
 
-			const opened = sessionsState.sessions.find((s) => s.sessionId === session.sessionId);
+			const opened = sessionsState.sessions.find(
+				(s) => s.sessionId === session.sessionId,
+			);
 			if (opened) {
 				// 已加载：同步切（这次点击就是最新意图），再入表并激活
 				sessionsState.switchSession(opened.sessionId);
 				record(opened, true);
 				return;
 			}
-			const result = await sessionsState.openFromHistory(session.sessionFile ?? "");
+			const result = await sessionsState.openFromHistory(
+				session.sessionFile ?? "",
+			);
 			// 没开起来 → 不入表（失败已由共享 open 链 toast 过）；迟到（latest:false）只入表、不抢 activeFile
 			if (result.ok) record(result.meta, result.latest);
 		},
@@ -288,7 +322,9 @@ function absorbOpenSessions(open: readonly SessionMeta[]): void {
 	const known = new Set(state.allSessions.map((session) => session.sessionId));
 	const missing = open.filter((session) => !known.has(session.sessionId));
 	if (missing.length === 0) return;
-	useProjectsStore.setState({ allSessions: [...state.allSessions, ...missing] });
+	useProjectsStore.setState({
+		allSessions: [...state.allSessions, ...missing],
+	});
 }
 
 // 写穿接线：**只此一处** —— 任何「会话进入内存」的路径（新建/打开/fork/从历史打开）都经它落目录，
@@ -298,7 +334,9 @@ useSessionsStore.subscribe((state, prev) => {
 });
 
 /** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录（日常空间 cwd 除外，它在侧栏单独钉顶）；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
-export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {
+export function deriveProjects(
+	state: Pick<ProjectsStore, "allSessions" | "addedProjects">,
+): ProjectEntry[] {
 	const byCwd = new Map<string, ProjectEntry>();
 	for (const session of state.allSessions) {
 		if (!session.cwd || isDailyCwd(session.cwd)) continue;
@@ -334,5 +372,7 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 			});
 		}
 	}
-	return [...byCwd.values()].sort((a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive);
+	return [...byCwd.values()].sort(
+		(a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive,
+	);
 }

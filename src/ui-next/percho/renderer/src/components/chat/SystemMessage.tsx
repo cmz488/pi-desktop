@@ -1,19 +1,36 @@
+import { DesktopExtensionMessage } from "../native/DesktopExtensionMessage";
 import { type ReactNode, useState } from "react";
 import { useT } from "../../i18n";
 import type { UIMessage } from "../../stores/transcript";
 
 /** 上下文压缩分割线：──── 状态文字 ────（codex/opencode 式）；done 态摘要可点击展开 */
-export function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "system" }> }) {
+export function SystemMessage({
+	message,
+}: {
+	message: Extract<UIMessage, { kind: "system" }>;
+}) {
 	const t = useT();
 	const [expanded, setExpanded] = useState(false);
 	const compact = message.compact;
+	if (message.desktop?.extensionView)
+		return <DesktopExtensionMessage desktop={message.desktop} />;
+	if (message.desktop?.source === "automatic")
+		return (
+			<details className="desktop-automatic">
+				<summary>自动输入</summary>
+				<pre className="whitespace-pre-wrap">{message.text}</pre>
+			</details>
+		);
 	if (!compact) {
 		const mutex = message.mutex;
 		if (mutex) {
 			const fileName = mutex.extensionPath.split(/[\\/]/).pop() ?? mutex.extensionPath;
 			return (
 				<CompactionDivider>
-					{t("message.subagent.mutex", { path: fileName, tools: mutex.tools.join(", ") })}
+					{t("message.subagent.mutex", {
+						path: fileName,
+						tools: mutex.tools.join(", "),
+					})}
 				</CompactionDivider>
 			);
 		}

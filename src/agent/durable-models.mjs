@@ -279,6 +279,19 @@ export async function openDurableModels({ agentDir, directory }) {
         baseUrl,
         api: config.api ?? provider.getModels()[0]?.api ?? "openai-completions",
         keyConfigured: !!saved || !!config.apiKey,
+        authSource: saved
+          ? "stored"
+          : config.apiKey
+            ? "models_json_key"
+            : undefined,
+        customModels: config.models?.map((row) => ({
+          id: row.id,
+          name: row.name,
+          reasoning: row.reasoning,
+          contextWindow: row.contextWindow,
+          maxTokens: row.maxTokens,
+          imageInput: row.input?.includes("image"),
+        })),
         editable: true,
         custom: Object.hasOwn(configs, provider.id),
         inherited: !Object.hasOwn(document.data.providers ?? {}, provider.id),
@@ -286,6 +299,10 @@ export async function openDurableModels({ agentDir, directory }) {
         models: provider.getModels().map((model) => ({
           id: model.id,
           name: model.name,
+          input: model.input,
+          reasoning: model.reasoning,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
           available: available.some(
             (row) => row.provider === provider.id && row.id === model.id,
           ),

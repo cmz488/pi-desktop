@@ -15,7 +15,11 @@
  */
 
 /** capability 层级；顺序即强弱，用于聚合报告。 */
-export const UI_CAPABILITY_LEVELS = /** @type {const} */ (["native", "degraded", "refused"]);
+export const UI_CAPABILITY_LEVELS = /** @type {const} */ ([
+  "native",
+  "degraded",
+  "refused",
+]);
 
 /** 明确拒绝时抛出；调用方可据此区分"不支持"与"执行失败"。 */
 export class HostUiUnsupported extends Error {
@@ -99,17 +103,27 @@ const MAX_COMPONENT_LINES = 40;
 const MAX_COMPONENT_LINE_UNITS = 400;
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
+function componentLines(lines) {
+  return lines
+    .slice(0, MAX_COMPONENT_LINES)
+    .map((line) =>
+      String(line).replace(ANSI, "").trim().slice(0, MAX_COMPONENT_LINE_UNITS),
+    )
+    .filter(Boolean);
+}
 function renderComponentLines(component) {
   if (component === undefined || component === null) return [];
-  if (Array.isArray(component)) return component.flatMap((line) => renderComponentLines(line));
+  if (typeof component === "string") return componentLines([component]);
+  if (Array.isArray(component))
+    return componentLines(
+      component
+        .slice(0, MAX_COMPONENT_LINES)
+        .flatMap((line) => renderComponentLines(line)),
+    );
   const render = component.render ?? component;
   if (typeof render !== "function") return [];
   const lines = render.call(component, 100);
-  if (!Array.isArray(lines)) return [];
-  return lines
-    .slice(0, MAX_COMPONENT_LINES)
-    .map((line) => String(line).replace(ANSI, "").trim().slice(0, MAX_COMPONENT_LINE_UNITS))
-    .filter(Boolean);
+  return Array.isArray(lines) ? componentLines(lines) : [];
 }
 
 /**
@@ -180,6 +194,7 @@ export function uiSnapshot(report = uiDeclarationReport()) {
     workingVisible: true,
     hiddenThinkingLabel: "",
     toolsExpanded: false,
+    toolsExpansionVersion: 0,
     title: "",
     autocompleteProviders: 0,
     capabilities: report,
@@ -221,6 +236,7 @@ export function createExtensionUiContext(options) {
     workingFrames: undefined,
     hiddenThinkingLabel: "",
     toolsExpanded: false,
+    toolsExpansionVersion: 0,
     autocompleteProviders: 0,
     editorComponent: undefined,
     title: "",
@@ -277,7 +293,9 @@ export function createExtensionUiContext(options) {
       invalidate();
     },
     setWorkingMessage: (message) => {
-      setWorkingMessage(message === undefined ? "" : String(message).slice(0, 200));
+      setWorkingMessage(
+        message === undefined ? "" : String(message).slice(0, 200),
+      );
       invalidate();
     },
     setWorkingVisible: (visible) => {
@@ -421,6 +439,7 @@ export function createExtensionUiContext(options) {
     getToolsExpanded: () => state.toolsExpanded,
     setToolsExpanded: (expanded) => {
       state.toolsExpanded = expanded === true;
+      state.toolsExpansionVersion++;
       invalidate();
     },
   };
@@ -440,8 +459,9 @@ export function createExtensionUiContext(options) {
     counts: UI_CAPABILITY_LEVELS.reduce(
       (acc, level) => ({
         ...acc,
-        [level]: Object.values(UI_CAPABILITY_DECLARATION).filter((entry) => entry.level === level)
-          .length,
+        [level]: Object.values(UI_CAPABILITY_DECLARATION).filter(
+          (entry) => entry.level === level,
+        ).length,
       }),
       {},
     ),
@@ -455,6 +475,7 @@ export function createExtensionUiContext(options) {
     state.workingFrames = undefined;
     state.hiddenThinkingLabel = "";
     state.toolsExpanded = false;
+    state.toolsExpansionVersion++;
     state.autocompleteProviders = 0;
     state.editorComponent = undefined;
     state.title = "";

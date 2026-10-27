@@ -45,6 +45,8 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 ## Percho 适配回归
 
+当前 React 页面入口以 `npm run test:ui-next:browser` 验收：默认 Host 的真实聊天、扩展卡片与命令、任务表单／后台委托、文件预览、Git 确认提交、提供商保存、侧聊及带回、窄屏／主题，以及 SDK Web 的 UUID 会话和原生工具。对应 `test/ui-parity.test.mjs` 覆盖 HTTP 与实际 Percho 消费者；恢复清单和边界见[能力恢复记录](../history/percho-ui-parity-repair.md)。本节以外的较早浏览器脚本记录旧界面阶段，不能直接作为当前 Percho 页面入口通过的证据。
+
 `test/percho-integration.test.mjs` 启动默认的多进程 Desktop Host，验证两个 worker 的身份、项目和消息目标隔离，按文件重开、真实 SSE 回复、扩展通知／预填／一次性对话框，以及偏好的局部更新、并发保存与 Host 重开。边界数据直接交给移植的 `messagesToUIMessages`、`buildChatRows`、`reduceEvent` 和导航解析器消费，不以“返回了数组”代替契约验证。
 
 `test/mobile-stream.test.mjs` 保持真实 SSE 连接，验证从桌面／workspace 发起的 partial 和最终答案到达手机，并将快照交给实际 lan-web 消费函数；另验证五连接上限、一次性释放名额及有连接时的停机。手机增量使用 `snapshot` 命名帧替换权威状态，保留既有 `list`／`ping` 帧。

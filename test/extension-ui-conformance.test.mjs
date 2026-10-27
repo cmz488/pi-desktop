@@ -42,7 +42,9 @@ async function sdkUiMembers() {
   // 成员形如 `name(...)`、`name<T>(...)` 或 `readonly name: T`；泛型参数必须允许，否则
   // 像 `custom<T>(factory)` 这样的重载会被漏掉。
   const members = [
-    ...body.matchAll(/^ {4}(?:readonly )?([A-Za-z_][A-Za-z0-9_]*)\??\s*(?:<[^>]*>)?\s*[:(]/gm),
+    ...body.matchAll(
+      /^ {4}(?:readonly )?([A-Za-z_][A-Za-z0-9_]*)\??\s*(?:<[^>]*>)?\s*[:(]/gm,
+    ),
   ].map((match) => match[1]);
   return [...new Set(members)].sort();
 }
@@ -103,7 +105,7 @@ test("每个成员都落在三态之一，且没有未声明的实现", () => {
 });
 
 test("native 成员真实可用，不是空实现", async () => {
-  const { ui } = fixture();
+  const { ui, state } = fixture();
 
   assert.equal(await ui.select("标题", ["a", "b"]), "yes");
   assert.equal(await ui.confirm("标题", "内容"), true);
@@ -118,6 +120,7 @@ test("native 成员真实可用，不是空实现", async () => {
   ui.setHiddenThinkingLabel("思考中");
   ui.setTitle("窗口标题");
   ui.setWidget("w", ["行一", "行二"]);
+  assert.deepEqual(state.widgets.get("w").lines(), ["行一", "行二"]);
   ui.setEditorText("草稿");
   ui.pasteToEditor("粘贴");
   ui.setToolsExpanded(true);
@@ -125,7 +128,9 @@ test("native 成员真实可用，不是空实现", async () => {
   assert.equal(ui.getEditorText(), "mirror-text");
   assert.equal(ui.getToolsExpanded(), true);
   assert.equal(ui.theme.name, "fixture-theme");
-  assert.deepEqual(ui.getAllThemes(), [{ name: "dark", path: "/themes/dark.json" }]);
+  assert.deepEqual(ui.getAllThemes(), [
+    { name: "dark", path: "/themes/dark.json" },
+  ]);
   assert.equal(ui.getTheme("dark").name, "dark");
   assert.equal(ui.getTheme("missing"), undefined);
 });
@@ -212,7 +217,9 @@ test("报告统计与声明表一致，reset 清空使用记录但保留声明",
   for (const level of UI_CAPABILITY_LEVELS)
     assert.equal(
       counts[level],
-      Object.values(UI_CAPABILITY_DECLARATION).filter((entry) => entry.level === level).length,
+      Object.values(UI_CAPABILITY_DECLARATION).filter(
+        (entry) => entry.level === level,
+      ).length,
       `${level} 计数与声明表不一致`,
     );
   assert.equal(

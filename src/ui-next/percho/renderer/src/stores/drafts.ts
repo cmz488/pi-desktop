@@ -36,6 +36,7 @@ export const COMPOSER_FOCUS_EVENT = "pi:composer-focus";
 export interface DraftEntry {
 	document: ComposerDocument;
 	images: ImageInput[];
+	files?: { name: string; type: string; data: string }[];
 	slashCommand: string | null;
 	/** 选中引用（对话区选中内容弹菜单添加）；发送时逐条转 blockquote 段落置于最前 */
 	quotes: string[];
@@ -45,6 +46,7 @@ export interface DraftEntry {
 export const EMPTY_DRAFT: DraftEntry = {
 	document: EMPTY_COMPOSER_DOCUMENT,
 	images: [],
+	files: [],
 	slashCommand: null,
 	quotes: [],
 };
@@ -59,13 +61,17 @@ interface DraftStore {
 	pendingBySession: Record<string, boolean>;
 	errorsBySession: Record<string, UiError | undefined>;
 	/** 更新某会话草稿（传整个条目的变换函数）；结果全空时删除条目 */
-	updateDraft: (key: string, updater: (entry: DraftEntry) => DraftEntry) => void;
+	updateDraft: (
+		key: string,
+		updater: (entry: DraftEntry) => DraftEntry,
+	) => void;
 }
 
 function isEmpty(entry: DraftEntry): boolean {
 	return (
 		entry.document.parts.length === 0 &&
 		entry.images.length === 0 &&
+		(entry.files?.length ?? 0) === 0 &&
 		!entry.slashCommand &&
 		entry.quotes.length === 0
 	);
@@ -97,7 +103,10 @@ export function withDraftText(entry: DraftEntry, text: string): DraftEntry {
 	return { ...entry, document: composerDocumentFromText(text) };
 }
 
-export function appendDraftInput(entry: DraftEntry, input: QueuedInput): DraftEntry {
+export function appendDraftInput(
+	entry: DraftEntry,
+	input: QueuedInput,
+): DraftEntry {
 	return {
 		...entry,
 		document: appendComposerDocument(entry.document, input.document),
@@ -112,7 +121,11 @@ export function takeDraft(key: string): DraftEntry {
 	return entry;
 }
 
-export function restoreRejectedDraft(key: string, entry: DraftEntry, conflict = false) {
+export function restoreRejectedDraft(
+	key: string,
+	entry: DraftEntry,
+	conflict = false,
+) {
 	useDraftStore.setState((state) => {
 		if (!conflict && !state.bySession[key]) return { bySession: { ...state.bySession, [key]: entry } };
 		return { failedBySession: { ...state.failedBySession, [key]: entry } };
@@ -128,6 +141,9 @@ export function restoreFailedDraft(key: string) {
 		const current = state.bySession[key];
 		if (current) pending[key] = current;
 		else delete pending[key];
-		return { bySession: { ...state.bySession, [key]: failed }, failedBySession: pending };
+		return {
+			bySession: { ...state.bySession, [key]: failed },
+			failedBySession: pending,
+		};
 	});
 }

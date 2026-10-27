@@ -435,14 +435,19 @@ export async function startDurableDesk(options = {}) {
       if (!Number.isSafeInteger(entryId))
         throw new DeskError(422, "没有可退回的消息");
       await transcript.sync();
-      const replay = transcript.rewindContext(entryId);
-      if (!replay?.messages.length)
+      if (input.before !== undefined && typeof input.before !== "boolean")
+        throw new DeskError(422, "退回方式无效");
+      const replay = transcript.rewindContext(entryId, {
+        before: input.before === true,
+      });
+      if (!replay || (!replay.messages.length && input.before !== true))
         throw new DeskError(409, "退回位置尚未写入原生会话，请稍后重试");
       const result = await workspace.execute("rewind", {
         id: input.id,
         entryId,
         messages: replay.messages,
         origins: replay.origins,
+        before: input.before === true,
       });
       await transcripts?.sync(root.agents);
       root = await workspace.read();
@@ -485,6 +490,7 @@ export async function startDurableDesk(options = {}) {
         newSession: true,
         switchSession: true,
         sessionCommand: true,
+        sessionExport: true,
         canManageSessions: true,
         packageManagement: Boolean(resources),
         packageUpdates: Boolean(resources),
@@ -654,6 +660,12 @@ export async function startDurableDesk(options = {}) {
           tokens: { ...active?.usage, total: active?.usage?.tokens ?? 0 },
           cost: active?.usage?.cost ?? 0,
         };
+        const widgetMessages = (nativeSnapshot.widgets ?? []).map((message) =>
+          projectMessage(message, message.id),
+        );
+        const standaloneWidget = (message) =>
+          message.extensionView?.adapterId === "pi-desktop-card" &&
+          message.extensionView.widget === true;
         ctx.snapshot = createAgentSnapshot({
           version: manifest.version,
           host: "durable",
@@ -683,12 +695,22 @@ export async function startDurableDesk(options = {}) {
           thinkingLevel: active?.thinkingLevel ?? "off",
           thinkingLevels: levels,
           thinkingEditable: !!active && !auth.running,
-          models: root.models.map((row) => ({ ...row, id: row.modelId })),
+          models: root.models.map((row) => {
+            const model = providers?.models.getModel(row.provider, row.modelId);
+            return {
+              ...row,
+              id: row.modelId,
+              input: model?.input,
+              thinkingLevels: model
+                ? getSupportedThinkingLevels(model)
+                : undefined,
+            };
+          }),
           messages: [
             ...(active?.messages ?? []),
-            ...(nativeSnapshot.widgets ?? [])
-              .map((message) => projectMessage(message, message.id))
-              .filter((message) => message.extensionView),
+            ...widgetMessages.filter(
+              (message) => message.extensionView && !standaloneWidget(message),
+            ),
           ],
           streamingMessage: active?.partial ?? null,
           streamingText: active?.partial?.text ?? "",
@@ -733,12 +755,15 @@ export async function startDurableDesk(options = {}) {
           },
           extra: {
             ...result,
+            // 新组件独立于历史；既有目标组件的 messages 兼容投影保持原样。
+            widgets: widgetMessages.filter(standaloneWidget),
             // 会话栏判断「退回分支」是否可用：把是否绑定原生转录一并带上（追加字段）。
             agents: result.agents?.map((agent) => ({
               ...agent,
               native: !!transcripts?.get(agent.id),
             })),
             active: active ? { ...active, resourceState: undefined } : null,
+            loadedResources: nativeInfo?.loadedResources,
             sessionCommands: true,
             configurationPending: !!active?.configurationPending,
             canDeferConfiguration: !!active && !auth.running,
@@ -1179,6 +1204,11 @@ export async function startDurableDesk(options = {}) {
       newSession: async (input) => {
         const result = await create(input);
         return { ...result, sessionId: String(result.id) };
+      },
+      sessionExport: async () => {
+        const transcript = transcripts?.get(target().active.id);
+        if (!transcript) throw new DeskError(409, "当前会话尚无原生转录");
+        return transcript.snapshot();
       },
       async sessionCommand(args) {
         const command = parseSessionsCommand(args);

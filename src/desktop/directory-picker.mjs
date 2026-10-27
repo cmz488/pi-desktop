@@ -4,6 +4,25 @@ import { stat, realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { DeskError } from "../config/config-store.mjs";
 
+export async function validateDirectory(path) {
+  if (
+    typeof path !== "string" ||
+    !isAbsolute(path) ||
+    path.length > 4096 ||
+    /[\0\r\n]/.test(path)
+  )
+    throw new DeskError(422, "请选择有效的绝对项目路径");
+  try {
+    const resolved = await realpath(path);
+    if (!(await stat(resolved)).isDirectory())
+      throw new Error("not a directory");
+    return resolved;
+  } catch (error) {
+    if (error instanceof DeskError) throw error;
+    throw new DeskError(422, "项目目录不存在或不可访问");
+  }
+}
+
 const run = promisify(execFile);
 export function createDirectoryPicker({
   platform = process.platform,
@@ -85,9 +104,7 @@ export function createDirectoryPicker({
           .filter(Boolean);
       const path = result.stdout.trim();
       if (!path) return null;
-      if (!isAbsolute(path) || !(await stat(path)).isDirectory())
-        throw new DeskError(422, "请选择有效的项目文件夹");
-      return await realpath(path);
+      return await validateDirectory(path);
     } catch (error) {
       if (
         error.code === 1 ||

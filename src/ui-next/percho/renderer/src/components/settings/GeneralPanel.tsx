@@ -1,3 +1,5 @@
+import { supportsHostChannel } from "../../api";
+import { NativeSettingsButton } from "../native/NativeSettingsButton";
 import type { ContextManagerMode } from "@percho/shared";
 import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
@@ -12,15 +14,30 @@ export function GeneralPanel() {
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const contextManagerMode = useSettingsStore((s) => s.contextManagerMode);
-	const setContextManagerMode = useSettingsStore((s) => s.setContextManagerMode);
+	const setContextManagerMode = useSettingsStore(
+		(s) => s.setContextManagerMode,
+	);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
-	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
+	const setChannelWatchEnabled = useSettingsStore(
+		(s) => s.setChannelWatchEnabled,
+	);
 
 	return (
 		<div className="flex flex-col gap-6">
 			<div>
-				<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
-				<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>
+				<h3 className="text-ui-13 font-medium text-ink">Pi 配置</h3>
+				<p className="my-2 text-ui-12 text-ink-dim">
+					模型默认值、上下文压缩、工具、网络与 Shell 设置。
+				</p>
+				<NativeSettingsButton view="general">打开 Pi 配置</NativeSettingsButton>
+			</div>
+			<div>
+				<h3 className="text-ui-13 font-medium text-ink">
+					{t("settings.language")}
+				</h3>
+				<p className="mt-0.5 text-ui-11 text-ink-faint">
+					{t("settings.languageHint")}
+				</p>
 				<div className="mt-2 flex gap-2">
 					{(["zh", "en"] as Language[]).map((lang) => (
 						<button
@@ -38,7 +55,7 @@ export function GeneralPanel() {
 					))}
 				</div>
 			</div>
-			<div>
+			<div hidden={!supportsHostChannel("contextManager:getConfig")}>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-ui-13 font-medium text-ink">{t("settings.contextManager")}</h3>
 					<div className="flex gap-2">
@@ -63,7 +80,7 @@ export function GeneralPanel() {
 					{contextManagerMode ? t(`settings.contextManagerHint.${contextManagerMode}`) : ""}
 				</p>
 			</div>
-			<div>
+			<div hidden={!supportsHostChannel("channelWatch:getConfig")}>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-ui-13 font-medium text-ink">{t("settings.channelWatch")}</h3>
 					<Switch

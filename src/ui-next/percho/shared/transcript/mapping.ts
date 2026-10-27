@@ -27,10 +27,16 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		if (!m) continue;
 		const id = `h${i}`;
 		if (m.role === "system") {
-      flushError();
-      ui.push({ kind: "system", id, text: m.text, timestamp: m.timestamp });
-      continue;
-    }
+			flushError();
+			ui.push({
+				kind: "system",
+				id,
+				text: m.text,
+				timestamp: m.timestamp,
+				desktop: m.desktop,
+			});
+			continue;
+		}
 		if (m.role === "compaction") {
 			// 重开会话回放的压缩分割线（实时路径由 compaction_start/end 事件产生）。
 			// 不 flushError：与实时同序 —— 溢出恢复的压缩发生在 pending 错误卡落卡之前，
@@ -50,7 +56,13 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}
 		if (m.role === "image") {
 			flushError();
-			ui.push({ kind: "image", id, images: m.images, paths: m.paths, timestamp: m.timestamp });
+			ui.push({
+				kind: "image",
+				id,
+				images: m.images,
+				paths: m.paths,
+				timestamp: m.timestamp,
+			});
 			continue;
 		}
 		if (m.role === "subagent") {

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import {
@@ -18,6 +19,7 @@ export class SessionHost {
     this.createSlot = createSlot;
     this.backend = { id: randomUUID(), pid: process.pid, owner: host };
     this.slots = new Map();
+    this.requestScope = new AsyncLocalStorage();
     this.listeners = new Set();
     this.mutation = Promise.resolve();
     this.closed = false;
@@ -35,7 +37,14 @@ export class SessionHost {
     this.startNative = undefined;
   }
   get active() {
-    const slot = this.slots.get(this.focusId);
+    const scoped = this.requestScope.getStore();
+    if (
+      scoped &&
+      (scoped.slot.id !== scoped.id ||
+        this.slots.get(scoped.id) !== scoped.slot)
+    )
+      throw new DeskError(409, "会话已切换或关闭，请重新打开");
+    const slot = scoped?.slot ?? this.slots.get(this.focusId);
     if (!slot) throw new DeskError(409, "会话管理器尚未就绪");
     return slot;
   }
@@ -68,6 +77,8 @@ export class SessionHost {
       return {
         id: slot.id,
         name: state.name,
+        sessionFile: state.sessionFile ?? state.stats?.sessionFile,
+        cwd: state.cwd,
         messageCount: state.stats?.totalMessages ?? state.messages?.length ?? 0,
         running: !state.idle && !state.initializing && !state.replacing,
         initializing: !!state.initializing,
@@ -236,7 +247,7 @@ export class SessionHost {
     return this.select(row.id);
   }
   validateTarget(input) {
-    if (input.sessionId !== undefined && input.sessionId !== this.focusId)
+    if (input.sessionId !== undefined && input.sessionId !== this.active.id)
       throw new DeskError(409, "当前会话已变化，请刷新后重试");
   }
   routeOptions() {
@@ -252,6 +263,17 @@ export class SessionHost {
         canManageSessions: true,
         canEditShared: true,
         validateTarget: true,
+        requestContext: true,
+      },
+      requestContext(request, _response, run) {
+        const url = new URL(request.url, "http://localhost");
+        if (!url.pathname.startsWith("/api/")) return run();
+        const id = url.searchParams.get("sessionId");
+        if (id === null) return run();
+        const slot = manager.slots.get(id);
+        if (!slot) throw new DeskError(404, "此会话尚未打开");
+        // A view is scoped across awaits; it never changes the TUI's focus or starts a slot.
+        return manager.requestScope.run({ id, slot }, run);
       },
       listSessions: () => manager.list(),
       newSession: () => manager.create(),
@@ -260,7 +282,7 @@ export class SessionHost {
       gitChanged: () => {
         for (const slot of manager.slots.values()) slot.options.gitChanged?.();
       },
-      abort: () => manager.stopSession(),
+      abort: () => manager.stopSession(manager.active.id),
       canManageSessions: () => !manager.closed,
       validateTarget: (input) => manager.validateTarget(input),
       canEditShared: () =>

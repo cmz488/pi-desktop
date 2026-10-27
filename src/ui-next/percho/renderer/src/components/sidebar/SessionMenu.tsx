@@ -23,8 +23,14 @@ export function useSessionMenu() {
 	const t = useT();
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
 	const deleteSession = useProjectsStore((s) => s.deleteSession);
-	const [menu, setMenu] = useState<{ session: SessionMeta; anchor: MenuAnchor } | null>(null);
-	const [renaming, setRenaming] = useState<{ session: SessionMeta; anchor: MenuAnchor } | null>(null);
+	const [menu, setMenu] = useState<{
+		session: SessionMeta;
+		anchor: MenuAnchor;
+	} | null>(null);
+	const [renaming, setRenaming] = useState<{
+		session: SessionMeta;
+		anchor: MenuAnchor;
+	} | null>(null);
 	const [deleting, setDeleting] = useState<SessionMeta | null>(null);
 
 	const open = (session: SessionMeta, anchor: MenuAnchor) => {
@@ -44,7 +50,14 @@ export function useSessionMenu() {
 						pinned: pinnedSessions.includes(menu.session.sessionId),
 						onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
 						onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
-						onDelete: () => setDeleting(menu.session),
+						onDelete:
+							menu.session.archivable === false
+								? undefined
+								: () => setDeleting(menu.session),
+						deleteLabel:
+							menu.session.archivable === true
+								? t("sessionMenu.archive")
+								: undefined,
 					})}
 				/>
 			)}
@@ -62,9 +75,21 @@ export function useSessionMenu() {
 			)}
 			{deleting && (
 				<ConfirmDialog
-					title={t("sessionMenu.deleteTitle")}
-					description={t("sessionMenu.deleteDesc")}
-					confirmLabel={t("sessionMenu.delete")}
+					title={t(
+						deleting.archivable === true
+							? "sessionMenu.archiveTitle"
+							: "sessionMenu.deleteTitle",
+					)}
+					description={t(
+						deleting.archivable === true
+							? "sessionMenu.archiveDesc"
+							: "sessionMenu.deleteDesc",
+					)}
+					confirmLabel={t(
+						deleting.archivable === true
+							? "sessionMenu.archive"
+							: "sessionMenu.delete",
+					)}
 					cancelLabel={t("common.cancel")}
 					danger
 					onConfirm={() => {

@@ -1,6 +1,6 @@
 import type { ComposerDocument } from "../composer-document";
 import type { UiError } from "../errors";
-import type { ImageInput } from "../session";
+import type { DesktopPresentation, ImageInput } from "../session";
 import type { SkillInvocationDisplay } from "../skill-invocation";
 import type { TodoItem } from "../todo";
 
@@ -70,6 +70,7 @@ export type UIMessage =
 	  }
 	| {
 			kind: "system";
+			desktop?: DesktopPresentation;
 			id: string;
 			text: string;
 			timestamp: number;

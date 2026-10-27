@@ -1,3 +1,7 @@
+import {
+  composerInput,
+  composerDisplayText,
+} from "../shared/composer-input.mjs";
 import { createServer as httpServer } from "node:http";
 import { createServer as httpsServer } from "node:https";
 import { randomUUID, createHash } from "node:crypto";
@@ -9,7 +13,11 @@ import {
 import { readFile } from "node:fs/promises";
 import { readWorkspaceFile } from "../workspace/workspace-files.mjs";
 import { join } from "node:path";
-import { publicAssets, createStaticAssetHandler, nextPageAssets } from "./web-assets.mjs";
+import {
+  publicAssets,
+  createStaticAssetHandler,
+  nextPageAssets,
+} from "./web-assets.mjs";
 import { sendJson as json, openEventStream } from "./http-transfer.mjs";
 import { chatSnapshot } from "../shared/lazy-data.mjs";
 import QRCode from "qrcode";
@@ -44,9 +52,15 @@ import {
 import { getGitRepository, isGitBusy } from "../git/git-manager.mjs";
 import { createPackageCatalog } from "../resources/package-catalog.mjs";
 import { createPackageManagement } from "../resources/package-management.mjs";
-import { createDirectoryPicker } from "../desktop/directory-picker.mjs";
+import {
+  createDirectoryPicker,
+  validateDirectory,
+} from "../desktop/directory-picker.mjs";
+import { createUiStateStore } from "./ui-state-store.mjs";
 import { createHostInterface } from "./host-interface.mjs";
 const BODY_LIMIT = 96 * 1024;
+// UI 文档有 1 MiB 的独立存储上限，请求还带 JSON 包络。
+const UI_STATE_BODY_LIMIT = 2 * 1024 * 1024;
 const EVENT_LIMIT = 2000;
 const REPLAY_BYTE_LIMIT = 8 * 1024 * 1024;
 const loopback = (address) =>
@@ -107,6 +121,9 @@ export function createDeskBridge(input) {
   const certPath = transport.certPath ?? process.env.PI_DESK_TLS_CERT;
   const keyPath = transport.keyPath ?? process.env.PI_DESK_TLS_KEY;
   const secure = Boolean(certPath && keyPath);
+  const uiStateStore = createUiStateStore(
+    join(transport.agentDir, "desktop-ui"),
+  );
   const settingsPath = join(transport.agentDir, "settings.json");
   const modelsPath =
     transport.modelsPath ?? join(transport.agentDir, "models.json");
@@ -393,6 +410,33 @@ export function createDeskBridge(input) {
     if (await serveAsset(request, response, url.pathname)) return;
     if (host.capabilities.route && (await hooks.route(request, response, url)))
       return;
+    if (["/api/ui-state", "/api/environment-ui-state"].includes(url.pathname)) {
+      const name =
+        url.pathname === "/api/ui-state" ? "uiState" : "environmentUiState";
+      if (request.method === "GET") {
+        json(response, 200, { value: await uiStateStore.read(name) });
+        return;
+      }
+      if (request.method === "POST") {
+        if (
+          request.headers.origin !==
+          `${secure ? "https" : "http"}://${request.headers.host}`
+        )
+          throw new DeskError(403, "UI 状态只能由同源页面保存");
+        const input = await body(request, UI_STATE_BODY_LIMIT);
+        json(response, 200, {
+          value: await uiStateStore.write(name, input.value, {
+            merge: name === "uiState",
+          }),
+        });
+        return;
+      }
+    }
+    if (url.pathname === "/api/daily-dir" && request.method === "GET") {
+      // SDK／TUI 兼容宿主的工作目录仍由 Pi 拥有，不另建 Desktop 无项目执行环境。
+      json(response, 200, { path: host.snapshot().cwd });
+      return;
+    }
     if (url.pathname === "/api/files" && request.method === "GET") {
       const snapshot = host.snapshot();
       if (snapshot.capabilities?.readOnly && !snapshot.capabilities?.files)
@@ -566,6 +610,14 @@ export function createDeskBridge(input) {
       json(response, 200, await catalog.details(url.searchParams.get("name")));
       return;
     }
+    if (url.pathname === "/api/session-export" && request.method === "GET") {
+      if (!host.capabilities.sessionExport)
+        throw new DeskError(501, "当前宿主未提供原生会话导出");
+      const value = await host.require("sessionExport")();
+      if (!value?.header) throw new DeskError(409, "会话尚未生成原生记录");
+      json(response, 200, value);
+      return;
+    }
     if (url.pathname === "/api/sessions" && request.method === "GET") {
       json(response, 200, {
         rows: host.capabilities.sessions ? await sessions.list() : [],
@@ -715,6 +767,34 @@ export function createDeskBridge(input) {
     );
     const requestTarget = host.target(input);
     requestTarget.assertInput({ cwd: false });
+    if (url.pathname === "/api/workspace/validate-directory") {
+      if (
+        !localManagement(request) ||
+        request.headers.origin !==
+          `${secure ? "https" : "http"}://${request.headers.host}`
+      )
+        throw new DeskError(403, "目录校验只能由本机同源页面发起");
+      json(response, 200, { path: await validateDirectory(input.path) });
+      return;
+    }
+    if (url.pathname === "/api/workspace/directory") {
+      if (
+        !localManagement(request) ||
+        request.headers.origin !==
+          `${secure ? "https" : "http"}://${request.headers.host}`
+      )
+        throw new DeskError(403, "目录选择只能由本机同源页面发起");
+      const cancel = () => {
+        if (!response.writableEnded) filePicker.close?.();
+      };
+      response.once("close", cancel);
+      try {
+        json(response, 200, { path: await filePicker.pick() });
+      } finally {
+        response.removeListener("close", cancel);
+      }
+      return;
+    }
     if (url.pathname === "/api/context/files") {
       if (
         !localManagement(request) ||
@@ -855,11 +935,22 @@ export function createDeskBridge(input) {
         input.message.length > 50000
       )
         throw new DeskError(422, "消息长度无效");
+      let documentMatches = false;
+      if (input.document !== undefined) {
+        try {
+          documentMatches =
+            composerInput(input) === input.message &&
+            composerDisplayText(input.document) === input.original;
+        } catch {
+          throw new DeskError(422, "输入文档格式无效");
+        }
+        if (!documentMatches) throw new DeskError(422, "输入文档与消息不一致");
+      }
       if (
         input.original !== undefined &&
         (typeof input.original !== "string" ||
           input.original.length > 50000 ||
-          input.original.trim() !== input.message.trim())
+          (!documentMatches && input.original.trim() !== input.message.trim()))
       )
         throw new DeskError(422, "输入原文与消息不一致");
 

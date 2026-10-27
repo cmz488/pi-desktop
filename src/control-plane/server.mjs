@@ -11,7 +11,10 @@ import {
   publicAssets,
 } from "../server/web-assets.mjs";
 import QRCode from "qrcode";
-import { createDirectoryPicker } from "../desktop/directory-picker.mjs";
+import {
+  createDirectoryPicker,
+  validateDirectory,
+} from "../desktop/directory-picker.mjs";
 import { createDesktopGlobal } from "../resources/desktop-global.mjs";
 import { sendJson } from "../server/http-transfer.mjs";
 import { workspaceIndex } from "../shared/lazy-data.mjs";
@@ -268,6 +271,14 @@ export async function startDesktopHost(options = {}) {
         throw new DeskError(403, "写入需要同源 JSON 请求");
       if (sharedBusy && request.method === "POST")
         throw new DeskError(409, "全局配置正在更新，请稍后重试");
+      if (
+        url.pathname === "/api/workspace/validate-directory" &&
+        request.method === "POST"
+      ) {
+        const input = await body(request);
+        sendJson(response, 200, { path: await validateDirectory(input.path) });
+        return;
+      }
       if (
         url.pathname === "/api/workspace/directory" &&
         request.method === "POST"
