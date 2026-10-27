@@ -104,30 +104,6 @@ for (const file of await readdir(new URL("fonts/", katexDirectory))) {
           : "font/woff",
     ]);
 }
-const pages = {
-  chat: [
-    ["/", ["src/ui/chat/index.html", "text/html"]],
-    ["/prototype.html", ["src/ui/chat/index.html", "text/html"]],
-    ["/prototype.js", ["src/ui/chat/chat.js", javascript]],
-    ["/boot.js", ["src/ui/boot.js", javascript]],
-    ["/prototype.css", ["src/ui/chat/chat.css", "text/css"]],
-  ],
-  workspace: [
-    ["/", ["src/ui/workspace.html", "text/html"]],
-    ["/workspace.js", ["src/ui/workspace.js", javascript]],
-    ["/workspace-boot.js", ["src/ui/boot.js", javascript]],
-    ["/workspace.css", ["src/ui/workspace.css", "text/css"]],
-  ],
-};
-
-/** Enumerate public assets; never expose a source or dependency directory. */
-export function publicAssets(page) {
-  const entries = pages[page === "preview" ? "chat" : page];
-  if (page === "next") return new Map([...sharedAssets, ...nextPageAssets]);
-  if (!entries) throw new TypeError(`未知页面资产：${page}`);
-  return new Map([...sharedAssets, ...entries]);
-}
-
 /**
  * Percho 渲染层（src/ui-next/）的构建产物页面。
  *
@@ -141,3 +117,38 @@ export const nextPageAssets = new Map([
   ["/ui-next/", ["build/ui-next/index.html", "text/html"]],
   ["/ui-next", ["build/ui-next/index.html", "text/html"]],
 ]);
+
+const pages = {
+  // 旧聊天页仍在显式 URL 上可达；入口 `/` 已交给移植后的渲染层（见 publicAssets）。
+  chat: [
+    ["/prototype.html", ["src/ui/chat/index.html", "text/html"]],
+    ["/prototype.js", ["src/ui/chat/chat.js", javascript]],
+    ["/boot.js", ["src/ui/boot.js", javascript]],
+    ["/prototype.css", ["src/ui/chat/chat.css", "text/css"]],
+  ],
+  workspace: [
+    ["/workspace.html", ["src/ui/workspace.html", "text/html"]],
+    ["/workspace.js", ["src/ui/workspace.js", javascript]],
+    ["/workspace-boot.js", ["src/ui/boot.js", javascript]],
+    ["/workspace.css", ["src/ui/workspace.css", "text/css"]],
+  ],
+};
+
+/**
+ * 枚举公共资产；不暴露源码或依赖目录。
+ *
+ * 入口 `/` 由移植后的渲染层承担（它与旧聊天页／工作区页是两套独立界面，不能共存于同一 URL）。
+ * 旧页面仍从 `/prototype.html`、`/workspace.html` 提供，使回归测试与回滚仍可直接访问它们。
+ */
+export function publicAssets(page) {
+  if (page === "next") return new Map([...sharedAssets, ...nextPageAssets]);
+  const entries = pages[page === "preview" ? "chat" : page];
+  if (!entries) throw new TypeError(`未知页面资产：${page}`);
+  return new Map([
+    ...sharedAssets,
+    ...entries,
+    ["/", ["build/ui-next/index.html", "text/html"]],
+    ...nextPageAssets,
+  ]);
+}
+

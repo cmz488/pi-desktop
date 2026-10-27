@@ -100,7 +100,7 @@ test("large static modules use gzip and conditional requests avoid repeat downlo
 test("page scripts and styles reduce cold-transfer bytes", async (t) => {
   const f = await fixture(t);
   const paths = [
-    "/",
+    "/prototype.html",
     "/prototype.js",
     "/prototype.css",
     "/design-tokens.css",
@@ -169,8 +169,9 @@ test("static encoding negotiation respects gzip exclusions and representation va
 test("live HTML loads its first-paint bootstrap as a same-origin script", async (t) => {
   // CSP 是 script-src 'self'：内联脚本会被拦截，主题与嵌入布局就会在延迟模块
   // 运行前闪一下。首次绘制引导必须由外部脚本承担。
+  // 入口 / 已是移植后的渲染层，所以这条针对旧聊天页的约束在它的显式 URL 上验证。
   const f = await fixture(t);
-  const page = await f.request("/");
+  const page = await f.request("/prototype.html");
   const html = page.body.toString();
   assert(html.includes('<script src="boot.js"></script>'));
   assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "HTML 不能依赖内联脚本");
@@ -182,10 +183,11 @@ test("live HTML loads its first-paint bootstrap as a same-origin script", async 
 
 test("live HTML and HEAD use the same static representation; fonts stay binary", async (t) => {
   const f = await fixture(t);
-  const page = await f.request("/");
+  // 同样改到旧聊天页的显式 URL：GET 与 HEAD 必须指向同一份表示。
+  const page = await f.request("/prototype.html");
   assert(page.body.toString().includes('name="pi-desk-mode" content="live"'));
   assert.equal(page.headers["content-type"], "text/html; charset=utf-8");
-  const head = await f.request("/", {}, "HEAD");
+  const head = await f.request("/prototype.html", {}, "HEAD");
   assert.equal(head.status, 200);
   assert.equal(head.body.length, 0);
   assert.equal(head.headers.etag, page.headers.etag);

@@ -9,9 +9,10 @@ import { readUntil } from "./sse-reader.mjs";
 
 test("workspace page loads its first-paint theme bootstrap as a same-origin script", async (t) => {
   // CSP 是 script-src 'self'：内联脚本会被拦截，外壳就会先按浅色绘制。
+  // 入口 / 已交给移植后的渲染层；这条针对旧外壳的约束在它的显式 URL 上验证。
   const f = await desktopFixture();
   t.after(() => f.close());
-  const response = await fetch(new URL("/", f.app.url));
+  const response = await fetch(new URL("/workspace.html", f.app.url));
   assert.match(
     response.headers.get("content-security-policy"),
     /script-src 'self'/,
