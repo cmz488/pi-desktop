@@ -9,7 +9,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { readWorkspaceFile } from "../workspace/workspace-files.mjs";
 import { join } from "node:path";
-import { publicAssets, createStaticAssetHandler } from "./web-assets.mjs";
+import { publicAssets, createStaticAssetHandler, nextPageAssets } from "./web-assets.mjs";
 import { sendJson as json, openEventStream } from "./http-transfer.mjs";
 import { chatSnapshot } from "../shared/lazy-data.mjs";
 import QRCode from "qrcode";
@@ -53,6 +53,8 @@ const REPLAY_BYTE_LIMIT = 8 * 1024 * 1024;
 const loopback = (address) =>
   ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"].includes(address);
 const assets = publicAssets("chat");
+// Percho 渲染层（React）单独一套资产；与旧聊天页互不影响。
+const nextAssets = new Map(nextPageAssets);
 
 async function body(request, limit = BODY_LIMIT) {
   let length = 0;
@@ -76,6 +78,7 @@ export function createDeskBridge(input) {
   const host = createHostInterface(input);
   const { transport, state, sessions, resources, models, prompt, hooks } = host;
   const filePicker = transport.filePicker ?? createDirectoryPicker();
+  const serveNextAsset = createStaticAssetHandler(nextAssets);
   const serveAsset = createStaticAssetHandler(assets, {
     transform: (body, type) =>
       type === "text/html"
@@ -395,6 +398,7 @@ export function createDeskBridge(input) {
       "Content-Security-Policy",
       `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; ${transport.embeddedUI ? "frame-src 'self' http: https:;" : ""} frame-ancestors ${transport.embeddedUI ? "'self'" : "'none'"}; base-uri 'none'; form-action 'self'`,
     );
+    if (await serveNextAsset(request, response, url.pathname)) return;
     if (await serveAsset(request, response, url.pathname)) return;
     if (host.capabilities.route && (await hooks.route(request, response, url)))
       return;

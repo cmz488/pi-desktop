@@ -1,0 +1,338 @@
+import {
+	type EnvironmentRef,
+	environmentEntityRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
+	type SessionMeta,
+	sameEnvironment,
+} from "@percho/shared";
+import { create } from "zustand";
+import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
+import { initDailyDir, isDailyCwd } from "../lib/daily";
+import { pathLastSegment } from "../lib/path-display";
+import { isPrimaryNavigationSession } from "../lib/session-visibility";
+import { useChannelSubscriptionsStore } from "./channel-subscriptions";
+import { useSessionWorkspaceStore } from "./session-workspace";
+import { useSessionsStore } from "./sessions";
+import { useSubagentReturnStore } from "./subagent-return";
+import { useUiPreferencesStore } from "./ui-preferences";
+
+const ADDED_KEY = "pi-desktop.projects";
+
+function loadAddedProjects(): string[] {
+	try {
+		const raw = localStorage.getItem(ADDED_KEY);
+		const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+		return Array.isArray(parsed)
+			? parsed.filter((p): p is string => {
+					try {
+						return typeof p === "string" && environmentEntityRef(p).environment.kind === "local";
+					} catch {
+						return false;
+					}
+				})
+			: [];
+	} catch {
+		return [];
+	}
+}
+
+export interface ProjectEntry {
+	cwd: string;
+	/** 目录名（展示用） */
+	name: string;
+	sessionCount: number;
+	/** 该项目下会话的最后活动时间 */
+	lastActive: number;
+	/** 手动添加过的项目在 addedProjects 中的下标（添加时间序；未手动添加为 -1），排序用 */
+	addedIndex: number;
+}
+
+interface ProjectsStore {
+	/**
+	 * **会话目录**（跨项目）：存在性的唯一来源。内容 = 上次全量对账的磁盘历史 ∪ 本进程经手过的会话
+	 * （新建/打开/fork，见 `absorbOpenSessions` 的写穿）。左栏分组与顶栏置顶胶囊都只认它 +
+	 * 内存运行态叠加，所以「内存被 GC 卸掉」不会让任何行消失。
+	 */
+	allSessions: SessionMeta[];
+	/** 手动添加过的项目目录（持久化 localStorage） */
+	addedProjects: string[];
+	selectedCwd: string | null;
+	search: string;
+	catalogs: Record<string, { loading: boolean; loaded: boolean; failed: boolean }>;
+	loading: boolean;
+	loaded: boolean;
+	/**
+	 * 拉取目录并落 store（latest-wins：更晚的请求发起后，旧请求的成功/失败都不写）。
+	 * 启动恢复链**不依赖它的返回值**做裁剪判据 —— 它要的是一份「属于自己这次请求」的磁盘真值，见 `adoptCatalog`。
+	 */
+	load: (environment?: EnvironmentRef) => Promise<void>;
+	/**
+	 * 采纳一份**外部读到的**磁盘目录快照（启动恢复链用）：与 load 成功时同样的落库尾巴，并把序号线
+	 * 推进一步 —— 在飞的旧 load 不得用更旧的快照盖回去（latest-wins 不破）。
+	 */
+	adoptCatalog: (sessions: SessionMeta[], environment?: EnvironmentRef) => void;
+	/** 重命名成功后同步历史列表（见实现处注释） */
+	applySessionName: (sessionId: string, name: string | undefined) => void;
+	select: (cwd: string | null) => void;
+	setSearch: (search: string) => void;
+	addProject: () => Promise<void>;
+	addKnownProject: (cwd: string) => void;
+	/** 删除历史会话（含磁盘文件）；若该会话在顶栏打开中则一并关闭 */
+	deleteSession: (session: SessionMeta) => Promise<void>;
+	/** 删除整个项目：删除该项目下全部会话（含磁盘文件），并从已添加列表移除 */
+	deleteProject: (cwd: string) => Promise<void>;
+	/** 从历史会话打开并切回聊天视图；若已在内存里则直接切换。**用户入口**：真正打开成功后才记入工作区 */
+	openSession: (session: SessionMeta) => Promise<void>;
+}
+
+/**
+ * 列表刷新的单调序号（spec D6）：旧请求（含比新请求早发却晚回、或晚失败的那次）不得覆盖新请求的
+ * `allSessions/loading/loaded`。模块级：不落盘、不进 store，重载归零也无意义。
+ */
+const loadSeq = new Map<string, number>();
+function nextLoad(environment: EnvironmentRef): number {
+	const key = environmentKey(environment);
+	const seq = (loadSeq.get(key) ?? 0) + 1;
+	loadSeq.set(key, seq);
+	return seq;
+}
+function localProjects(projects: string[]): string[] {
+	return projects.filter((cwd) => environmentEntityRef(cwd).environment.kind === "local");
+}
+
+export const useProjectsStore = create<ProjectsStore>((set, get) => {
+	/**
+	 * 目录快照落库的公共尾巴（`load` 成功 与 `adoptCatalog` 共用）：替换语义（磁盘是存在性的权威），
+	 * 但内存里经手过的会话不能因此掉出目录 —— 0 消息会话此时还没有会话文件（SDK 追加首条 entry 才落盘），
+	 * 磁盘快照里必然没有它，补回来才不会在随后被内存策略卸载时从 UI 消失。
+	 */
+	const status = (
+		environment: EnvironmentRef,
+		value: { loading: boolean; loaded: boolean; failed: boolean },
+	) => {
+		set((state) => ({
+			catalogs: { ...state.catalogs, [environmentKey(environment)]: value },
+			...(environment.kind === "local" ? { loading: value.loading, loaded: value.loaded } : {}),
+		}));
+	};
+	const applyCatalog = (sessions: SessionMeta[], environment: EnvironmentRef): void => {
+		set((state) => ({
+			allSessions: [
+				...state.allSessions.filter(
+					(session) => !sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
+				),
+				...sessions,
+			],
+		}));
+		status(environment, { loading: false, loaded: true, failed: false });
+		absorbOpenSessions(useSessionsStore.getState().sessions);
+		if (!get().selectedCwd && environment.kind === "local") {
+			const first = deriveProjects(get()).find(
+				(project) => environmentEntityRef(project.cwd).environment.kind === "local",
+			);
+			if (first) set({ selectedCwd: first.cwd });
+		}
+	};
+
+	return {
+		allSessions: [],
+		addedProjects: loadAddedProjects(),
+		selectedCwd: null,
+		search: "",
+		catalogs: {},
+		loading: false,
+		loaded: false,
+
+		load: async (environment = LOCAL_ENVIRONMENT) => {
+			const seq = nextLoad(environment);
+			const key = environmentKey(environment);
+			status(environment, { loading: true, loaded: get().catalogs[key]?.loaded ?? false, failed: false });
+			try {
+				const [sessions] = await Promise.all([
+					getExecutionApi(environment).listAllSessions(),
+					initDailyDir(environment),
+				]);
+				if (seq !== loadSeq.get(key)) return;
+				applyCatalog(sessions, environment);
+			} catch {
+				if (seq !== loadSeq.get(key)) return;
+				// Retain the last trusted catalog. Failure is not an empty snapshot.
+				status(environment, { loading: false, loaded: true, failed: true });
+			}
+		},
+		adoptCatalog: (sessions, environment = LOCAL_ENVIRONMENT) => {
+			nextLoad(environment);
+			applyCatalog(sessions, environment);
+		},
+
+		select: (cwd) => set({ selectedCwd: cwd, search: "" }),
+
+		setSearch: (search) => set({ search }),
+
+		addKnownProject: (cwd) => {
+			if (get().addedProjects.includes(cwd)) return;
+			const next = [...get().addedProjects, cwd];
+			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(next)));
+			set({ addedProjects: next });
+		},
+		addProject: async () => {
+			const cwd = await getPi().pickDirectory();
+			if (!cwd) return;
+			// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后在新会话页/建会话都不再弹
+			void getExecutionApi(LOCAL_ENVIRONMENT)
+				.ensureProjectTrust({ cwd })
+				.catch(() => {});
+			const added = get().addedProjects;
+			if (!added.includes(cwd)) {
+				const next = [...added, cwd];
+				localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(next)));
+				set({ addedProjects: next });
+			}
+			set({ selectedCwd: cwd });
+		},
+
+		/** 重命名成功后同步历史列表：左栏会话行标题取自 `allSessions`，不同步就会「胶囊新名 / 左栏旧名」并存 */
+		applySessionName: (sessionId, name) => {
+			set((state) => ({
+				allSessions: state.allSessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
+			}));
+		},
+
+		deleteSession: async (session) => {
+			await getExecutionApi(session.sessionId).deleteSession({
+				sessionId: session.sessionId,
+				sessionFile: session.sessionFile,
+			});
+			// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
+			useUiPreferencesStore.getState().unpin(session.sessionId);
+			// D7：权限模式记录同理（与置顶并列；卸载/关会话**不**清，那是「记住」的意义）
+			useUiPreferencesStore.getState().forgetPermissionMode(session.sessionId);
+			// 工作区成员同理清理（**只有删除**会顺带移出；关会话/卸载不自动移出，见 spec）
+			useSessionWorkspaceStore.getState().removeMember(session.sessionId);
+			// spec D4：会话被删则与它相关的关系失效 —— 作为父（子会话的返回箭头）与作为子（自己的箭头）都清。
+			// **只有删除**清：GC 卸载要靠 parentFile 重开父会话，清了箭头就没了（两者不能混用）。
+			useSubagentReturnStore.getState().forgetChildrenOf(session.sessionId);
+			useSubagentReturnStore.getState().forgetChild(session.sessionId);
+			// 频道订阅快照同理（删除路径上 sessions.closeSession 不一定跑到，幂等清一次）
+			useChannelSubscriptionsStore.getState().forget(session.sessionId);
+			const sessionsState = useSessionsStore.getState();
+			if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
+				await sessionsState.closeSession(session.sessionId);
+			}
+			set((state) => ({
+				allSessions: state.allSessions.filter((s) => s.sessionId !== session.sessionId),
+			}));
+		},
+
+		deleteProject: async (cwd) => {
+			// 内置日常空间不可删（侧栏本就不渲染删除钮，这里兜底防 IPC 重放等旁路）
+			if (isDailyCwd(cwd)) return;
+			const { allSessions } = get();
+			for (const session of allSessions.filter((s) => s.cwd === cwd)) {
+				await get().deleteSession(session);
+			}
+			const added = get().addedProjects.filter((p) => p !== cwd);
+			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(added)));
+			set({ addedProjects: added });
+			const { selectedCwd } = get();
+			if (selectedCwd === cwd) {
+				const projects = deriveProjects(get());
+				set({ selectedCwd: projects[0]?.cwd ?? null, search: "" });
+			}
+		},
+
+		openSession: async (session) => {
+			const sessionsState = useSessionsStore.getState();
+			// 导航前先取锚点：新成员要插在「上一刻在看的成员」右侧，而导航会把当前改成新成员。
+			// 锚点规则由 store 一处定义（`anchorFile()`：当前成员 → 最近看过的成员），避免这里漏掉
+			// 「用户停在新会话页，activeFile 为 null」的情形（会退化成追加末尾）。
+			// 但**成员只在真的打开成功后才入表** —— 失败的 open（文件已删/后端拒绝）若先入表，
+			// 会留下一个点不开的假胶囊，甚至占住 activeFile（spec：失败的 open 不加入）。
+			const anchorFile = useSessionWorkspaceStore.getState().anchorFile();
+			const record = (meta: SessionMeta, activate: boolean): void => {
+				if (!isPrimaryNavigationSession(meta)) return; // 只读子代理检视不进工作区
+				useSessionWorkspaceStore
+					.getState()
+					.addMember({ file: meta.sessionFile, sessionId: meta.sessionId }, { anchorFile, activate });
+			};
+
+			const opened = sessionsState.sessions.find((s) => s.sessionId === session.sessionId);
+			if (opened) {
+				// 已加载：同步切（这次点击就是最新意图），再入表并激活
+				sessionsState.switchSession(opened.sessionId);
+				record(opened, true);
+				return;
+			}
+			const result = await sessionsState.openFromHistory(session.sessionFile ?? "");
+			// 没开起来 → 不入表（失败已由共享 open 链 toast 过）；迟到（latest:false）只入表、不抢 activeFile
+			if (result.ok) record(result.meta, result.latest);
+		},
+	};
+});
+
+/**
+ * 目录写穿：把内存里目录还没有的会话补进去（**只补缺、不覆盖**——磁盘权威的最小改动）。
+ *
+ * 为什么必须有这一层：磁盘历史只在「进新会话页 / 启动」时整表重拉，是**旧账**；而新建出来的会话
+ * 必然比那次快照晚（快照是在它诞生之前拉的）。这段时间里它只活在内存 `sessions` 里，靠
+ * `mergeSidebarSessions` 的合并撑着左栏行。内存策略（GC）一卸载它，内存里没了、旧账里也没有 →
+ * 行凭空消失（2026-09-21 实测事故）。写穿把「存在性」提前落到目录，卸载就只是撤掉运行态。
+ *
+ * 不覆盖的理由：`createdAt/modifiedAt` 等稳定字段以磁盘为准（内存 meta 可能缺字段，盖上去会让
+ * 排序键掉到 createdAt、行在打开/卸载时伪移动）；运行态字段本就在读取时由合并覆盖。
+ */
+function absorbOpenSessions(open: readonly SessionMeta[]): void {
+	const state = useProjectsStore.getState();
+	const known = new Set(state.allSessions.map((session) => session.sessionId));
+	const missing = open.filter((session) => !known.has(session.sessionId));
+	if (missing.length === 0) return;
+	useProjectsStore.setState({ allSessions: [...state.allSessions, ...missing] });
+}
+
+// 写穿接线：**只此一处** —— 任何「会话进入内存」的路径（新建/打开/fork/从历史打开）都经它落目录，
+// 将来新增路径也不会漏（不依赖各调用点自觉）。放在这里是因为依赖方向就是 projects → sessions。
+useSessionsStore.subscribe((state, prev) => {
+	if (state.sessions !== prev.sessions) absorbOpenSessions(state.sessions);
+});
+
+/** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录（日常空间 cwd 除外，它在侧栏单独钉顶）；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
+export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {
+	const byCwd = new Map<string, ProjectEntry>();
+	for (const session of state.allSessions) {
+		if (!session.cwd || isDailyCwd(session.cwd)) continue;
+		const name = pathLastSegment(session.cwd) ?? session.cwd;
+		const modified = session.modifiedAt ?? session.createdAt;
+		const existing = byCwd.get(session.cwd);
+		if (existing) {
+			existing.sessionCount += 1;
+			existing.lastActive = Math.max(existing.lastActive, modified);
+		} else {
+			byCwd.set(session.cwd, {
+				cwd: session.cwd,
+				name,
+				sessionCount: 1,
+				lastActive: modified,
+				addedIndex: -1,
+			});
+		}
+	}
+	for (const [idx, cwd] of state.addedProjects.entries()) {
+		// 手动添加列表若混入日常目录（老版本/手改 localStorage）按未添加处理，不生成项目条目
+		if (isDailyCwd(cwd)) continue;
+		const existing = byCwd.get(cwd);
+		if (existing) {
+			existing.addedIndex = idx;
+		} else {
+			byCwd.set(cwd, {
+				cwd,
+				name: pathLastSegment(cwd) ?? cwd,
+				sessionCount: 0,
+				lastActive: 0,
+				addedIndex: idx,
+			});
+		}
+	}
+	return [...byCwd.values()].sort((a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive);
+}

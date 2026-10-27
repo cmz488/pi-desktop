@@ -17,7 +17,9 @@ const unsupported = (reason) => ({ status: "unsupported", reason });
 export const UI_SUPPORT = Object.freeze({
   // ── 会话 ────────────────────────────────────────────────────────────────
   "session:create": implemented("/api/workspace/command"),
-  "session:open": implemented("/api/switch-session"),
+  "session:open": unsupported(
+    "尚未接入：Host 有对应路由（/api/switch-session），但通道的请求／响应形状还没核实",
+  ),
   "session:close": unsupported(
     "会话在 worker 内常驻；我们没有 Percho 的显式 close 语义",
   ),
@@ -37,7 +39,9 @@ export const UI_SUPPORT = Object.freeze({
   "session:getPendingInteractions": implemented("/api/interactions"),
   "session:listSlashCommands": implemented("/api/commands"),
   "session:listSlashCommandsForCwd": implemented("/api/commands"),
-  "session:getLoadedResources": implemented("/api/plugin-resources"),
+  "session:getLoadedResources": unsupported(
+    "尚未接入：Host 有对应路由（/api/plugin-resources），但通道的请求／响应形状还没实测核实",
+  ),
   "session:historyReady": unsupported(
     "我们的会话装载以 HTTP 快照为单位，没有 Percho 的 history-ready ACK 协议",
   ),
@@ -63,39 +67,85 @@ export const UI_SUPPORT = Object.freeze({
 
   // ── 项目与 Git ──────────────────────────────────────────────────────────
   "project:listFiles": implemented("/api/files"),
-  "project:ensureTrust": implemented("/api/project-trust"),
+  "project:ensureTrust": unsupported(
+    "尚未接入：Host 有 /api/project-trust，但信任请求体的形状还没核实",
+  ),
   "project:getGitBranch": implemented("/api/git"),
   "project:listGitBranches": implemented("/api/git"),
-  "project:checkoutBranch": implemented("/api/git"),
-  "project:validateDirectory": implemented("/api/workspace/command"),
+  "project:checkoutBranch": unsupported(
+    "尚未接入：Host 有对应路由（/api/git），但通道的请求／响应形状还没核实",
+  ),
+  "project:validateDirectory": unsupported(
+    "尚未接入：Host 有对应路由（/api/workspace/command），但通道的请求／响应形状还没核实",
+  ),
 
   // ── 包与 MCP ────────────────────────────────────────────────────────────
-  "packages:searchCatalog": implemented("/api/marketplace"),
-  "packages:listConfigured": implemented("/api/package"),
-  "packages:install": implemented("/api/package"),
-  "packages:remove": implemented("/api/package"),
+  "packages:searchCatalog": unsupported(
+    "尚未接入：Host 有对应路由（/api/marketplace），但通道的请求／响应形状还没核实",
+  ),
+  "packages:listConfigured": unsupported(
+    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没实测核实",
+  ),
+  "packages:install": unsupported(
+    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没核实",
+  ),
+  "packages:remove": unsupported(
+    "尚未接入：Host 有对应路由（/api/package），但通道的请求／响应形状还没核实",
+  ),
   "mcp:configList": implemented("/api/mcp"),
-  "mcp:configUpsert": implemented("/api/mcp-action"),
-  "mcp:configRemove": implemented("/api/mcp-action"),
-  "mcp:configReload": implemented("/api/mcp-action"),
+  "mcp:configUpsert": unsupported(
+    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
+  ),
+  "mcp:configRemove": unsupported(
+    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
+  ),
+  "mcp:configReload": unsupported(
+    "尚未接入：Host 有对应路由（/api/mcp-action），但通道的请求／响应形状还没核实",
+  ),
 
   // ── 交互与权限 ──────────────────────────────────────────────────────────
-  "extension-dialog:respond": implemented("/api/interaction-reply"),
-  "trust:respond": implemented("/api/interaction-reply"),
-  "permission:respond": implemented("/api/approval"),
-  "permission:getConfig": implemented("/api/approval"),
-  "permission:getMode": implemented("/api/state"),
-  "permission:setMode": implemented("/api/approval"),
+  "extension-dialog:respond": unsupported(
+    "尚未接入：Host 有对应路由（/api/interaction-reply），但通道的请求／响应形状还没核实",
+  ),
+  "trust:respond": unsupported(
+    "尚未接入：Host 有对应路由（/api/interaction-reply），但通道的请求／响应形状还没核实",
+  ),
+  "permission:respond": unsupported(
+    "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
+  ),
+  "permission:getConfig": unsupported(
+    "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
+  ),
+  "permission:getMode": unsupported(
+    "尚未接入：Host 有对应路由（/api/state），但通道的请求／响应形状还没核实",
+  ),
+  "permission:setMode": unsupported(
+    "尚未接入：Host 有对应路由（/api/approval），但通道的请求／响应形状还没核实",
+  ),
 
   // ── 设置 ────────────────────────────────────────────────────────────────
   "settings:listProviders": implemented("/api/providers"),
-  "settings:saveApiKey": implemented("/api/provider"),
-  "settings:removeCredential": implemented("/api/provider-remove"),
-  "settings:addCustomProvider": implemented("/api/provider"),
-  "settings:updateCustomProvider": implemented("/api/provider"),
-  "settings:removeCustomProvider": implemented("/api/provider-remove"),
-  "settings:loginStart": implemented("/api/auth-start"),
-  "settings:loginCancel": implemented("/api/auth-logout"),
+  "settings:saveApiKey": unsupported(
+    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
+  ),
+  "settings:removeCredential": unsupported(
+    "尚未接入：Host 有对应路由（/api/provider-remove），但通道的请求／响应形状还没核实",
+  ),
+  "settings:addCustomProvider": unsupported(
+    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
+  ),
+  "settings:updateCustomProvider": unsupported(
+    "尚未接入：Host 有对应路由（/api/provider），但通道的请求／响应形状还没核实",
+  ),
+  "settings:removeCustomProvider": unsupported(
+    "尚未接入：Host 有对应路由（/api/provider-remove），但通道的请求／响应形状还没核实",
+  ),
+  "settings:loginStart": unsupported(
+    "尚未接入：Host 有对应路由（/api/auth-start），但通道的请求／响应形状还没核实",
+  ),
+  "settings:loginCancel": unsupported(
+    "尚未接入：Host 有对应路由（/api/auth-logout），但通道的请求／响应形状还没核实",
+  ),
   "settings:getModelPrefs": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelHidden": unsupported("我们没有独立的模型可见性偏好存储"),
   "settings:setModelsHidden": unsupported("我们没有独立的模型可见性偏好存储"),
@@ -105,7 +155,9 @@ export const UI_SUPPORT = Object.freeze({
   "settings:setSubagentModel": unsupported("子代理模型选择随 workspace configure，没有独立通道"),
   "settings:setSubagentThinking": unsupported("子代理思考等级随 workspace configure"),
   "settings:setSubagentPreferBuiltin": unsupported("我们没有内置／原生子代理二选一开关"),
-  "settings:listSubagents": implemented("/api/subagent-history"),
+  "settings:listSubagents": unsupported(
+    "尚未接入：Host 有对应路由（/api/subagent-history），但通道的请求／响应形状还没核实",
+  ),
   "settings:loginRespond": unsupported("交互式登录的应答走 /api/interaction-reply"),
 
   // ── 上下文管理／频道观察 ────────────────────────────────────────────────

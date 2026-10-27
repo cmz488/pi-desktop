@@ -1,0 +1,2569 @@
+@import "tailwindcss";
+@import "./typography.css";
+
+/* dark: 工具类挂到 data-theme（手动切换），不走 prefers-color-scheme */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* 语义 token → Tailwind 工具类（bg-canvas / bg-surface / text-ink / border-border ...）。
+   inline 让工具类直接引用运行时变量，[data-theme] 改写变量值即完成主题切换 */
+@theme inline {
+	--color-canvas: var(--color-canvas);
+	--color-surface: var(--color-surface);
+	--color-hover: var(--color-hover);
+	--color-border: var(--color-border);
+	--color-border-strong: var(--color-border-strong);
+	--color-bubble: var(--color-bubble);
+	--color-user-bubble: var(--color-user-bubble);
+	--color-ink: var(--color-ink);
+	--color-ink-2: var(--color-ink-2);
+	--color-ink-dim: var(--color-ink-dim);
+	--color-ink-faint: var(--color-ink-faint);
+	--color-ink-working: var(--color-ink-working);
+	--color-on-ink: var(--color-on-ink);
+	--color-accent: var(--color-accent);
+	--color-on-accent: var(--color-on-accent);
+	--color-update: var(--color-update);
+	--color-on-update: var(--color-on-update);
+	--color-err: var(--color-err);
+	--color-warn: var(--color-warn);
+	--color-info: var(--color-info);
+	--color-ok: var(--color-ok);
+	--color-switch-off: var(--color-switch-off);
+	/* 阴影 token（shadow-soft/shadow-pop/shadow-dialog 工具类）：浅色深色系投影，深色白色发光 */
+	--shadow-soft: var(--shadow-soft);
+	--shadow-pop: var(--shadow-pop);
+	--shadow-dialog: var(--shadow-dialog);
+}
+
+:root {
+	--color-canvas: #ffffff;
+	--color-surface: #ffffff;
+	/* hover/选中底：中性锌灰，不带蓝调（slate 系 #f1f5f9 偏蓝，已弃） */
+	--color-hover: #f4f4f5;
+	--color-border: #e2e8f0;
+	--color-border-strong: #cbd5e1;
+	/* 用户气泡底色：原 border（zinc-200 #e4e4e7）的变浅版，中性灰不带冷调 */
+	--color-bubble: #f0f0f2;
+	--color-user-bubble: var(--color-bubble);
+	--color-ink: #18181b;
+	--color-ink-2: #3f3f46;
+	--color-ink-dim: #71717a;
+	--color-ink-faint: #a1a1aa;
+	/* 工作中状态行文字基色：日间用浅一档灰（= ink-faint），给加深扫光让出对比空间
+	   （若用 ink-dim 本身偏深，扫光加深不明显） */
+	--color-ink-working: #a1a1aa;
+	--color-on-ink: #ffffff;
+	--color-accent: #7c3aed;
+	--color-on-accent: #ffffff;
+	--color-skill-reference-bg: #e7f1ff;
+	--color-skill-reference-ink: #176ac4;
+	/* 首页字标（手稿构造版 WordmarkConstruct）：字描边 / 主构造线 / 次级虚线 / 标注文字 */
+	--lg-ol: #a1a1aa;
+	--lg-c1: #c9c9d1;
+	--lg-c2: #e0e0e6;
+	--lg-lb: #b0b0b8;
+	/* 「重启」胶囊：很浅的蓝底 + 比背景深一档的中蓝字 */
+	--color-update: #e0f2fe;
+	--color-on-update: #0284c7;
+	/* 报错 severity token：仅供 graphics（glyph/图标）着色用（error-system spec：只限一枚 glyph）+ 文案色 */
+	--color-err: #d6352c;
+	--color-warn: #c2740a;
+	--color-info: #a1a1aa;
+	/* 正常运转状态色（UI 插件状态点等）：与 severity 同类的 graphics 专用 token */
+	--color-ok: #059669;
+	/* 开关（Switch）关闭态轨道：独立中性浅灰，不随 border-strong 走 slate 蓝调 */
+	--color-switch-off: #d4d4d8;
+	/* 自定义背景图遮罩（rgb 分量；不透明度由 .app-bg-scrim 的 inline opacity 控制） */
+	--color-scrim: 255 255 255;
+	--markdown-code-bg: #f4f4f5;
+	--markdown-code-text: #3f3f46;
+	--markdown-quote-border: #e4e4e7;
+	--markdown-quote-text: #71717a;
+	--markdown-table-border: #e4e4e7;
+	--markdown-table-head-bg: #f8fafc;
+	--markdown-link-decoration: #c4b5fd;
+	--markdown-link-hover: #6d28d9;
+	/* 扫光高光色 = 文字颜色的推移方向：日间往黑推（文字加深，对比度升高）；
+	   用白色会把文字推向近白背景，像消散而非高光。深色值与 --color-ink 一致 */
+	--shimmer-highlight: rgba(24, 24, 27, 0.9);
+	--shadow-soft: 0 0 14px -2px rgba(24, 24, 27, 0.08);
+	--shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.12);
+	--shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.18);
+	--scrollbar-thumb: #d4d4d4;
+	--scrollbar-thumb-hover: #bfbfbf;
+	/* 思考深度横条（设计稿 .local/design/ux/model-thinking-picker）：蓝紫渐变 + 白滑块 + 白刻度，
+	   深浅各一份。填充铺满整条轨道、靠 clip-path 裁出宽度（见 .think-fill）：
+	   直接改 width 会把 linear-gradient 一起拉伸，同一档位在不同档位下颜色会变。 */
+	--bar-grad: linear-gradient(96deg, #4c6ef5 0%, #7c3aed 52%, #a855f7 100%);
+	--bar-knob: #ffffff;
+	--bar-tick-on: rgba(255, 255, 255, 0.55);
+	/* 淡出分隔线中段的颜色（见 .fade-rule）：两端渐隐会掉一档视觉强度，所以比 border 稍实 */
+	--color-rule: #d8dce3;
+}
+
+[data-theme="dark"] {
+	--color-canvas: #17171a;
+	--color-surface: #212126;
+	--color-hover: #2b2b31;
+	--color-border: #38383f;
+	--color-border-strong: #4b4b53;
+	--color-bubble: #38383f;
+	--color-user-bubble: var(--color-bubble);
+	--color-ink: #e6e6ea;
+	--color-ink-2: #c6c6cd;
+	--color-ink-dim: #9a9aa3;
+	--color-ink-faint: #6e6e77;
+	/* 工作中状态行文字基色：夜间保持 ink-dim（提亮扫光在浅灰上正好） */
+	--color-ink-working: #9a9aa3;
+	--color-on-ink: #17171a;
+	--color-accent: #8b5cf6;
+	--color-on-accent: #ffffff;
+	--color-skill-reference-bg: #193653;
+	--color-skill-reference-ink: #8bc4ff;
+	/* 思考深度横条深色一套（比浅色更亮），其余见 :root 处注释 */
+	--bar-grad: linear-gradient(96deg, #5b7cfa 0%, #8b5cf6 52%, #b06bfb 100%);
+	--bar-knob: #ffffff;
+	--bar-tick-on: rgba(255, 255, 255, 0.55);
+	--color-rule: #34343c;
+	/* 首页字标手稿构造版深色：描边与构造线压到 canvas 上刚好可辨的灰 */
+	--lg-ol: #5f5f66;
+	--lg-c1: #35353c;
+	--lg-c2: #2b2b32;
+	--lg-lb: #4a4a52;
+	--color-update: #0c4a6e;
+	--color-on-update: #7dd3fc;
+	--color-err: #f87171;
+	--color-warn: #f0b84a;
+	--color-info: #6e6e77;
+	--color-ok: #34d399;
+	--color-switch-off: #4b4b53;
+	--color-scrim: 23 23 26;
+	--markdown-code-bg: #2b2b31;
+	--markdown-code-text: #d4d4db;
+	--markdown-quote-border: #4b4b53;
+	--markdown-quote-text: #9a9aa3;
+	--markdown-table-border: #38383f;
+	--markdown-table-head-bg: #212126;
+	--markdown-link-decoration: #6d28d9;
+	--markdown-link-hover: #a78bfa;
+	/* 扫光高光色 = 往白推（文字提亮，与日间方向相反） */
+	--shimmer-highlight: rgba(255, 255, 255, 0.95);
+	--shadow-soft: 0 0 14px -2px rgba(255, 255, 255, 0.1);
+	--shadow-pop: 0 4px 16px rgba(255, 255, 255, 0.14);
+	--shadow-dialog: 0 12px 40px rgba(255, 255, 255, 0.18);
+	--scrollbar-thumb: #4b4b53;
+	--scrollbar-thumb-hover: #5d5d66;
+}
+
+/* Initial scanning has no known total; keep preparation visibly active without inventing a percentage. */
+.storage-startup-progress {
+	animation: storage-startup-progress 1.5s linear infinite;
+}
+@keyframes storage-startup-progress {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(300%);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.storage-startup-progress {
+		animation: none;
+		transform: translateX(100%);
+	}
+}
+
+/* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
+.preview-slide-in {
+	animation: preview-slide-in 0.32s ease-out;
+}
+.preview-slide-out {
+	animation: preview-slide-out 0.28s ease-in forwards;
+}
+@keyframes preview-slide-in {
+	from {
+		transform: translateY(100%) scale(0.97);
+		opacity: 0;
+		filter: blur(1.5px);
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+		filter: blur(0);
+	}
+}
+@keyframes preview-slide-out {
+	from {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+		filter: blur(0);
+	}
+	to {
+		transform: translateY(-100%) scale(0.97);
+		opacity: 0;
+		filter: blur(1.5px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.preview-slide-in,
+	.preview-slide-out {
+		animation: none;
+	}
+}
+
+/* 权限审批面板：进入从下方浮起（弹出感），退出下沉淡出（ApprovalDock 的 EXIT_MS 需与退出时长同步） */
+.approval-enter {
+	animation: approval-enter 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.approval-exit {
+	animation: approval-exit 0.15s ease-in forwards;
+}
+.approval-composer-enter {
+	animation: approval-enter 0.18s ease-out;
+}
+
+/* 扩展交互停靠卡（extension-dialogs 画板①-⑤）：dock-in 进场 0.28s 微弹，退场同 approval-exit */
+.dock-in {
+	animation: dock-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+.dock-exit {
+	animation: approval-exit 0.15s ease-in forwards;
+}
+@keyframes dock-in {
+	from {
+		transform: translateY(10px) scale(0.99);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+	}
+}
+
+/* 扩展 notify 溢出折叠条（Toaster）：比 toast 矮一档，无 glyph，近乎一行注脚（画板⑨） */
+.toast-overflow {
+	background: var(--color-surface);
+	border-radius: 13px;
+	box-shadow: var(--shadow-pop);
+	padding: 7px 12px;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+}
+@keyframes approval-enter {
+	from {
+		transform: translateY(10px) scale(0.99);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+	}
+}
+@keyframes approval-exit {
+	from {
+		transform: translateY(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateY(6px);
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.approval-enter,
+	.approval-exit,
+	.approval-composer-enter,
+	.dock-in,
+	.dock-exit {
+		animation: none;
+	}
+}
+
+/* 选中文字浮出菜单（SelectionToolbar）：淡入 + 朝选区方向微移；按钮为幽灵文字钮 */
+.selection-pop {
+	animation: selection-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+	transform-origin: center;
+}
+@keyframes selection-pop {
+	from {
+		opacity: 0;
+		/* transform 由内联 style 提供 translate 定位，动画只动 opacity/margin 避免覆盖 ——
+		   故用 scale 独立属性（Chromium 支持独立变换属性）不与 translate 冲突 */
+		scale: 0.96;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+.selection-menu-btn {
+	padding: 0.25rem 0.625rem;
+	border-radius: 0.5rem;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	line-height: calc(20px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-2);
+	white-space: nowrap;
+	transition:
+		background-color 0.15s,
+		color 0.15s;
+}
+.selection-menu-btn:hover:not(:disabled) {
+	background-color: var(--color-hover);
+	color: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+	.selection-pop {
+		animation: none;
+	}
+}
+
+/* todo 折叠态呼吸灯：颜色取 ink-dim（弱化存在感的中性灰，深浅主题各自反色），仅透明度 + 缩放起伏 */
+.todo-breath-dot {
+	width: 7px;
+	height: 7px;
+	flex-shrink: 0;
+	border-radius: 9999px;
+	background: var(--color-ink-dim);
+	animation: todo-breath 2.2s ease-in-out infinite;
+	transition: opacity 0.3s;
+}
+/* 工作停止（agentActive false）：呼吸定格 + 变淡成静态暗点，恢复工作自动继续 */
+.todo-breath-dot-paused {
+	animation-play-state: paused;
+	opacity: 0.3;
+}
+@keyframes todo-breath {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.3;
+		transform: scale(0.72);
+	}
+}
+
+/* todo 完成对勾描边绘制：仅新挂载的行触发（React 复用 DOM 节点不会重放动画） */
+.todo-check-path {
+	stroke-dasharray: 16;
+	stroke-dashoffset: 16;
+	animation: todo-check-draw 0.45s cubic-bezier(0.65, 0, 0.35, 1) 0.05s forwards;
+}
+@keyframes todo-check-draw {
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+/* todo 展开列表：极细滚动条（3px，track 透明） */
+.todo-thin-scroll::-webkit-scrollbar {
+	width: 3px;
+}
+.todo-thin-scroll::-webkit-scrollbar-thumb {
+	background: var(--scrollbar-thumb);
+	border-radius: 2px;
+}
+.todo-thin-scroll::-webkit-scrollbar-thumb:hover {
+	background: var(--scrollbar-thumb-hover);
+}
+.todo-thin-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* 会话页推/出过渡（spec D4 收尾增强）：开子代理 = 新页从右向左推入，返回父会话 = 父页从左向右推回。
+   用同文档 View Transitions：浏览器拍切换前后的两张页面快照，这里只接管这两张快照的位移。
+   要点（对应 lib/session-page-slide.ts 的注释）：
+   ① 两页等距（各 100%）、**同时长同缓动**（--session-slide-time 单点改）——两张快照边缘在整段动画里
+      严丝合缝，脱开就会露出底图；手感全部交给缓动曲线（见下面那段）；
+      ② 根快照（root）中性化，顶栏与左栏保持静态，只有聊天页那张动；
+      ③ 没有 html[data-session-slide] 就完全不生效（无 API / 减少动态偏好 / 导航失败都落到这条路）。 */
+:root {
+	--session-slide-time: 800ms; /* 定档依据见下面那段注释 */
+}
+/* 阻尼感只来自**缓动曲线**：两页都是走满 100% 的等距平移、同时长同缓动（所以两张快照边缘全程严丝合缝），
+   曲线 cubic-bezier(0.16, 1, 0.3, 1) ≈ easeOutExpo —— 起步快、后段长时间轻轻收住，就是"滑过去被阻尼吸住"的手感。
+   时长为什么是 800ms（而不是常见的 300ms）：这条曲线**前 1/3 时间就走完 90% 行程**，所以"眼睛能跟上的运动窗口"
+   ≈ 时长 / 3 —— 300ms 档只有约 0.1 秒，观感上几乎等于直接切页（实测被反馈成"看不出有动画"）。
+   800ms ⇒ 运动窗口约 0.27 秒、收尾 0.53 秒，既看得清又不拖。**调手感先调这个数，别动曲线**：
+   想更弹可换 (0.22, 1, 0.36, 1)（easeOutQuint，前段只占 ~60%，运动窗口更长）或 (0.34, 1.12, 0.64, 1)
+   （末尾过冲约 2%——行程是整屏宽，过冲会被放大，系数别给大）。 */
+@keyframes session-page-out-left {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(-100%);
+	}
+}
+@keyframes session-page-in-right {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: translateX(0);
+	}
+}
+@keyframes session-page-out-right {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(100%);
+	}
+}
+@keyframes session-page-in-left {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(0);
+	}
+}
+html[data-session-slide="push"]::view-transition-old(session-page) {
+	animation: session-page-out-left var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="push"]::view-transition-new(session-page) {
+	animation: session-page-in-right var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="pop"]::view-transition-old(session-page) {
+	animation: session-page-out-right var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="pop"]::view-transition-new(session-page) {
+	animation: session-page-in-left var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* 快照画在顶层，位移不受容器 overflow 约束 —— 不裁的话聊天页会**横穿左栏**（实测：左栏像素被盖）。
+   给 group 加裁剪后，两张快照只能在这个「画框」里出现：出门那张滑到框左缘就消失、进门那张从框右缘进来，
+   正是「画框内左右滚动」的观感（对应验收里 E2/E3 的两处像素检查）。 */
+html[data-session-slide]::view-transition-group(session-page) {
+	overflow: clip;
+}
+/* 快照会把滚动条一起拍进去 ⇒ 滑动时右边那条 4px 滚动条跟着横着走（两张快照各带一条，很脏）。
+   这里在过渡期间把滚动条的**像素**抹掉：滑块/轨道颜色全透明，但**宽度一个像素都不动**（宽度一变就重排，
+   两张快照的布局会不一致、内容会跳）。颜色走 CSS 变量 ⇒ 覆盖变量即可同时覆盖深/浅色与各处细滚动条；
+   标记在 startViewTransition 之前就设好 ⇒ 旧快照也是「没有滚动条」的。 */
+html[data-session-slide] {
+	--scrollbar-thumb: transparent;
+	--scrollbar-thumb-hover: transparent;
+}
+/* 频道订阅胶囊（spec D2）：宽度 0 ↔ 实测自然宽度，右缘固定、左端伸展；退场同曲线收起 + 淡出。
+   时长/缓动是设计基准（.local/design/ux/channel-subscription-pill/index.html），组件里同步一份常量
+   （CHANNEL_PILL_DURATION_MS）用于「退场结束」的兜底计时；两边改要一起改。 */
+.channel-pill {
+	width: 0;
+	opacity: 0;
+	overflow: hidden;
+	flex-shrink: 0;
+	transition:
+		width var(--channel-pill-time, 360ms) cubic-bezier(0.16, 1, 0.3, 1),
+		opacity var(--channel-pill-time, 360ms) cubic-bezier(0.16, 1, 0.3, 1);
+}
+.channel-pill-open {
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* 频道胶囊：跳过过渡（宽度/透明度直接到位），组件侧同时按 0ms 走立即清理 */
+	.channel-pill {
+		transition: none;
+	}
+	.todo-breath-dot {
+		animation: none;
+	}
+	.todo-check-path {
+		animation: none;
+		stroke-dashoffset: 0;
+	}
+	.meta-dot-running {
+		animation: none;
+	}
+}
+
+/* 工作中折叠组圆点行：运行中工具 = 空心呼吸点（done 实心 ink / error 灰用 Tailwind 类，见 MetaGroup） */
+.meta-dot-running {
+	border: 1px solid var(--color-ink-dim);
+	animation: meta-dot-breathe 1.6s ease-in-out infinite;
+}
+@keyframes meta-dot-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
+
+/* 会话 tab 状态：全部收拢到头像图标（颜色即语义），胶囊本体不动。
+   工作中 = 蓝底头像 MacBook 睡眠灯式慢呼吸（仅透明度起伏）；等待审批 = 静态琥珀；
+   完成未读 = 图标右上角 iOS 式绿点角标（静态，查看即消） */
+.tab-avatar-working {
+	animation: avatar-breathe 3.2s ease-in-out infinite;
+}
+@keyframes avatar-breathe {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.tab-avatar-working {
+		animation: none;
+	}
+}
+
+/* 会话胶囊拖拽排序：tab-pill 是内层视觉层（拾起 scale + 上浮 + 阴影，160ms 独立过渡；
+   opacity 同表：拖拽时本体淡出交由 DragOverlay ghost，落位时淡入，与 ghost fade 交叉）。
+   几何层的 translate/让位/FLIP 由 dnd-kit 内联 style 控制（见 SessionTabBar），两层互不干扰；
+   全程只动 transform/box-shadow/opacity，合成器友好 */
+.tab-pill {
+	transition:
+		transform 160ms cubic-bezier(0.2, 0, 0, 1),
+		box-shadow 160ms cubic-bezier(0.2, 0, 0, 1),
+		opacity 160ms ease;
+}
+.tab-dragging {
+	transform: scale(1.045) translateY(-1px);
+	box-shadow:
+		0 6px 18px rgb(0 0 0 / 0.18),
+		0 0 0 1px rgb(0 0 0 / 0.05);
+}
+/* 拖拽期间指针常在胶囊间隙上，cursor 挂根元素统一接管。
+   不用 !important：Tailwind 工具类在 @layer utilities，未分层规则天然优先 */
+.tab-dragging-cursor,
+.tab-dragging-cursor * {
+	cursor: grabbing;
+}
+@media (prefers-reduced-motion: reduce) {
+	.tab-pill {
+		transition: none;
+	}
+	.tab-dragging {
+		transform: none;
+	}
+}
+
+/* 左侧会话轨道（设置 → 外观开关「左侧会话轨道」，默认关）：与顶栏同一份**临时会话工作区**，
+   顺序就是工作区顺序。点击按需打开未加载的成员，× = 从工作区移出（不关会话，与顶栏同语义）。
+   以下动画细节沿用 v10 定稿（来自 git bcd3e04^）。
+
+   轨道挂在聊天列左缘（App.tsx：main + DockSlot 的父容器），定位基准是 tab bar 以下的整列，
+   输入框高度变化不压缩它的居中参考系。收起态是纯覆盖层（pointer-events-none），不挤压聊天布局。
+
+   —— v10 定稿的设计说明：聊天页左侧垂直居中一列**直角细线**（codex 风），
+   悬停/聚焦时原地「变形」为悬浮胶囊，上下邻居按行距分级跟涨成**半大/迷你胶囊**（dock 波浪：
+   展开 208×32 → ±1 胶囊 104×24（内容可见、标题裁断） → ±2 迷你空胶囊 44×14 → 细线），
+   状态类 is-expanded/is-near-1/is-near-2 由 JS 按行距下发（比 :has 链易控：呼吸/内容显隐按距离精确开关）。
+   **行高同步分级撑开（16 → 40/32/20 = 胶囊 + 留白）**：按钮在文档流内，行一撑上下邻居自然让位，
+   胶囊各行其道互不叠压；行高与胶囊同时长同曲线伸缩，任何时刻胶囊都不会超出行。
+   变形是两阶段时序（transition 取「目标态」的定义，正反向可分别配时序）：
+   展开/跟涨 = 先在小尺寸上 90ms 翻色/翻圆角（深色线 → 白胶囊），再回弹放大（340/300/280ms 随档位递减）；
+   收起 = 先 260ms 收缩（仍是白胶囊），颜色/圆角延迟 150ms 到接近尾声才变回细线。
+   避免旧版「深色线拉长到一半才闪白」的颜色逆变闪烁。 */
+/* 行高波浪：transition 同样取目标态定义（收起走基线 260ms） */
+.session-rail-item {
+	transition: height 260ms cubic-bezier(0.34, 1.15, 0.64, 1);
+}
+.session-rail-item.is-expanded {
+	height: 40px;
+	transition: height 340ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item.is-near-1 {
+	height: 32px;
+	transition: height 300ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item.is-near-2 {
+	height: 20px;
+	transition: height 280ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item .rail-capsule {
+	position: absolute;
+	left: 6px;
+	top: 50%;
+	display: flex;
+	align-items: center;
+	/* 无 padding：否则 border-box 下收起态高度被 padding 撑成 12px，就不是一条线了。
+	   内距在内容包裹层（JSX 的 px-2.5），收起时随内容一起被 overflow 裁掉 */
+	border-radius: 0;
+	overflow: hidden;
+	transform: translateY(-50%);
+	/* 收起（目标态 = 细线）：尺寸先走，颜色/圆角延迟到收缩近尾声再翻 */
+	transition:
+		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		height 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		background-color 80ms ease 150ms,
+		border-radius 80ms ease 150ms,
+		box-shadow 120ms ease;
+}
+/* 波浪档位 z 序：展开浮最上，±1 压 ±2 压细线（胶囊比行距大，会覆盖邻行） */
+.session-rail-item.is-expanded {
+	z-index: 10;
+}
+.session-rail-item.is-near-1 {
+	z-index: 6;
+}
+.session-rail-item.is-near-2 {
+	z-index: 4;
+}
+.session-rail-item.is-expanded .rail-capsule {
+	/* 与顶栏胶囊**同宽同圆角**（w-52 + rounded-full，两处是同一个对象，不许飘开）；窄窗口按视口收缩，不越过右缘 */
+	width: min(208px, calc(100vw - 40px));
+	height: 32px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-pop);
+	/* 展开（目标态 = 胶囊）：颜色/圆角 90ms 先行（趁尺寸还小），尺寸随后 340ms 回弹放大，阴影最后到 */
+	transition:
+		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease,
+		border-radius 90ms ease,
+		box-shadow 220ms ease 80ms;
+}
+/* ±1：一半大的胶囊（104×24），头像+标题可见（裁断出预览感），柔阴影 */
+.session-rail-item.is-near-1 .rail-capsule {
+	width: 104px;
+	height: 24px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-soft);
+	transition:
+		width 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease 20ms,
+		border-radius 90ms ease 20ms,
+		box-shadow 180ms ease 60ms;
+}
+/* ±2：迷你空胶囊（44×14），纯波形过渡元素，不显示内容 */
+.session-rail-item.is-near-2 .rail-capsule {
+	width: 44px;
+	height: 14px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-soft);
+	transition:
+		width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease 20ms,
+		border-radius 90ms ease 20ms,
+		box-shadow 150ms ease 50ms;
+}
+/* 胶囊内容（图标 + 标题）：展开/±1 时等翻色完成后渐入，配合裁剪逐步揭示；
+   收起/进 ±2 时 120ms 淡出（快于收缩），不留空胶囊 */
+.session-rail-item .rail-capsule > * {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.session-rail-item.is-expanded .rail-capsule > * {
+	opacity: 1;
+	transition: opacity 180ms ease 110ms;
+}
+.session-rail-item.is-near-1 .rail-capsule > * {
+	opacity: 1;
+	transition: opacity 160ms ease 70ms;
+}
+/* 胶囊末尾的关闭 ×：仅展开态可见可点（同顶栏 group-hover 语义；±1/±2 只是波浪预览不给操作），
+   点击 stopPropagation 不触发切换；closeSession 后顶栏/轨道同读 sessions 数组，天然双向同步。
+   宽度 0→16 与胶囊同曲线「长出来」（margin-left 负值抵消 gap），±1 预览标题不被挤占 */
+.session-rail-item .rail-close {
+	width: 0;
+	margin-left: -8px;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		margin-left 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		opacity 100ms ease;
+}
+.session-rail-item.is-expanded .rail-close {
+	width: 16px;
+	margin-left: 0;
+	opacity: 1;
+	pointer-events: auto;
+	transition:
+		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		margin-left 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		opacity 180ms ease 110ms;
+}
+/* 呼吸只作用于收起态的细线；展开/跟涨成白胶囊后由内部头像的 tab-avatar-working 承担（整个白胶囊闪透明度会像故障） */
+.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
+	animation: avatar-breathe 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	/* 各档位 transition 定义在更高优先级的状态选择器里，必须逐档同优先级覆盖才压得住 */
+	.session-rail-item,
+	.session-rail-item.is-expanded,
+	.session-rail-item.is-near-1,
+	.session-rail-item.is-near-2,
+	.session-rail-item .rail-capsule,
+	.session-rail-item.is-expanded .rail-capsule,
+	.session-rail-item.is-near-1 .rail-capsule,
+	.session-rail-item.is-near-2 .rail-capsule,
+	.session-rail-item .rail-capsule > *,
+	.session-rail-item.is-expanded .rail-capsule > *,
+	.session-rail-item.is-near-1 .rail-capsule > *,
+	.session-rail-item .rail-close,
+	.session-rail-item.is-expanded .rail-close {
+		transition: none;
+	}
+	.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
+		animation: none;
+	}
+}
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+	overflow: hidden;
+}
+
+html[data-storage-startup][data-app-ready] #root {
+	animation: none;
+}
+
+body {
+	font-family:
+		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
+		sans-serif;
+	background: var(--color-canvas);
+	color: var(--color-ink);
+	font-size: calc(14px * var(--fs-ui-scale, 1));
+	-webkit-font-smoothing: antialiased;
+	user-select: none;
+	transition: background-color 0.15s ease;
+}
+
+/* 键盘焦点环统一接管（@layer base：可被 utilities 层的 outline-none 覆盖）。
+   不写的话会落到 Chromium UA 默认环 outline:auto——颜色跟随 macOS 系统强调色（如琥珀色），
+   不受设计 token 控制。改为统一用 accent 低饱和描边，仅在 Tab 键盘导航时出现
+   （:focus-visible 对鼠标点击不命中），键盘可达性保留。 */
+@layer base {
+	:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+		outline-offset: 1px;
+	}
+}
+
+/* 主题就绪（data-theme 写入）前 body 透明：透出窗口 backgroundColor（main 已按主题设置），
+   防深色启动时开屏动画底下闪白 */
+:root:not([data-theme]) body {
+	background: transparent;
+}
+
+/* 设置了自定义背景图时 body 透明，让 #root 内的背景层透出 */
+[data-has-bg="true"] body {
+	background: transparent;
+}
+
+/* 应用背景层：图片 cover + 主题感知遮罩（透明度 = 设置的 dim 值，inline style 控制） */
+.app-bg {
+	position: absolute;
+	inset: 0;
+	background-size: cover;
+	background-position: center;
+}
+.app-bg-scrim {
+	position: absolute;
+	inset: 0;
+	background: rgb(var(--color-scrim));
+}
+
+pre,
+code {
+	font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* shiki 高亮：透明背景融入卡片容器 */
+.shiki-body .shiki {
+	/* biome-ignore lint/complexity/noImportantStyles: 需覆盖 shiki 内联背景色 */
+	background-color: transparent !important;
+	margin: 0;
+}
+
+/* 顶栏拖拽区（macOS hiddenInset） */
+.drag-region {
+	-webkit-app-region: drag;
+}
+.no-drag {
+	-webkit-app-region: no-drag;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--scrollbar-thumb);
+	border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* 对话消息流比全局滚动条更轻，避免右侧视觉重量抢过内容。
+   Electron 的 Chromium 只走 WebKit 伪元素；不设 scrollbar-width，避免触发系统轨道绘制。
+   共用类 .thin-scrollbar（弹层列表等也用），.chat-scrollbar 保留为别名（既有调用点不改）。 */
+.chat-scrollbar::-webkit-scrollbar,
+.thin-scrollbar::-webkit-scrollbar {
+	width: 4px;
+}
+.chat-scrollbar::-webkit-scrollbar-thumb,
+.thin-scrollbar::-webkit-scrollbar-thumb {
+	border-radius: 3px;
+}
+
+/* 淡出分隔线：1px 高的发丝线，中段留雾感、两端各 22% 渐隐到透明（没有明确的线头）。
+   用在中弹层的搜索行下 / 列表下（替代实线 border）。 */
+.fade-rule {
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		var(--color-rule) 22%,
+		var(--color-rule) 78%,
+		transparent 100%
+	);
+}
+
+/* 淡出分隔线的竖直版（同一条语言，旋转 90°）：在容器**右边缘**画一条发丝线，中间实、两端淡出。
+   用在左栏 / 设置弹窗左导航与内容的分界（替代 `border-r`）。
+   `--rule-solid` = 中段实线占整条高度的比例（默认 50% = 上下各 25% 都在淡，淡出要够长才看得出）。
+   注意：渐变里直接写 `var(--color-rule)`——别把它抽成 :root 上的自定义属性，自定义属性里的 var()
+   在**声明它的元素**上求值，抽上去会锁死浅色取值（深色主题沿用浅色线）。 */
+.fade-rule-v {
+	position: relative;
+	--rule-solid: 50%;
+}
+.fade-rule-v::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: 1px;
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-rule) calc(50% - var(--rule-solid) / 2),
+		var(--color-rule) calc(50% + var(--rule-solid) / 2),
+		transparent 100%
+	);
+}
+
+/* 滚动边界淡出：把边界的硬裁切换成渐变（顶栏下 = 对话正文上沿、左栏底部 = 会话列表下沿，
+   也就是原来那两条 1px 实线的位置）。两侧各自只在「那个方向还有内容」时淡出，属性由
+   lib/use-edge-fade.ts 按滚动位置写；不溢出的容器不挂属性，边缘保持干净。
+   用 alpha 逆罩而不是盖一层颜色：不引入任何色值（#000 在这里只是遮罩的「不透明」取值），
+   深浅主题共用一套，行自身的 hover 底色也跟着自然淡出。淡出高度旋钮 = --edge-fade-size。 */
+/* 用户长消息默认六行；自然高度由正文测量，过渡可在快速点击时原地反向。 */
+.user-message-text {
+	max-height: var(--user-message-full-height, none);
+	overflow: hidden;
+	transition: max-height 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 仅最后一行向下渐隐；按钮在 mask 外。lh 跟随界面字号。 */
+.user-message-text[data-collapsed="true"] {
+	max-height: 6lh;
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 1lh), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.user-message-text {
+		transition: none;
+	}
+}
+
+.edge-fade[data-fade-top="true"] {
+	mask-image: linear-gradient(to bottom, transparent 0, #000 var(--edge-fade-size, 20px));
+}
+.edge-fade[data-fade-bottom="true"] {
+	mask-image: linear-gradient(to top, transparent 0, #000 var(--edge-fade-size, 20px));
+}
+.edge-fade[data-fade-top="true"][data-fade-bottom="true"] {
+	mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 var(--edge-fade-size, 20px),
+		#000 calc(100% - var(--edge-fade-size, 20px)),
+		transparent 100%
+	);
+}
+
+/* 思考深度横条（模型弹层底部）：轨道 + 渐变填充 + 刻度 + 原生 range 滑块。
+   三者共用一条中心线公式：刻度中心 x = 填充宽 = 滑块中心 = calc((100% - 26px) * pos + 13px)。
+   26px = 轨道高度 = 滑块直径：滑块走到两端时左右各占半个滑块，刻度跟着内缩才不会顶出条外/被滑块盖偏。
+   用原生 input[type=range] 叠在渐变与刻度之上：←→ / Home / End / 可聚焦 / 无障碍语义都是白拿的；
+   但可见的滑块是自绘的（原生 thumb 透明化）——原生 thumb 没法加位移动画。 */
+.think-slider {
+	/* 换档位动画：280ms + 轻微回弹（app 里展开类动画用的是同族缓动）。
+	   滑块和填充（clip-path 裁出来的边界）用同一条曲线：回弹幅度小于滑块半径，
+	   所以填充边界的过冲始终藏在滑块下面、看不出脱节 —— 千万别只给滑块加回弹。
+	   时长偏长是有意的：太快（<200ms）在 47px 的小位移上几乎看不出动过。 */
+	--bar-anim: 280ms cubic-bezier(0.34, 1.12, 0.64, 1);
+	position: relative;
+	height: 26px;
+}
+.think-track {
+	position: absolute;
+	inset: 0;
+	border-radius: 9999px;
+	background: var(--color-hover);
+}
+.think-fill {
+	position: absolute;
+	inset: 0;
+	border-radius: 9999px;
+	background: var(--bar-grad);
+	clip-path: inset(0 calc(100% - var(--fillw, 13px)) 0 0);
+	transition: clip-path var(--bar-anim);
+}
+.think-tick {
+	position: absolute;
+	top: 50%;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	transform: translate(-50%, -50%);
+	background: var(--color-border-strong);
+	transition: background-color var(--bar-anim);
+}
+.think-tick[data-passed="true"] {
+	background: var(--bar-tick-on);
+}
+.think-range {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 26px;
+	margin: 0;
+	appearance: none;
+	background: transparent;
+	cursor: pointer;
+}
+.think-range::-webkit-slider-runnable-track {
+	height: 26px;
+	background: transparent;
+}
+/* 原生 thumb 只留 26px 拖拽热区、视觉全透明：换档位的位移动画做在自绘滑块 .think-knob 上
+   （原生 thumb 的位置由引擎直接给定，没法 transition） */
+.think-range::-webkit-slider-thumb {
+	appearance: none;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+}
+/* 自绘滑块：rail 从轨道左端缩进 13px（= 半径）、宽 = 轨道宽 - 26px，整体平移 `--pos × 自身宽`；
+   knob 再反向缩进 13px 把自己摆在 rail 左端 → pos=0 时中心 = 轨道左 + 13px，
+   pos=1 时 = 轨道右 - 13px，正好压在首/末刻度上（与刻度、填充同一条中心线） */
+.think-knob-rail {
+	position: absolute;
+	left: 13px;
+	top: 0;
+	width: calc(100% - 26px);
+	height: 26px;
+	transform: translateX(calc(var(--pos, 0) * 100%));
+	transition: transform var(--bar-anim);
+	pointer-events: none;
+}
+.think-knob {
+	position: absolute;
+	left: -13px;
+	top: 0;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	background: var(--bar-knob);
+	box-shadow: var(--shadow-pop);
+}
+/* 拖拽中不做动画：滑块要严格跟手（点轨道瞬时跳到位也是同一条路） */
+.think-slider[data-dragging="true"] .think-knob-rail,
+.think-slider[data-dragging="true"] .think-fill,
+.think-slider[data-dragging="true"] .think-tick {
+	transition: none;
+}
+/* 焦点环落在滑块上而不是整条轨道外框（滑条不是按钮，外框会显得很笨） */
+.think-range:focus-visible {
+	outline: none;
+}
+.think-range:focus-visible ~ .think-knob-rail .think-knob {
+	box-shadow:
+		var(--shadow-pop),
+		0 0 0 2px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+	.think-fill,
+	.think-tick,
+	.think-knob-rail {
+		transition: none;
+	}
+}
+
+/* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text）。
+   光带为平滑对称单峰渐变（边缘 = currentColor 本色，图宽 200%）：行程端点 200% / -100% 处
+   渐变图恰好完全滑出视口两侧——动画精确走 200% → -100% 且 linear，循环无缝无重置卡顿。
+   渐变形状与 MetaGroup.tsx 的 bandGradient 保持一致（改则两边同步）。 */
+.shimmer-sweep {
+	background-image: linear-gradient(
+		90deg,
+		currentColor 0%,
+		color-mix(in srgb, currentColor 75%, var(--shimmer-highlight)) 28%,
+		color-mix(in srgb, currentColor 30%, var(--shimmer-highlight)) 46%,
+		color-mix(in srgb, var(--shimmer-highlight) 90%, currentColor) 50%,
+		color-mix(in srgb, currentColor 30%, var(--shimmer-highlight)) 54%,
+		color-mix(in srgb, currentColor 75%, var(--shimmer-highlight)) 72%,
+		currentColor 100%
+	);
+	background-size: 200% 100%;
+	background-position: 200% 0;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: shimmer-sweep 3.6s linear infinite;
+}
+@keyframes shimmer-sweep {
+	from {
+		background-position: 200% 0;
+	}
+	to {
+		background-position: -100% 0;
+	}
+}
+/* 扫光目标常态兜底：实心 currentColor 渐变 + text clip，渲染效果与普通文字一致；
+   让扫光元素始终走同一条渲染路径（clip:text + 透明填充），rAF 扫光只重写 backgroundImage
+  （光带位置烘焙在渐变 px 色标里，背景恒铺满元素）——挂载/卸载/清理的瞬间无纯色闪帧。 */
+.sweep-target {
+	background-image: linear-gradient(90deg, currentColor, currentColor);
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+	.shimmer-sweep {
+		animation: none;
+	}
+}
+
+/* markstream-react 视觉覆写：组件样式均为 :where() 零优先级，此处规则必覆盖；对齐原 react-markdown 设计 */
+.markdown-body {
+	--link-color: var(--color-accent);
+	/* 库的 rounded-lg 等工具类吃 --ms-radius，CSS 里无默认定义（→ 直角）；在此补上 */
+	--ms-radius: 10px;
+}
+/* 关掉库对整容器/代码块的 content-visibility:auto 跳过渲染：contain-intrinsic-size 是固定估值
+   （消息 600px / 代码块 180px，无 auto 记忆），视口外一律按估值占位、滚近才恢复真实高度——
+   真实高度远超估值的消息在上滚进入渲染窗口时突然「长高」，浏览器滚动锚定把视口往下推，
+   表现为上滚被顶住、偶发被拽回吸底（2026-09-16 实测复现，见 PITFALLS）。
+   长会话的渲染成本控制由挂载窗口（mount-window）承担，不依赖库这层跳过。
+   content-visibility:visible 只停跳过，contain:layout/content 的布局隔离仍然保留。 */
+.markdown-body .markdown-renderer {
+	content-visibility: visible;
+	contain-intrinsic-size: none;
+}
+.markdown-body .code-block-container {
+	content-visibility: visible;
+	contain-intrinsic-size: none;
+}
+.markdown-body .paragraph-node {
+	margin: 0.55rem 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+	margin: 0.55rem 0;
+	padding-left: 1.25rem;
+}
+.markdown-body li {
+	margin: 0.35rem 0;
+}
+.markdown-body .blockquote-node {
+	margin: 0.55rem 0;
+	padding-left: 0.75rem;
+	border-left: 2px solid var(--markdown-quote-border);
+	font-weight: normal;
+	font-style: normal;
+	color: var(--markdown-quote-text);
+}
+.markdown-body .heading-node {
+	font-weight: 600;
+}
+.markdown-body .heading-1 {
+	margin: 0.9rem 0 0.35rem;
+	font-size: calc(20px * var(--fs-ui-scale, 1));
+	line-height: 1.4;
+}
+.markdown-body .heading-2 {
+	margin: 0.85rem 0 0.35rem;
+	font-size: calc(18px * var(--fs-ui-scale, 1));
+	line-height: 1.4;
+}
+.markdown-body .heading-3 {
+	margin: 0.65rem 0 0.3rem;
+	font-size: calc(16px * var(--fs-ui-scale, 1));
+	line-height: 1.4;
+}
+.markdown-body .heading-4,
+.markdown-body .heading-5,
+.markdown-body .heading-6 {
+	margin: 0.6rem 0 0.3rem;
+	font-size: calc(15px * var(--fs-ui-scale, 1));
+}
+.markdown-body .link-node {
+	text-decoration: underline;
+	text-decoration-color: var(--markdown-link-decoration);
+}
+.markdown-body .link-node:hover {
+	color: var(--markdown-link-hover);
+	/* markstream 默认 hover 用 text-decoration 简写，会把下划线颜色重置成 currentColor 并加 0.2rem 偏移，这里压回设计态 */
+	text-decoration-color: var(--markdown-link-decoration);
+	text-underline-offset: auto;
+}
+/* 代码块容器：无边框悬浮卡片（设计语言 rounded-xl bg-surface shadow-soft 同 QueueBar/TodoPanel；
+   编辑器底色即卡片面，浅色=vitesse-light 白/深色=主题深底）。库自带 border 工具类 +
+   inline borderColor，此处 border:none 以更高优先级压掉宽度；--ms-radius 抬到 12px（rounded-xl）。
+   左右各收 8px：shadow-soft 外扩约 12px，卡片与正文同宽时阴影左右被溢出感挤压（贴边生硬），
+   收窄后阴影四周完整悬浮 */
+.markdown-body .code-block-container {
+	--ms-radius: 12px;
+	border: none;
+	margin-inline: 8px;
+	box-shadow: var(--shadow-soft);
+}
+/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
+   header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
+   语言标签/折叠按钮已裁：语言胶囊在下方 display:none，折叠经 codeBlockProps
+   showCollapseButton:false 关闭（Markdown.tsx）。
+   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
+.markdown-body .code-block-container .code-block-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 2;
+	padding: 0.5rem 0.625rem;
+	/* 语言标签隐藏后 header 只剩右侧按钮组：靠右（库是 justify-between，剩一个子元素会落到左） */
+	justify-content: flex-end;
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过组件 inline style 的 background-color: var(--vscode-editor-background) */
+	background: transparent !important;
+	border-bottom: none;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+}
+.markdown-body .code-block-container:hover .code-block-header,
+.markdown-body .code-block-container:focus-within .code-block-header {
+	opacity: 1;
+}
+/* header 覆盖前两行（38px，代码行高 18px），整层接管鼠标会导致顶部两行无法拖选。
+   保持 header 穿透，只让实际操作按钮恢复命中。 */
+.markdown-body .code-block-header .code-action-btn {
+	pointer-events: auto;
+}
+/* 语言标签胶囊：不展示（设计去语言标签） */
+.markdown-body .code-block-header > div:first-child {
+	display: none;
+}
+/* 悬浮操作按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
+.markdown-body .code-block-header .code-action-btn {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
+	backdrop-filter: blur(8px);
+	padding: 0.25rem;
+}
+@media (prefers-reduced-motion: reduce) {
+	.markdown-body .code-block-container .code-block-header {
+		transition: none;
+	}
+}
+/* header 右侧图标按钮：颜色继承自容器（= 编辑器主题前景），只需抹平深蓝底文字按钮；
+   header 本身 pointer-events:none，只有按钮可命中，避免挡住代码顶部文本。 */
+.markdown-body .code-block-btn {
+	border-color: var(--color-border-strong);
+	background: var(--color-surface);
+	color: var(--color-ink-2);
+}
+/* 抹平 markstream-react 自带的默认 hover（非我们的设计）：代码块头部按钮变蓝、action 按钮透明度跳变、
+   mermaid 按钮/关闭键变色、脚注 hover 下划线。统一 hover = 常态 */
+.markdown-body .code-block-btn:hover {
+	background: var(--color-hover);
+	border-color: var(--color-border-strong);
+	color: var(--color-ink);
+}
+.markdown-body .code-action-btn:hover {
+	opacity: 0.7;
+}
+.markdown-body .footnote-link:hover,
+.markdown-body .footnote-anchor:hover {
+	text-decoration: none;
+}
+.markdown-body .mermaid-btn:hover,
+.markdown-body .mermaid-modal-close:hover {
+	background: transparent;
+	color: inherit;
+	opacity: 0.9;
+}
+/* markstream 的深色 hover 是 .dark 前缀（0,3,0 优先级），用 [data-theme] 压过它 */
+[data-theme="dark"] .markdown-body .mermaid-btn:hover,
+[data-theme="dark"] .markdown-body .mermaid-modal-close:hover {
+	background: transparent;
+	color: inherit;
+	opacity: 0.9;
+}
+/* monaco 就绪前/失败时的纯文本 fallback：库默认 font-family/background 全 inherit（混入正文体），
+   补齐等宽字体与主题色表面，加载瞬间不突兀 */
+.markdown-body .code-fallback-plain {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
+	padding: 0.75rem 1rem;
+}
+.markdown-body .inline-code {
+	padding: 0.125rem 0.25rem;
+	border-radius: 0.25rem;
+	background: var(--markdown-code-bg);
+	color: var(--markdown-code-text);
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
+}
+.markdown-body .table-node {
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+}
+.markdown-body .table-node th,
+.markdown-body .table-node td {
+	border: 1px solid var(--markdown-table-border);
+	padding: 0.25rem 0.5rem;
+	text-align: left;
+}
+.markdown-body .table-node th {
+	background: var(--markdown-table-head-bg);
+}
+.markdown-body .hr-node,
+.markdown-body .thematic-break {
+	margin: 1rem 0;
+	border-top-color: var(--markdown-table-border);
+}
+
+/* <details> 内容区的抽屉式展开/折叠动画（外层工具组 + 内层 thinking 行 / tool call 行）。
+   ::details-content（Chromium 131+）是包裹 summary 之外内容的伪元素；calc-size(auto, size)
+   让 height 可在 0 与 auto 之间过渡。content-visibility 一并过渡：它参与离散动画时有特殊插值
+   规则——任一端点是 visible 则整个过渡区间保持 visible → 关闭动画播完内容才真正隐藏。
+   不支持的旧内核此规则整体不命中，<details> 退化为原生瞬开瞬关，无破坏性。 */
+.drawer-details::details-content {
+	height: 0;
+	overflow: clip;
+	transition:
+		height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+		content-visibility 0.28s allow-discrete;
+}
+.drawer-details[open]::details-content {
+	height: calc-size(auto, size);
+}
+@media (prefers-reduced-motion: reduce) {
+	.drawer-details::details-content {
+		transition: none;
+	}
+}
+
+/* ============================================================
+   turn-diff：轮末文件变更 chip + 右侧 diff 栏
+   设计稿：.local/design/ux/turn_diff/index.html（动画/配色以此为准）
+   ============================================================ */
+:root {
+	--diff-add: #16a34a;
+	--diff-add-bg: rgba(22, 163, 74, 0.075);
+	--diff-add-gutter: rgba(22, 163, 74, 0.12);
+	--diff-del: #dc2626;
+	--diff-del-bg: rgba(220, 38, 38, 0.065);
+	--diff-del-gutter: rgba(220, 38, 38, 0.1);
+}
+[data-theme="dark"] {
+	--diff-add: #4ade80;
+	--diff-add-bg: rgba(74, 222, 128, 0.08);
+	--diff-add-gutter: rgba(74, 222, 128, 0.13);
+	--diff-del: #f87171;
+	--diff-del-bg: rgba(248, 113, 113, 0.08);
+	--diff-del-gutter: rgba(248, 113, 113, 0.12);
+}
+
+/* ---- 轮末 chip ---- */
+.turn-diff {
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
+}
+/* 纯计时行（无文件变更轮）：幽灵文字，非交互 */
+.turn-diff-plain {
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
+	display: flex;
+}
+.turn-diff-head {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	color: var(--color-ink-dim);
+	transition: color 0.15s;
+}
+.turn-diff-head:hover {
+	color: var(--color-ink);
+}
+.turn-diff-head::-webkit-details-marker {
+	display: none;
+}
+/* 轮次计时：chip 首位；运行中数字呼吸，结束后随 head 同色定格 */
+.turn-diff-timer {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--color-ink-faint);
+	transition: color 0.15s;
+}
+.turn-diff-timer-num,
+.turn-diff-timer svg {
+	font-variant-numeric: tabular-nums;
+}
+.turn-diff-timer-live {
+	color: var(--color-ink-dim);
+}
+.turn-diff-timer-live .turn-diff-timer-num {
+	animation: turn-timer-breathe 2.2s ease-in-out infinite;
+}
+@keyframes turn-timer-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.45;
+	}
+}
+.turn-diff-sep {
+	color: var(--color-ink-faint);
+}
+.turn-diff-stat {
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+.turn-diff-added {
+	color: var(--diff-add);
+}
+.turn-diff-removed {
+	color: var(--diff-del);
+}
+.turn-diff-chev {
+	display: flex;
+	transition: transform 0.25s;
+}
+.turn-diff[open] .turn-diff-chev {
+	transform: rotate(90deg);
+}
+/* 进场：turn_end 后 pop（上浮 6px + scale 0.97 + 去模糊） */
+.turn-diff-enter {
+	animation: turn-diff-in 0.42s cubic-bezier(0.34, 1.35, 0.64, 1) both;
+}
+@keyframes turn-diff-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.97);
+		filter: blur(1px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: none;
+	}
+}
+/* chip 内联文件列表 */
+.turn-diff-files {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 4px 0 2px 8px;
+}
+.turn-diff-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	border: none;
+	background: none;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-2);
+	transition: background 0.12s;
+	text-align: left;
+	width: fit-content;
+	max-width: 100%;
+}
+.turn-diff-file:hover {
+	background: var(--color-hover);
+}
+/* mono path RTL 截断：优先保留文件名端 */
+.turn-diff-path,
+.diff-file-path {
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+.turn-diff-path {
+	max-width: 420px;
+}
+
+/* ---- chip ---- */
+
+/* ---- 左侧栏（Codex 式常驻导航）：push 式宽度过渡，收起 = 宽 0 彻底藏起（不留图标条）。
+   宽度一律吃 `--sidebar-render-width`（renderer 算好的渲染宽，内外层**必须同一个值**：
+   只夹外层的话窄窗下内层右侧会被 overflow:hidden 硬裁，被裁的正是行末那些功能控件，见 lib/sidebar-width.ts）。
+   内层保持这一档的固定宽：过渡期间内容被整体推走而不是被横向挤压（否则文字会边缩边换行） ---- */
+.sidebar {
+	position: relative;
+	flex: none;
+	width: var(--sidebar-render-width, 240px);
+	overflow: hidden;
+	background: var(--color-canvas);
+	/* **必须压住右邻居**（X2，2026-10-07）：聊天列里有些内容会比列宽更宽（聊天页空态的 748px logo 块居中 →
+	   窄于 748 时向两侧溢出），**溢出的透明部分照样吃 pointer 事件**，不压住时它会盖掉贴本栏右缘的 8px
+	   把手命中区与行末控件（侧栏越宽越容易触发：聊天列 < 748 ⇔ 窗口 1064 时侧栏 > 316px 就开始了）。
+	   本栏背景不透明且 logo 溢出的那片本来就看不见 → 抬到 z-index 1 **视觉零变化**（对比截图见 IMPL-NOTES X2）。
+	   根级浮层（设置弹窗 / Toaster / 插件 overlay）在更外层节点、z 更高，不受影响；栏内没有 fixed/portal。 */
+	z-index: 1;
+	transition: width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+	/* 与对话区的分界不再用 1px 实线 border：改成**中段实、两头淡出**的发丝线 —— 就是 `.fade-rule-v`
+	   （标记里挂在同一个元素上，原先这段是自己复刻一份渐变，现已并到那个类里）。 */
+}
+/* 拖动中关过渡：不关的话宽度会滞后指针近 100px 并在松手后追一段（阶段 0 实测：滞后 94px / 追赶 500ms） */
+.sidebar.is-resizing {
+	transition: none;
+}
+/* 把手的可见反馈 = **同一条**分界发丝线本身：hover / 拖动中把中段实线拉长、提到 ink 灰阶（不新增第二条竖线）。
+   hover 那条件加 `:not(.is-resizing)`：否则拖动中指针也在把手上，hover 规则特异性更高会盖掉拖动色 */
+.sidebar:has(.sidebar-resize-handle:hover):not(.is-resizing)::after {
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-ink-faint) 18%,
+		var(--color-ink-faint) 82%,
+		transparent 100%
+	);
+}
+.sidebar.is-resizing::after {
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-ink-dim) 10%,
+		var(--color-ink-dim) 90%,
+		transparent 100%
+	);
+}
+/* 把手：贴右缘内侧的 8px 透明命中区（不改变观感，只改光标与命中范围）。
+   `<hr>` 的浏览器默认边框/外边距要清掉；**高度必须显式 `auto`** —— Tailwind preflight 给 `hr` 定了
+   `height: 0`，只写 `top/bottom: 0` 会被这条具名高度覆盖，命中区高度 0 = 拖不到（CDP 合成事件也命中不了） */
+.sidebar-resize-handle {
+	position: absolute;
+	z-index: 1;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	height: auto;
+	width: 8px;
+	margin: 0;
+	border: 0;
+	cursor: col-resize;
+	touch-action: none;
+}
+/* 收起：宽度归 0，发丝线一起不画（只宽 0 会留一条 1px 的线；聊天列能不能拿到那 1px 与收起前一致） */
+.sidebar.is-collapsed {
+	width: 0;
+}
+.sidebar.is-collapsed::after {
+	display: none;
+}
+.sidebar-inner {
+	width: var(--sidebar-render-width, 240px);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	/* 收起时内容层跟着左移淡出：只裁不淡会在动画中段露出半截字 */
+	transition:
+		opacity 0.3s 0.08s,
+		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sidebar.is-collapsed .sidebar-inner {
+	opacity: 0;
+	transform: translateX(-28px);
+}
+/* 分组展开/收起：grid 0fr→1fr 让未知高度（空态/任意行数的列表）共用一套动画，
+   内层 overflow:hidden 只负责裁切；列表自己**不滚**（整条左栏只有一个外层滚动容器，v13 统一滚动）。 */
+.sidebar-group-content {
+	display: grid;
+	grid-template-rows: 0fr;
+	opacity: 0;
+	transition:
+		grid-template-rows 180ms cubic-bezier(0.32, 0.72, 0, 1),
+		opacity 120ms ease-out;
+}
+.sidebar-group-content.is-expanded {
+	grid-template-rows: 1fr;
+	opacity: 1;
+}
+.sidebar-group-content-inner {
+	min-height: 0;
+	overflow: hidden;
+}
+/* 会话行状态点：工作中 = 墨色呼吸（与顶栏胶囊头像同一套节拍与时长） */
+.sidebar-dot-working {
+	animation: avatar-breathe 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sidebar,
+	.sidebar-inner,
+	.sidebar-group-content {
+		transition: none;
+	}
+	.sidebar-dot-working {
+		animation: none;
+	}
+}
+
+/* ---- 右侧 diff 浮层抽屉 ----
+   只动画 transform/opacity，不改聊天列宽度：有内容的长会话也不会逐帧重排 Markdown、
+   触发 MessageList ResizeObserver 贴底。面板常驻 DOM，关闭态移出视口并禁用命中。 */
+.diff-sidebar {
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	z-index: 30;
+	width: min(420px, 38vw);
+	overflow: hidden;
+	border-radius: 12px 0 0 12px;
+	background: var(--color-canvas);
+	box-shadow: var(--shadow-pop);
+	opacity: 0.98;
+	transform: translate3d(calc(100% + 28px), 0, 0);
+	pointer-events: none;
+	will-change: transform;
+	transition:
+		transform 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+		opacity 0.18s ease;
+}
+.diff-sidebar.open {
+	opacity: 1;
+	transform: translate3d(0, 0, 0);
+	pointer-events: auto;
+}
+.diff-sidebar-in {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	background: var(--color-canvas);
+}
+.diff-side-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 14px 6px;
+}
+.diff-side-title {
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	font-weight: 600;
+	color: var(--color-ink);
+}
+/* 分支行：header 下方幽灵文字行（⎇ 分支名），分隔线从 head 移到此处（head+branch 同为一组头部） */
+.diff-side-branch {
+	position: relative;
+	flex: none;
+	padding: 0 10px 8px;
+	border-bottom: 1px solid var(--color-border);
+}
+.diff-branch-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	padding: 3px 6px;
+	border-radius: 6px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	transition:
+		color 0.15s,
+		background-color 0.15s;
+}
+.diff-branch-btn:hover {
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+}
+.diff-branch-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* 只读分支列表下弹：无边框浮卡（shadow-pop），当前分支圆点 + 加重；行无 hover/click 态 */
+.diff-branch-pop {
+	position: absolute;
+	top: 100%;
+	left: 10px;
+	z-index: 30;
+	margin-top: 4px;
+	width: 240px;
+	max-height: 288px;
+	overflow-y: auto;
+	padding: 6px;
+	border-radius: 12px;
+	background: var(--color-surface);
+	box-shadow: var(--shadow-pop);
+}
+.diff-branch-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 8px;
+	border-radius: 6px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-2);
+}
+.diff-branch-item.on {
+	color: var(--color-ink);
+	font-weight: 500;
+}
+.diff-branch-dot {
+	width: 6px;
+	height: 6px;
+	flex: none;
+	border-radius: 9999px;
+	background: transparent;
+}
+.diff-branch-item.on .diff-branch-dot {
+	background: var(--color-ink-2);
+}
+.diff-branch-itemname,
+.diff-branch-item .diff-branch-itemname {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.diff-side-sum {
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-dim);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.diff-seg {
+	display: flex;
+	background: var(--color-hover);
+	border-radius: 7px;
+	padding: 2px;
+	margin-left: auto;
+}
+.diff-seg button {
+	border: none;
+	background: none;
+	font-family: inherit;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-dim);
+	padding: 2px 9px;
+	border-radius: 5px;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		color 0.15s;
+	white-space: nowrap;
+}
+.diff-seg button.on {
+	background: var(--color-surface);
+	color: var(--color-ink);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.diff-side-close {
+	border: none;
+	background: none;
+	cursor: pointer;
+	color: var(--color-ink-dim);
+	border-radius: 8px;
+	padding: 6px;
+	display: flex;
+	align-items: center;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.diff-side-close:hover {
+	background: var(--color-hover);
+	color: var(--color-ink);
+}
+.diff-side-scroll {
+	flex: 1;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 10px 12px 24px;
+}
+.diff-side-empty {
+	padding: 40px 20px;
+	text-align: center;
+	color: var(--color-ink-faint);
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+}
+
+/* 轮次分组 */
+.diff-turn-group {
+	margin-bottom: 14px;
+	animation: diff-group-in 0.5s cubic-bezier(0.34, 1.25, 0.64, 1) both;
+}
+@keyframes diff-group-in {
+	from {
+		opacity: 0;
+		transform: translateY(-10px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.diff-tg-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 2px 4px 6px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+}
+.diff-tg-title {
+	font-weight: 600;
+	color: var(--color-ink-dim);
+}
+.diff-tg-sum {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+}
+
+/* 文件卡片（手风琴） */
+.diff-file-card {
+	border: none;
+	border-radius: 10px;
+	background: var(--color-surface);
+	box-shadow: var(--shadow-soft);
+	margin-bottom: 10px;
+	overflow: hidden;
+	transition: box-shadow 0.18s;
+}
+.diff-file-card[open] {
+	box-shadow: var(--shadow-pop);
+}
+/* chip 跳转定位：紫色描边闪烁 */
+.diff-file-card.jump-flash {
+	animation: diff-jump-flash 1.15s ease-out;
+}
+@keyframes diff-jump-flash {
+	0%,
+	40% {
+		box-shadow:
+			var(--shadow-pop),
+			0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+	}
+	100% {
+		box-shadow: var(--shadow-soft);
+	}
+}
+.diff-file-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	transition: background 0.12s;
+}
+.diff-file-head:hover {
+	background: var(--color-hover);
+}
+.diff-file-icon {
+	color: var(--color-ink-faint);
+	flex: none;
+}
+.diff-file-path {
+	flex: 1;
+	min-width: 0;
+	color: var(--color-ink-2);
+}
+.diff-file-head .turn-diff-stat {
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	flex: none;
+}
+.diff-file-chev {
+	color: var(--color-ink-faint);
+	transition: transform 0.25s;
+	display: flex;
+	flex: none;
+}
+.diff-file-card[open] .diff-file-chev {
+	transform: rotate(90deg);
+}
+.diff-card-body {
+	overflow-x: auto;
+}
+.diff-section-sep {
+	border-top: 1px dashed var(--color-border);
+	margin: 2px 0;
+}
+
+/* diff 行自带 grid，才能让增删背景覆盖双 gutter 与代码区的整行；
+   min-width: max-content 保留长代码的横向滚动。 */
+.diff-table {
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: calc(11px * var(--fs-code-scale, 1));
+	line-height: calc(20px * var(--fs-code-scale, 1));
+	min-width: max-content;
+	width: 100%;
+}
+.diff-line {
+	display: grid;
+	grid-template-columns: 34px 34px minmax(0, 1fr);
+}
+.diff-line > span {
+	padding: 0 6px;
+	white-space: pre;
+}
+.diff-g {
+	text-align: right;
+	color: var(--color-ink-faint);
+	user-select: none;
+	font-size: calc(10px * var(--fs-code-scale, 1));
+	padding-right: 6px;
+	background: color-mix(in srgb, var(--color-hover) 55%, transparent);
+}
+.diff-code {
+	color: var(--color-ink-2);
+	padding-right: 12px;
+}
+.diff-line-add {
+	background: var(--diff-add-bg);
+}
+.diff-line-add .diff-g {
+	background: var(--diff-add-gutter);
+	color: color-mix(in srgb, var(--diff-add) 75%, transparent);
+}
+.diff-line-add .diff-code {
+	color: var(--color-ink);
+}
+.diff-line-add .diff-code::first-letter {
+	color: var(--diff-add);
+}
+.diff-line-del {
+	background: var(--diff-del-bg);
+}
+.diff-line-del .diff-g {
+	background: var(--diff-del-gutter);
+	color: color-mix(in srgb, var(--diff-del) 75%, transparent);
+}
+.diff-line-del .diff-code {
+	color: var(--color-ink-dim);
+}
+.diff-line-del .diff-code::first-letter {
+	color: var(--diff-del);
+}
+.diff-hunk {
+	background: color-mix(in srgb, var(--color-hover) 70%, transparent);
+	color: var(--color-ink-faint);
+	font-size: calc(10px * var(--fs-code-scale, 1));
+	padding: 2px 10px;
+	user-select: none;
+}
+/* 逐行 stagger 进入（--i 由渲染层写入，上限 24 防长 diff 拖沓） */
+.diff-line,
+.diff-hunk {
+	animation: diff-line-in 0.3s both;
+	animation-delay: calc(min(var(--i, 0), 24) * 14ms);
+}
+@keyframes diff-line-in {
+	from {
+		opacity: 0;
+		transform: translateX(5px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.diff-more {
+	display: block;
+	width: 100%;
+	border: none;
+	border-top: 1px dashed var(--color-border);
+	background: none;
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: calc(10.5px * var(--fs-code-scale, 1));
+	color: var(--color-ink-faint);
+	padding: 5px;
+	cursor: pointer;
+}
+.diff-more:hover {
+	color: var(--color-ink-dim);
+	background: var(--color-hover);
+}
+.diff-fallback {
+	margin: 0;
+	padding: 8px 10px;
+	font-size: calc(11px * var(--fs-code-scale, 1));
+	line-height: calc(18px * var(--fs-code-scale, 1));
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--color-ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* 与基础规则同优先级、位置靠后覆盖（项目约定不用 !important） */
+	.turn-diff-enter,
+	.diff-turn-group,
+	.diff-line,
+	.diff-hunk,
+	.diff-file-card.jump-flash {
+		animation: none;
+	}
+	.diff-sidebar,
+	.diff-sidebar-in,
+	.turn-diff-head,
+	.turn-diff-chev,
+	.diff-file-chev {
+		transition: none;
+	}
+	.turn-diff-timer-live .turn-diff-timer-num {
+		animation: none;
+	}
+}
+
+/* ============================================================
+   error-system：统一报错（会话内错误条 / Composer 内联条 / 重试瞬态）
+   设计稿：.local/design/ux/error-system/index.html（v2 定稿）
+   —— 无边框悬浮卡片（rounded-xl + bg-surface + shadow-soft，QueueBar/TodoPanel 同款）；
+   severity 只由一枚 14px 着色 glyph 表达；操作是幽灵文字按钮
+   ============================================================ */
+
+/* ---- 会话内错误条（<details> 折叠卡；抽屉动画复用 .drawer-details） ---- */
+.error-note {
+	background: var(--color-surface);
+	border-radius: 12px;
+	box-shadow: var(--shadow-soft);
+	overflow: hidden;
+}
+.error-note summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 12px;
+	border-radius: 12px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	transition: background 0.15s ease;
+}
+.error-note summary::-webkit-details-marker {
+	display: none;
+}
+.error-note summary:hover {
+	background: var(--color-hover);
+}
+.error-note[open] summary:hover {
+	background: transparent;
+}
+.error-note-sev {
+	flex: none;
+	display: flex;
+	align-self: center;
+}
+.error-note-sev svg {
+	width: 14px;
+	height: 14px;
+	display: block;
+}
+.error-note-title {
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	font-weight: 500;
+	color: var(--color-ink-2);
+	letter-spacing: -0.01em;
+}
+.error-note-meta {
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.error-note-chev {
+	margin-left: auto;
+	color: var(--color-ink-faint);
+	flex: none;
+	display: flex;
+	align-self: center;
+	transition: transform 0.18s ease;
+	opacity: 0.7;
+}
+.error-note[open] .error-note-chev {
+	transform: rotate(90deg);
+}
+.error-note-chev svg {
+	width: 13px;
+	height: 13px;
+	display: block;
+}
+.error-note-body {
+	padding: 2px 12px 10px 34px;
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+}
+.error-note-detail {
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	line-height: 1.7;
+	color: var(--color-ink-dim);
+	background: var(--color-hover);
+	border-radius: 8px;
+	padding: 8px 10px;
+	max-height: 112px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	user-select: text;
+	cursor: text;
+}
+.error-note-hint {
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-dim);
+	line-height: 1.6;
+}
+.error-note-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: -6px;
+}
+.error-note-act {
+	font-family: inherit;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+	font-weight: 450;
+	color: var(--color-ink-faint);
+	background: none;
+	border: none;
+	cursor: pointer;
+	border-radius: 7px;
+	padding: 4px 8px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	transition:
+		color 0.14s ease,
+		background 0.14s ease;
+}
+.error-note-act svg {
+	width: 12px;
+	height: 12px;
+}
+.error-note-act:hover:not(:disabled) {
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+}
+.error-note-act.strong {
+	color: var(--color-ink);
+	font-weight: 500;
+}
+.error-note-act.strong:hover:not(:disabled) {
+	background: var(--color-hover);
+}
+.error-note-act:disabled {
+	color: var(--color-ink-faint);
+	cursor: default;
+	opacity: 0.5;
+}
+.error-note-copied {
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	opacity: 0;
+	transition: opacity 0.2s;
+	margin-left: 4px;
+}
+.error-note-copied.on {
+	opacity: 1;
+}
+
+/* ---- Composer 内联错误条（QueueBar 同款悬浮卡） ---- */
+.send-error {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: var(--color-surface);
+	border-radius: 12px;
+	box-shadow: var(--shadow-soft);
+	padding: 8px 12px;
+}
+.send-error .se-glyph {
+	flex: none;
+	display: flex;
+}
+.send-error .se-glyph svg {
+	width: 14px;
+	height: 14px;
+	color: var(--color-err);
+}
+.send-error .se-title {
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	font-weight: 500;
+	color: var(--color-ink-2);
+}
+.send-error .se-sub {
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	margin-top: 1px;
+}
+.send-error .se-retry {
+	margin-left: auto;
+	flex: none;
+	font-family: inherit;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+	font-weight: 500;
+	color: var(--color-ink);
+	background: none;
+	border: none;
+	cursor: pointer;
+	border-radius: 7px;
+	padding: 4px 9px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	transition: background 0.14s ease;
+}
+.send-error .se-retry:hover {
+	background: var(--color-hover);
+}
+.send-error .se-retry svg {
+	width: 12px;
+	height: 12px;
+}
+
+/* ---- 自动重试瞬时状态行（无底色，文字 + 琥珀旋转 glyph；跟随 working 行下方） ---- */
+.retry-note {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+}
+.retry-note svg {
+	width: 12px;
+	height: 12px;
+	color: var(--color-warn);
+	flex: none;
+	animation: retry-spin 1.6s linear infinite;
+}
+@keyframes retry-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.retry-note .r-detail {
+	color: var(--color-ink-faint);
+	opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.error-note summary,
+	.error-note-chev,
+	.error-note-act,
+	.retry-note svg {
+		transition: none;
+		animation: none;
+	}
+}
+
+/* ============================================================
+   全局 Toast 栈（error-system 画板 ⑥⑦：右上角浮动，surface + shadow-pop）
+   ============================================================ */
+.toast {
+	pointer-events: auto;
+	background: var(--color-surface);
+	border-radius: 13px;
+	box-shadow: var(--shadow-pop);
+	padding: 10px 12px;
+	display: flex;
+	gap: 9px;
+	align-items: flex-start;
+	animation: toast-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translateX(20px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.toast .t-glyph {
+	flex: none;
+	display: flex;
+	margin-top: 1.5px;
+}
+.toast .t-glyph svg {
+	width: 14px;
+	height: 14px;
+	display: block;
+}
+.toast .t-title {
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
+	font-weight: 500;
+	color: var(--color-ink-2);
+	line-height: 1.45;
+}
+.toast .t-sub {
+	font-size: calc(11px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	margin-top: 2px;
+	line-height: 1.5;
+	max-width: 240px;
+}
+.toast .t-x {
+	margin-left: auto;
+	color: var(--color-ink-faint);
+	flex: none;
+	cursor: pointer;
+	border: none;
+	background: none;
+	padding: 2px;
+	opacity: 0.45;
+	transition: opacity 0.14s ease;
+}
+.toast:hover .t-x {
+	opacity: 1;
+}
+.toast .t-x svg {
+	width: 11px;
+	height: 11px;
+	display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+	.toast {
+		animation: none;
+	}
+}
+
+/* ============================================================
+   会话重命名浮层进出场（issue #55）：菜单下方同位置展开的二级面
+   进场 160ms 缩放淡入（与全站 pop 同曲线），退场 120ms 反向下沉。
+   退场必须 forwards：RenamePopover 的 EXIT_MS(120) 与之同步，动画跑完前严禁卸载节点
+   ============================================================ */
+.pop-in {
+	animation: pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+	transform-origin: top left;
+}
+.pop-out {
+	animation: pop-out 120ms ease-in forwards;
+	transform-origin: top left;
+}
+@keyframes pop-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.96);
+		filter: blur(1.5px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: none;
+	}
+}
+@keyframes pop-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+		transform: translateY(4px) scale(0.97);
+		filter: blur(1px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.pop-in,
+	.pop-out {
+		animation: none;
+	}
+}
+
+/* ============================================================
+   文件行「⋯」更多按钮（issue #55 ⑤）：hover 该行才浮出，点开与右键同一套菜单。
+   容器给足 18px，别让 +N −M 数字压到点上（设计稿实测踩过）
+   ============================================================ */
+.turn-diff-more,
+.diff-file-more {
+	flex: none;
+	width: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--color-ink-faint);
+	opacity: 0;
+	transition: opacity 0.12s ease;
+	cursor: pointer;
+}
+.turn-diff-more {
+	margin-left: 2px;
+}
+.turn-diff-file:hover .turn-diff-more,
+.diff-file-head:hover .diff-file-more {
+	opacity: 1;
+}
+.turn-diff-more:hover,
+.diff-file-more:hover {
+	color: var(--color-ink);
+}
+
+/* ============================================================
+   mermaid 全屏层（markstream 通过 portal 挂到 document.body，选择器不能挂 .markdown-body）
+   同全站浮层语言：无边框 surface 面 + shadow-pop；`html body` 前缀保证压过库里的 :where() 规则
+   ============================================================ */
+html body .markstream-react.mermaid-modal-overlay {
+	/* 遮罩跟全屏看图一致用纯黑（ImagePreview 的 bg-black/80 同语言）；不是主题色，不参与 token 切换 */
+	background: rgb(0 0 0 / 0.62);
+	backdrop-filter: blur(2px);
+}
+html body .markstream-react .mermaid-modal-panel {
+	border-radius: 16px;
+	background: var(--color-surface);
+	color: var(--color-ink);
+	box-shadow: var(--shadow-pop);
+}
+html body .markstream-react .mermaid-modal-header {
+	justify-content: flex-end;
+	border-bottom: none;
+	padding: 10px 10px 4px;
+}
+html body .markstream-react .mermaid-modal-title {
+	/* 标题只留「Mermaid 预览」的品牌感：与关闭按钮同排、字号降一档 */
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	font-weight: 500;
+	color: var(--color-ink-2);
+	letter-spacing: -0.01em;
+	margin-right: auto;
+}
+html body .markstream-react .mermaid-modal-close {
+	font-family: inherit;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+	background: none;
+	border: none;
+	border-radius: 7px;
+	padding: 4px 8px;
+	cursor: pointer;
+}
+/* 库自带 hover 底色（:where 低优先级版是 #94a3b829 + opacity），这里只做中和：全层按钮不响应 hover */
+html body .markstream-react .mermaid-modal-close:hover {
+	background: transparent;
+	opacity: 1;
+}
+html body .markstream-react .mermaid-modal-body {
+	padding: 4px 16px 16px;
+	background: transparent;
+}
+/* 弹层里的预览容器跟卡片同源：库同样按估算写死 360px 高 + 灰底，实测 svg 374px 进去被
+   overflow:hidden 裁掉一截。同样改成跟着图走，底色交回面板 */
+.mermaid-modal-content div:has(> [data-mermaid-wrapper]) {
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过库写入的 inline height / max-height */
+	height: auto !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上（库的 min-h-[360px] 工具类） */
+	min-height: 0 !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+	max-height: calc(100vh - 190px) !important;
+	overflow: auto;
+	padding: 4px 0 8px;
+	background: transparent;
+}
+.mermaid-modal-content [data-mermaid-wrapper] {
+	position: static;
+	cursor: default;
+	pointer-events: none; /* 弹层只做看图，拖拽平移是僵尸交互（无缩放也无重置） */
+}
+
+/* ============================================================
+   mermaid 图表卡（components/chat/MermaidBlock.tsx）
+   语言与代码块一致：无边框浮层卡 + hover 才浮现的工具栏。
+   header DOM 必须保留（按钮在里面），只做视觉悬浮化；库的选择器都是
+   :where(.markstream-react) 零/低优先级，这里用 .markdown-body .md-mermaid 压过去。
+   ============================================================ */
+.markdown-body .md-mermaid {
+	margin: 1rem 0; /* 与库的 my-4 对齐 */
+}
+.markdown-body .md-mermaid .mermaid-block {
+	position: relative; /* 悬浮 header 的定位参照 */
+	border: none;
+	border-radius: 12px;
+	background: var(--color-surface);
+	color: var(--color-ink);
+	margin: 0;
+	margin-inline: 8px; /* 同代码块：给 shadow-soft 留外扩空间，阴影四周完整 */
+	box-shadow: var(--shadow-soft);
+}
+/* 工具栏：header 悬浮 —— 常态隐身（图就是图），hover / 键盘聚焦时浮现 */
+.markdown-body .md-mermaid .mermaid-block-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 2;
+	padding: 6px 8px;
+	/* 隐藏左侧「icon + Mermaid」标签后只剩工具组：靠右（库是 justify-between） */
+	justify-content: flex-end;
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过 isDark 分支的 bg-gray-800/50 工具类 */
+	background: transparent !important;
+	border-bottom: none;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+}
+.markdown-body .md-mermaid .mermaid-block:hover .mermaid-block-header,
+.markdown-body .md-mermaid .mermaid-block:focus-within .mermaid-block-header {
+	opacity: 1;
+}
+/* 标签胶囊（Mermaid 文字 + 图标）不展示：设计语言里语言标签一律不要 */
+.markdown-body .md-mermaid .mermaid-block-header > div:first-child {
+	display: none;
+}
+/* header 覆盖着图的上沿，整层接管鼠标会挡拖选/挡图；只让按钮恢复命中 */
+.markdown-body .md-mermaid .mermaid-block-header button {
+	pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+	.markdown-body .md-mermaid .mermaid-block-header {
+		transition: none;
+	}
+}
+/* 预览 / 源码 分段控件：幽灵文字式，选中项只靠颜色+字重区分（不要底胶囊，也不响应 hover） */
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) {
+	background: transparent;
+	border-radius: 8px;
+	gap: 2px;
+	padding: 0;
+	margin-right: 2px;
+}
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button {
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	font-weight: 450;
+	color: var(--color-ink-faint);
+	background: transparent;
+	border-radius: 7px;
+	padding: 4px 8px;
+}
+/* 选中态：库的 bg-white / 蓝色 --active 都压成透明，只用 ink 加重 */
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button[class~="bg-white"] {
+	font-weight: 500;
+	color: var(--color-ink);
+	background: transparent;
+	box-shadow: none;
+}
+/* 操作按钮（复制 / 全屏）：半透明胶囊 + 毛玻璃，同代码块 code-action-btn；不响应 hover */
+.markdown-body .md-mermaid .mermaid-action-btn {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
+	backdrop-filter: blur(8px);
+	padding: 5px;
+	color: var(--color-ink-2);
+}
+/* 库给这套按钮挂的是「命令式 tooltip 单例」：onMouseEnter 直接调它内部的 He()，showTooltips 这个
+   prop 管不到（所以那个开关对此处无效）。它会在悬停 300ms 后弹出白底+灰边框的 ms-tooltip。
+   只隐藏这个单例：它不带 tooltip-element 类，而走 showTooltips 的 React Tooltip（代码块/图片）
+   带该类，不受影响。库只控 opacity，不设 display，所以一条 display:none 就够。 */
+body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
+	display: none;
+}
+/* 预览区：库按估算写死 inline height（最小 360px、最大 500px）——图小时留一大片空白、图高时直接被裁。
+   改成跟着 svg 走：把 wrapper 从 absolute 放回文档流才能撑开容器，高度/上限交给这里。 */
+.markdown-body .md-mermaid .mermaid-block div:has(> [data-mermaid-wrapper]) {
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过库写入的 inline height / max-height */
+	height: auto !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上（库的 min-h-[360px] 工具类） */
+	min-height: 0 !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+	max-height: min(620px, 70vh) !important;
+	overflow: auto;
+	padding: 20px 16px;
+	background: transparent;
+}
+.markdown-body .md-mermaid [data-mermaid-wrapper] {
+	position: static;
+	cursor: default;
+	pointer-events: none; /* 缩放/拖拽已关（showZoomControls:false），避免"把图拖出可视区"的僵尸交互 */
+}
+/* 渲染中行：库的文案是硬编码英文，隐藏它、用组件传进来的 i18n 变量顶上 */
+.markdown-body .md-mermaid .mermaid-loading {
+	justify-content: center;
+	gap: 6px;
+	padding: 0;
+	margin-top: 10px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	color: var(--color-ink-faint);
+}
+.markdown-body .md-mermaid .mermaid-loading span:last-child {
+	font-size: 0;
+}
+.markdown-body .md-mermaid .mermaid-loading span:last-child::after {
+	content: var(--md-mermaid-rendering, "Rendering diagram…");
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
+}
+.markdown-body .md-mermaid .mermaid-spinner {
+	width: 13px;
+	height: 13px;
+	border-width: 1.5px;
+	border-color: var(--color-border-strong);
+	border-top-color: var(--color-ink-faint);
+}
+/* 源码视图（切到 Source）：跟代码块同一套中性表面 + 等宽字号，不用库的深色气泡、也不是 14px */
+.markdown-body .md-mermaid .mermaid-block div:has(> pre) {
+	background: var(--color-hover);
+	color: var(--color-ink-dim);
+}
+.markdown-body .md-mermaid .mermaid-block pre {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
+	line-height: 1.7;
+}
+/* 渲染失败：换成 Percho 报错卡（glyph + 标题 + 可展开源码，复用 .error-note* 同款样式） */
+.markdown-body .md-mermaid[data-failed] .mermaid-block {
+	display: none;
+}
+.markdown-body .md-mermaid .md-mermaid-fail {
+	margin-inline: 8px;
+}
+/* 失败卡标题不能被右侧超长的 parse 报错挤掉（error-note 里标题/元信息一起收缩） */
+.markdown-body .md-mermaid .md-mermaid-fail .error-note-title {
+	flex: none;
+}
+.markdown-body .md-mermaid .md-mermaid-fail-code {
+	max-height: 220px;
+	margin: 0;
+}

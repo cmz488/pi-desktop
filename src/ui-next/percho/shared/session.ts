@@ -1,0 +1,541 @@
+import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ComposerDocument } from "./composer-document";
+import type { SkillInvocationDisplay } from "./skill-invocation";
+import type { SubagentRunData } from "./subagent";
+
+/**
+ * 临时会话工作区快照（跨重启保留）：有序的会话文件路径 + 最后查看的那一个。
+ * 成员**独立于** `sessions`（后端装载集合会被内存策略卸载）与 `pinnedSessions`（长期收藏标记）。
+ */
+export interface SessionWorkspaceSnapshot {
+	/** 会话文件路径（有序：新成员插在当前成员右侧）。同一路径只出现一次 */
+	files: string[];
+	/** 最后查看的成员文件；必须 ∈ `files`（不在其中一律归一化为 null） */
+	activeFile: string | null;
+}
+
+/** 主题模式：system = 跟随系统 prefers-color-scheme */
+export type ThemeMode = "light" | "dark" | "system";
+
+/** 自定义背景：image 为主进程 userData/backgrounds/ 下的文件名（renderer 经 pi-bg:// 协议加载）；dim 为遮罩不透明度 0–1（越大背景越淡） */
+export interface BackgroundSettings {
+	image: string | null;
+	dim: number;
+}
+
+/** 矩形（位置 + 尺寸）：窗口 bounds 与屏幕 workArea 共用同一形状（与 Electron `Rectangle` 结构同构，可直接互传） */
+export interface Rect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别；主题与背景设置 */
+export interface UiState {
+	/** 上次使用的模型（新会话/draft 起步跟随；语义 = 跟随最近选择，不是独立的「默认模型」设置） */
+	lastUsedModel: { provider: string; modelId: string } | null;
+	/** 上次使用的思考深度（同 lastUsedModel 的跟随语义） */
+	lastUsedThinkingLevel: string;
+	theme: ThemeMode;
+	background: BackgroundSettings;
+	/** 中央状态动画开关（任务运行时对话区中央显示放大 orb，盖文字层之上 + 半透明遮罩压暗身后文字；与状态行小 orb 解耦；旧版本文件缺省为 false） */
+	centerOrbEnabled: boolean;
+	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
+	pinnedSessions: string[];
+	/**
+	 * **按会话记住的权限模式**（只存非 `default` 的项，切回默认就删键）。
+	 * 只存 app 本地 ui-state.json，**不写进 pi 的会话 jsonl**（那是 SDK 文件格式）；新会话/fork 仍从 default 起步。
+	 */
+	sessionPermissionModes: Record<string, PermissionMode>;
+	/**
+	 * 顶栏**是否显示临时会话工作区的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
+	 * 关闭后顶栏不再出胶囊，会话全在左侧栏；旧版本文件的 `topBarVisible` 已废弃（缺省 true）。
+	 */
+	barSessionsVisible: boolean;
+	/**
+	 * 左侧会话短线轨道开关（缺省 false = 不显示）。与 `barSessionsVisible` 相互独立：
+	 * 只关一处不清空工作区；**两处都关掉**才清空快照并停止采集。
+	 */
+	sessionRailEnabled: boolean;
+	/**
+	 * 临时会话工作区快照（缺省空）。存的是**文件路径**而不是内存会话：重启只按需加载
+	 * `activeFile` 一条，其余成员靠历史目录投影画胶囊。
+	 */
+	sessionWorkspace: SessionWorkspaceSnapshot;
+	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
+	sidebarCollapsed: boolean;
+	/**
+	 * 左侧栏宽度（px）= **用户意图值**，取值域 `[SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH]`（`src/sidebar.ts`）。
+	 * 缺省/脏值回 `SIDEBAR_DEFAULT_WIDTH`；读回时按同一组上下界 clamp（main `ui-state.ts` 的 normalize）。
+	 * 它**不是**实际渲染宽：窗口太窄时渲染宽还要被「容器宽 - 聊天列最小宽」夹紧，那是 renderer 的渲染期派生值（`lib/sidebar-width.ts`），不回写这里。
+	 */
+	sidebarWidth: number;
+	/**
+	 * 界面字号（px）：基准 13（= 迁移前现状，乘数 1），四档 12 / 13 / 15 / 17（shared/typography.ts）。
+	 * 影响全部界面文字（含对话正文），图标与布局尺寸不受影响。
+	 */
+	uiFontSize: number;
+	/**
+	 * 代码字号（px）：基准 12.5，四档 11 / 12.5 / 14 / 16。
+	 * 影响 monaco 代码块 / 内联 code / diff / mermaid 源码。
+	 */
+	codeFontSize: number;
+	/**
+	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd）= 用户手动开合过的记录。
+	 * 空数组的含义**只由 `expandedGroupsTouched` 决定**（空 = 全部折叠 / 未操作）。
+	 */
+	expandedGroups: string[];
+	/**
+	 * 展开态是否已被用户手动开合过：
+	 * `false` = 没操作过 → 走默认推断（只展开当前会话所在组），`expandedGroups` 此时只是空值；
+	 * `true` = 完全以 `expandedGroups` 为准，**空数组合法表示「全部折叠」**。
+	 * 旧文件缺该字段时按 `expandedGroups` 是否非空推断（旧版非空记录即「以用户选择为准」）。
+	 */
+	expandedGroupsTouched: boolean;
+	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
+	pinnedProjects: string[];
+	/**
+	 * 上次退出时的窗口位置与尺寸（**normal 态**：最大化/最小化/全屏时记的也是普通态，见 `getNormalBounds()`）。
+	 * null = 没记过，或读回时发现它已不在任何屏幕的可视区内（拔屏/换屏 → 回退默认尺寸与系统摆放）。
+	 * 只由 main 写；启动时的屏幕校验在 `main/window-bounds.ts`（渲染端不参与）。
+	 */
+	windowBounds: Rect | null;
+	/**
+	 * 上次使用的项目目录（重启后启动页预填用）。**只记目录、不恢复任何会话**：
+	 * v10 起启动仍然是纯空会话页（与 pi 原生/Codex 一致），这里只让用户不用重选项目。
+	 */
+	lastCwd: string | null;
+}
+
+/** 会话元数据（IPC 往返用，独立于 pi 内部类型） */
+/** 会话模型引用（provider + 模型 id） */
+export interface SessionModelRef {
+	provider: string;
+	modelId: string;
+}
+
+export interface SessionMeta {
+	sessionId: string;
+	/**
+	 * 会话文件**路径**（持久化会话在 create 时就分配好——SDK `session-manager.js` 构造函数；
+	 * 内存 manager（inMemory）无路径 = undefined）。
+	 * ⚠️ 路径有值 ≠ 磁盘有文件：1.0.4 起要等首条 user/assistant 消息才**写入文件**
+	 * （`_hasConversation` 门控 `_persist`）——判断「落盘了没」一律用 `existsSync`，不要看本字段。
+	 */
+	sessionFile?: string;
+	cwd: string;
+	/** 会话标题（用户设置或自动生成） */
+	name?: string;
+	modelLabel?: string;
+	/** 会话当前使用的模型（活跃会话才有值；未选择为 null） */
+	model?: SessionModelRef | null;
+	/** 会话当前思考级别（活跃会话才有值；未选择为 null） */
+	thinkingLevel?: string | null;
+	/** 是否仍在内存中活跃（否则是历史会话） */
+	active: boolean;
+	/** 只读会话（subagent 产物检视，spec §8.1）：禁用输入/fork/撤回/模型切换 */
+	readOnly?: boolean;
+	/** 消息条数（用于历史列表展示） */
+	messageCount: number;
+	/** 创建时间（unix 毫秒） */
+	createdAt: number;
+	/** 最后活动时间（unix 毫秒，历史会话列表排序/分组用） */
+	modifiedAt?: number;
+}
+
+export interface SessionStats {
+	/** 累计 token 用量 */
+	inputTokens: number;
+	outputTokens: number;
+	/** 累计费用（美元） */
+	cost: number;
+}
+
+/** 历史会话中的一次工具调用（渲染用） */
+export interface SessionToolCall {
+	id: string;
+	name: string;
+	/** 参数（JSON 字符串） */
+	args: string;
+	/** 执行输出 */
+	output: string;
+	/** unified patch（仅 edit 工具成功时从 toolResult.details.patch 提取；历史回放 diff 侧栏用） */
+	diff?: string;
+	/** 工具执行结束时刻（jsonl toolResult entry 的 timestamp；历史回放轮次计时用） */
+	endedAt?: number;
+	isError: boolean;
+}
+
+/** user/assistant 历史消息公共基座（两形态同构字段收敛；专用字段在子接口） */
+interface SessionBaseMessage {
+	text: string;
+	thinking: string;
+	tools: SessionToolCall[];
+	/** 消息附带的图片 */
+	images: ImageInput[];
+	timestamp: number;
+	/** 会话树中的 entry id（撤回/fork 精确定位用，匹配失败时缺省） */
+	entryId?: string;
+	/** 已持久化的完整文本（skill 展开或展示净化后保留）；只供撤回/fork 匹配，绝不能展示、复制或进入可访问文本 */
+	sourceText?: string;
+}
+
+/** 历史 user 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionUserMessage extends SessionBaseMessage {
+	role: "user";
+	document?: ComposerDocument;
+	/** 已展开 skill 的安全展示信息（不含正文或路径） */
+	skill?: SkillInvocationDisplay;
+}
+
+/** 历史 assistant 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionAssistantMessage extends SessionBaseMessage {
+	role: "assistant";
+	/** 停因原样透传（仅 "error" 被消费，历史回放错误卡数据源；旧会话文件无此字段 → undefined → 不产卡） */
+	stopReason?: string;
+	/** LLM 错误详情（stopReason==="error" 时存在；历史回放错误卡 detail 数据源） */
+	errorMessage?: string;
+}
+
+/** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
+export interface SessionImageMessage {
+	role: "image";
+	images: ImageInput[];
+	/** 原文件路径（工具参数，仅调试用） */
+	paths: string[];
+	timestamp: number;
+}
+
+/** subagent 工具调用的结果（独立消息，不进工具卡折叠区） */
+export interface SessionSubagentMessage {
+	role: "subagent";
+	runs: SubagentRunData[];
+	timestamp: number;
+}
+
+/** 历史压缩标记（compaction entry 回放）：实时分割线走 compaction_start/end 事件，重开会话只能从会话树回放 */
+export interface SessionCompactionMessage {
+	role: "compaction";
+	timestamp: number;
+	/** 摘要正文（与实时分割线展开的摘要同源） */
+	summary?: string;
+	/** 压缩前上下文 token 数（磁盘 entry 只存这个；压缩后估值不落盘） */
+	tokensBefore?: number;
+}
+
+/** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export type SessionMessage =
+	| SessionUserMessage
+	| SessionAssistantMessage
+	| SessionImageMessage
+	| SessionSubagentMessage
+	| SessionCompactionMessage;
+
+export interface AvailableModel {
+	provider: string;
+	/** provider 显示名（如 "Anthropic"） */
+	providerName: string;
+	id: string;
+	/** 展示名，如 "Claude Opus 4.5" */
+	label: string;
+	/** 是否有可用凭证 */
+	authed: boolean;
+	/** 该模型支持的思考深度（off/minimal/low/medium/high/xhigh/max 子集）；未提供时 UI 按全量显示 */
+	thinkingLevels?: string[];
+	/** 是否支持图片输入（多模态）；未提供时按支持处理（未知不拦截，fail-open） */
+	imageInput?: boolean;
+}
+
+/** 随消息附带的图片（pi ImageContent；data 为纯 base64，不含 data URL 前缀） */
+export interface ImageInput {
+	data: string;
+	mimeType: string;
+}
+
+/** 斜杠命令来源 */
+export type SlashCommandSource = "builtin" | "template" | "skill" | "extension";
+
+/** 斜杠命令条目（补全面板展示用） */
+export interface SlashCommandInfo {
+	/** Stable effective resource identity, supplied only for skill entries. */
+	skillId?: string;
+	/** 命令名，不含前导 / */
+	name: string;
+	description: string;
+	argumentHint?: string;
+	source: SlashCommandSource;
+	/** 内置命令是否已在桌面端实现（模板/skill/扩展命令恒为 true，SDK 原生处理） */
+	supported: boolean;
+}
+
+/** 当前模型上下文使用情况（圆环进度条用；percent/tokens 为 null 表示未知，如刚压缩后） */
+export interface ContextUsageInfo {
+	/** 估计的已用上下文 tokens */
+	tokens: number | null;
+	/** 模型最大上下文窗口 */
+	contextWindow: number;
+	/** 已用百分比（0-100），未知为 null */
+	percent: number | null;
+}
+
+/** opencode-go 套餐额度窗口 key（5h 滚动 / 日历周 / 计费月） */
+export type QuotaWindowKey = "rolling" | "weekly" | "monthly";
+
+/** opencode-go 套餐额度单窗口 */
+export interface QuotaWindow {
+	key: QuotaWindowKey;
+	/** 短标签（5h / week / month，插件按需本地化） */
+	label: string;
+	/** 已用百分比（0-100） */
+	percent: number;
+	/** ISO 重置时间，无则 null */
+	resetsAt: string | null;
+	/** 估算已用美元（percent × limit），未知为 null */
+	usedUsd: number | null;
+	/** 窗口上限美元（rolling 12 / weekly 30 / monthly 60） */
+	limitUsd: number;
+	status: "ok" | "rate-limited";
+}
+
+/**
+ * opencode-go 套餐额度（main 进程拉官方 API，5 分钟 TTL）。
+ * null = 无 key/无订阅（插件应隐藏）；error 非空 = 拉取失败（插件可展示错误态）。
+ */
+export interface QuotaInfo {
+	windows: QuotaWindow[];
+	updatedAt: number;
+	error?: string;
+}
+
+/** 运行中排队的消息（clearQueue 返回结构；桌面端只用 followUp，steering 恒为空） */
+export interface QueuedMessages {
+	steering: string[];
+	followUp: string[];
+	steeringInputs?: QueuedInput[];
+	followUpInputs?: QueuedInput[];
+}
+
+export interface QueuedInput {
+	document: ComposerDocument;
+	images: ImageInput[];
+}
+
+export interface CreateSessionOptions {
+	cwd: string;
+	provider?: string;
+	modelId?: string;
+	thinkingLevel?: string;
+}
+
+/** 权限确认请求（由 backend 的 uiContext.confirm 桥接产生） */
+/** 请求类别：path=路径类工具（可提供「允许此目录」建议根），command=命令类，other=其余 */
+export type PermissionRequestKind = "path" | "command" | "other";
+
+export interface PermissionRequest {
+	revision?: number;
+	id: string;
+	sessionId: string;
+	title: string;
+	message: string;
+	kind: PermissionRequestKind;
+	/** path 类越界时建议加入工作区的根目录（git 根候选；无安全候选时缺省） */
+	suggestDir?: string;
+}
+
+export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
+
+/** 权限请求已裁决（answered=true 为批准/拒绝，false 为取消/过期）。 */
+export interface PermissionResolved {
+	revision?: number;
+	sessionId: string;
+	requestId: string;
+	answered: boolean;
+}
+
+/** 权限门控配置（enabled=false = 手改 permissions.json 卸载内置门控的隐藏逃生舱，UI 无入口） */
+export interface PermissionConfigInfo {
+	enabled: boolean;
+}
+
+/** 会话权限模式：default = 按规则审批；fullAccess = 一切放行 + 高危调用写审计。按会话内存态，不落盘、不跨会话继承、重启归零。 */
+export type PermissionMode = "default" | "fullAccess";
+
+/**
+ * 关闭会话的调用意图：
+ * - `user`（缺省）= 用户主动关闭/删除，订阅不能绑架用户；
+ * - `gc` = renderer 内存策略的自动卸载，有频道订阅时后端拒绝（订阅 = 明确驻留语义）。
+ */
+export type SessionCloseIntent = "user" | "gc";
+
+/** 上下文管理模式（二态；缺省 evaporation。
+ * 物理存储 = settings.json 单一决策 key contextEvaporation.enabled
+ * （缺整个 key 或 enabled≠false → evaporation；遗留 acpCompressionEnabled 键读侧忽略、写侧顺带清除） */
+export type ContextManagerMode = "evaporation" | "off";
+
+/** 上下文管理配置（设置 UI 二态控件） */
+export interface ContextManagerConfigInfo {
+	mode: ContextManagerMode;
+}
+
+/** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.percho/agent/settings.json，缺省=开） */
+export interface ChannelWatchConfigInfo {
+	enabled: boolean;
+}
+
+/**
+ * 项目信任选项（添加项目/创建会话前，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
+ * 刻意从 CLI 的五选项精简为两个（信任/不信任，均落盘）：「仅本次」在 draft 拉命令
+ * + 建会话双检查点的流程里语义不明且场景极少。
+ */
+export interface TrustOption {
+	key: "trust" | "deny";
+}
+
+/** 项目信任请求（发生在会话创建前，无 sessionId） */
+export interface TrustRequest {
+	revision?: number;
+	id: string;
+	cwd: string;
+	options: TrustOption[];
+}
+
+/** 信任应答：所选选项在 TrustRequest.options 中的下标 */
+export type TrustAnswer = number;
+
+/** git 分支信息（项目管理页/空态分支选择器用） */
+export interface GitBranches {
+	current: string | null;
+	branches: string[];
+}
+
+/** 应用信息（设置 → 关于页展示，来自主进程） */
+export interface AppInfo {
+	/** 应用名 */
+	name: string;
+	/** 应用版本 */
+	version: string;
+	electron: string;
+	chrome: string;
+	node: string;
+	platform: string;
+	arch: string;
+	/** 项目仓库地址（关于页/帮助跳转） */
+	repoUrl: string;
+}
+
+/** 已加载资源的作用域（用户级 ~/.pi/agent / 项目级 / 临时合成） */
+export type ResourceScope = "user" | "project" | "temporary";
+
+/** 已加载的 skill（设置页 skills 面板数据源） */
+export interface LoadedSkill {
+	name: string;
+	description: string;
+	/** 来源作用域 */
+	scope: ResourceScope;
+	/** 来源标记（如用户级目录名 / 项目名） */
+	source: string;
+	/** SKILL.md 文件路径 */
+	path: string;
+	/** 是否禁用模型自动调用（仅手动触发） */
+	disableModelInvocation: boolean;
+}
+
+/** 已加载的扩展（设置页 extensions 面板数据源） */
+export interface LoadedExtension {
+	/** 显示名（路径 basename；内置 inline 扩展用合成名） */
+	name: string;
+	/** 扩展路径（inline 扩展为合成路径） */
+	path: string;
+	scope: ResourceScope;
+	/** 来源标记 */
+	source: string;
+	/** 隐藏扩展（如部分内部扩展） */
+	hidden: boolean;
+	/** 注册的工具数 */
+	toolsCount: number;
+	/** 注册的工具名（用于识别 subagent 家族） */
+	tools: string[];
+	/** 注册的斜杠命令名 */
+	commands: string[];
+	/** 注册的 flag 数 */
+	flagsCount: number;
+	/** 注册的快捷键数 */
+	shortcutsCount: number;
+}
+
+/** 资源加载诊断（collision 冲突/warning/error） */
+export interface ResourceDiagnosticInfo {
+	type: "warning" | "error" | "collision";
+	message: string;
+	path?: string;
+}
+
+/** 会话已加载资源总览（设置页 skills/扩展面板数据，按会话项目加载） */
+export interface LoadedResources {
+	skills: LoadedSkill[];
+	skillDiagnostics: ResourceDiagnosticInfo[];
+	extensions: LoadedExtension[];
+	/** 扩展加载诊断。`level`：error = 真错误（红块），info = 不阻塞的说明（灰字，如未接的官方内置扩展） */
+	extensionErrors: { path: string; error: string; level: "error" | "info" }[];
+}
+
+/** Percho 自己产生的会话 UI 事件（不进入 pi 子会话 trace）。 */
+export interface SubagentMutexEvent {
+	type: "subagent_mutex";
+	extensionPath: string;
+	tools: string[];
+}
+
+/** StreamGuard 熔断 trip（病态输出流自动中止）→ 合成 UI 事件（不进 trace，reducer 产 warning 条）。 */
+export interface StreamGuardTrippedEvent {
+	type: "stream_guard_tripped";
+	/** StreamGuardVerdict 的 trip 形态，如 "consecutive_whitespace" / "message_size" */
+	verdict: string;
+}
+
+/** pi 事件 + Percho UI 事件，跨 IPC 统一转发。 */
+export type { PiAgentSessionEvent as AgentSessionEvent };
+export type SessionEvent =
+	| Exclude<PiAgentSessionEvent, { type: "turn_end" }>
+	| (Extract<PiAgentSessionEvent, { type: "turn_end" }> & {
+			/** Percho 转发附加：失败响应的持久化 entry，供错误卡精确核验（不靠毫秒时间判唯一）。 */
+			retryEntryId?: string;
+	  })
+	| SubagentMutexEvent
+	| StreamGuardTrippedEvent;
+
+/** 渲染进程收到的统一事件包络 */
+export interface SessionEventEnvelope {
+	/** Present for independent-runtime events; local legacy observers need not use a boundary. */
+	sequence?: number;
+	sessionId: string;
+	event: SessionEvent;
+}
+
+/** Consistent per-session capture; sequence is the boundary for subsequent onEvent increments. */
+export interface SessionBaseline {
+	meta: SessionMeta;
+	sequence: number;
+	transcript: import("./transcript").SessionTranscriptState;
+	permissionMode: PermissionMode;
+}
+export interface LoadedSessionSummary {
+	sequence: number;
+	followUpQueue: string[];
+	permissionMode: PermissionMode;
+	meta: SessionMeta;
+	streaming: boolean;
+	compacting: boolean;
+}
+
+export interface TrustResolved {
+	requestId: string;
+	revision?: number;
+}
+export interface PendingInteractions {
+	revision: number;
+	permissions: PermissionRequest[];
+	dialogs: import("./extension-dialog").ExtensionDialogRequest[];
+	trust: TrustRequest[];
+}

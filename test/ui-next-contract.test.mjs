@@ -158,6 +158,27 @@ test("buildHostApi 为每条通道与订阅生成方法，未实现的抛带通�
   );
 });
 
+test("标成 implemented 的通道必须有真实处理函数，反之亦然", async () => {
+  const { createHttpHandlers } = await import("../src/ui-next/http-handlers.mjs");
+  const handlers = createHttpHandlers({ get: async () => ({}), post: async () => ({}) });
+  const implemented = Object.entries(UI_SUPPORT)
+    .filter(([, row]) => row.status === "implemented")
+    .map(([channel]) => channel);
+
+  assert.deepEqual(
+    implemented.filter((channel) => !handlers[channel]).sort(),
+    [],
+    "这些通道声称已实现，但没有处理函数",
+  );
+  assert.deepEqual(
+    Object.keys(handlers)
+      .filter((channel) => !implemented.includes(channel))
+      .sort(),
+    [],
+    "这些处理函数没有在支持表里登记为 implemented",
+  );
+});
+
 test("实现表齐备时按通道分发，且把参数原样交给处理函数", async () => {
   const seen = [];
   const handlers = Object.fromEntries(

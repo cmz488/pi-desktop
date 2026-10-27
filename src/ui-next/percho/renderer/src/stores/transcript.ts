@@ -1,0 +1,300 @@
+import type {
+	ComposerDocument,
+	ExtensionDialogRequest,
+	ImageInput,
+	SessionEvent,
+	PermissionRequest as SharedPermissionRequest,
+	TodoItem,
+} from "@percho/shared";
+import {
+	type ActivityEntry,
+	appendOptimisticUserMessage,
+	emptyTranscript,
+	reduceEvent,
+	removeOptimisticUserMessage,
+	type SessionPhase,
+	type SessionTranscriptState,
+	type StreamingState,
+	type SubagentRunUi,
+	type UIMessage,
+	type UIToolCall,
+} from "@percho/shared";
+import { create } from "zustand";
+
+export type { ActivityEntry, SessionPhase, StreamingState, SubagentRunUi, UIMessage, UIToolCall };
+
+/** 跨进程完整请求（含 kind/suggestDir）；App 订阅转发时缺省字段补齐 */
+export type PermissionRequest = SharedPermissionRequest;
+
+export interface SessionEntry extends SessionTranscriptState {
+	pendingPermissions: PermissionRequest[];
+	/** 扩展对话框待应答队列（InteractionDock 渲染队首；D6 仲裁时权限优先于对话框） */
+	pendingDialogs: ExtensionDialogRequest[];
+	/** setEditorText 预填来源（一次性提示，用户首次键入清除）；undefined = 无提示 */
+	extensionPrefillSource?: string;
+}
+
+const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] };
+
+/** 空 todo 列表稳定引用（面板 selector 缺省用，禁内联新数组） */
+export const EMPTY_TODOS: TodoItem[] = [];
+
+interface TranscriptStore {
+	bySession: Record<string, SessionEntry>;
+	/** isActiveViewing：事件到达时该会话是否正被查看（活跃 tab 且 chat 视图），由调用方判定避免依赖 sessions store */
+	applyEvent: (sessionId: string, event: SessionEvent, opts?: { isActiveViewing?: boolean }) => void;
+	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
+	markAgentActive: (sessionId: string, active: boolean) => void;
+	/** 发送瞬间插入乐观用户气泡（返回本地 id，供发送失败时撤回；详见 shared/transcript/pending-user.ts） */
+	appendOptimisticUser: (
+		sessionId: string,
+		input: { text: string; images: ImageInput[]; document?: ComposerDocument },
+	) => string;
+	/** 发送失败撤回乐观气泡（已认领的不动） */
+	removeOptimisticUser: (sessionId: string, id: string) => void;
+	/** 清除完成未读标记（切到该会话/回到 chat 视图时调用） */
+	markCompletionSeen: (sessionId: string) => void;
+	addPermission: (sessionId: string, req: PermissionRequest) => void;
+	resolvePermission: (sessionId: string, requestId: string) => void;
+	/** 扩展对话框入队/结算（结算幂等 filter，IPC 应答与 resolved 事件双路径都安全） */
+	addExtensionDialog: (sessionId: string, req: ExtensionDialogRequest) => void;
+	resolveExtensionDialog: (sessionId: string, requestId: string) => void;
+	/** 扩展草稿预填来源提示（setEditorText 写入；用户首次键入清除） */
+	markExtensionPrefill: (sessionId: string, source: string) => void;
+	clearExtensionPrefill: (sessionId: string) => void;
+	resetSession: (sessionId: string) => void;
+	/** 打开历史会话时回放已有消息（不触发 reducer 事件流） */
+	loadHistory: (sessionId: string, messages: UIMessage[]) => void;
+	/** 直接设置排队中的 followUp（打开/切换会话时从 backend 拉初始值；运行中由 queue_update 事件驱动） */
+	setFollowUpQueue: (sessionId: string, queue: string[]) => void;
+	/** 打开会话时从 backend 恢复任务列表（compaction 后 UI 面板数据源；仅写 todos，不动消息） */
+	loadTodos: (sessionId: string, todos: TodoItem[]) => void;
+}
+
+export const useTranscriptStore = create<TranscriptStore>((set) => ({
+	bySession: {},
+	applyEvent: (sessionId, event, opts) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			const prev = current ?? emptyTranscript();
+			const next = reduceEvent(prev, event);
+			// 完成未读：agentActive true→false 且当时未被查看 → 置标记；重新开工 → 清除
+			let unseenCompletion = prev.unseenCompletion;
+			if (next.agentActive) unseenCompletion = false;
+			else if (prev.agentActive && !opts?.isActiveViewing) unseenCompletion = true;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...next,
+						unseenCompletion,
+						pendingPermissions: current?.pendingPermissions ?? [],
+						pendingDialogs: current?.pendingDialogs ?? [],
+						extensionPrefillSource: current?.extensionPrefillSource,
+					},
+				},
+			};
+		});
+	},
+	markAgentActive: (sessionId, active) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					// 乐观开工同时清未读；失败回滚 false 不算"完成"，不动未读标记
+					[sessionId]: {
+						...current,
+						agentActive: active,
+						unseenCompletion: active ? false : current.unseenCompletion,
+					},
+				},
+			};
+		});
+	},
+	appendOptimisticUser: (sessionId, input) => {
+		let id = "";
+		set((state) => {
+			// 新会话第一条时 entry 还不存在（首个事件才建）——自己补建，否则乐观气泡无处可放
+			const current = state.bySession[sessionId] ?? EMPTY_ENTRY;
+			const pending = appendOptimisticUserMessage(current, input);
+			id = pending.id;
+			return { bySession: { ...state.bySession, [sessionId]: { ...current, ...pending.state } } };
+		});
+		return id;
+	},
+	removeOptimisticUser: (sessionId, id) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			const next = removeOptimisticUserMessage(current, id);
+			if (next === current) return state;
+			return { bySession: { ...state.bySession, [sessionId]: { ...current, ...next } } };
+		});
+	},
+	markCompletionSeen: (sessionId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current?.unseenCompletion) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, unseenCompletion: false },
+				},
+			};
+		});
+	},
+	addPermission: (sessionId, req) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						pendingPermissions: [...(current?.pendingPermissions ?? []), req],
+						phase: "awaiting_permission",
+					},
+				},
+			};
+		});
+	},
+	addExtensionDialog: (sessionId, req) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						pendingDialogs: [...(current?.pendingDialogs ?? []), req],
+					},
+				},
+			};
+		});
+	},
+	resolveExtensionDialog: (sessionId, requestId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			const pendingDialogs = current.pendingDialogs.filter((d) => d.id !== requestId);
+			if (pendingDialogs.length === current.pendingDialogs.length) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, pendingDialogs },
+				},
+			};
+		});
+	},
+	markExtensionPrefill: (sessionId, source) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...(current ?? { ...EMPTY_ENTRY }), extensionPrefillSource: source || undefined },
+				},
+			};
+		});
+	},
+	clearExtensionPrefill: (sessionId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current?.extensionPrefillSource) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, extensionPrefillSource: undefined },
+				},
+			};
+		});
+	},
+	resolvePermission: (sessionId, requestId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			const pendingPermissions = current.pendingPermissions.filter((p) => p.id !== requestId);
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, pendingPermissions },
+				},
+			};
+		});
+	},
+	resetSession: (sessionId) => {
+		// 删 key 而非写空 entry：读取点全部走 `?? EMPTY_ENTRY` / `?.`（selectTranscript 兜底），
+		// 「会话无数据」状态与从未打开过的会话一致，也是 switchSession 懒加载的判定依据
+		set((state) => {
+			if (!(sessionId in state.bySession)) return state;
+			const bySession = { ...state.bySession };
+			delete bySession[sessionId];
+			return { bySession };
+		});
+	},
+	loadHistory: (sessionId, messages) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			const notices =
+				current?.messages.filter((message) => message.kind === "system" && !message.compact) ?? [];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						messages: [...notices, ...messages],
+						streaming: null,
+						phase: "idle",
+						agentActive: false,
+						unseenCompletion: false,
+						compacting: false,
+						followUpQueue: current?.followUpQueue ?? [],
+						// loadHistory 只换消息流（backend 回放会话树完整分支），todo 列表保留
+						todos: current?.todos ?? [],
+						// 错误卡派生自消息流本身，pending 状态不穿越回放
+						pendingLlmError: null,
+						retrying: null,
+						pendingPermissions: current?.pendingPermissions ?? [],
+						pendingDialogs: current?.pendingDialogs ?? [],
+						extensionPrefillSource: current?.extensionPrefillSource,
+					},
+				},
+			};
+		});
+	},
+	setFollowUpQueue: (sessionId, queue) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						followUpQueue: queue,
+					},
+				},
+			};
+		});
+	},
+	loadTodos: (sessionId, todos) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						todos,
+					},
+				},
+			};
+		});
+	},
+}));
+
+/** 读取某会话的 transcript（不存在时返回共享空态，引用稳定避免重渲染循环） */
+export function selectTranscript(state: TranscriptStore, sessionId: string | null): SessionEntry {
+	if (!sessionId) return EMPTY_ENTRY;
+	return state.bySession[sessionId] ?? EMPTY_ENTRY;
+}

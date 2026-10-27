@@ -1,0 +1,380 @@
+import { buildChatRows, deriveTurnChanges, deriveTurnTimings, isAgentWorking } from "@percho/shared";
+import {
+	type CSSProperties,
+	type MouseEvent,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import { useT } from "../../i18n";
+import { useEdgeFade } from "../../lib/use-edge-fade";
+import { Slot } from "../../plugins/Slot";
+import { UI_SLOTS } from "../../plugins/slots";
+import { useSessionsStore } from "../../stores/sessions";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { CenterOrb } from "./CenterOrb";
+import { HistoryImageRootProvider } from "./history-image/history-image-root";
+import { thumbnailService } from "./history-image/history-image-service";
+import { MessageItem } from "./MessageItem";
+import { MetaGroup } from "./MetaGroup";
+import { clampWindowStart, expandWindowStart, MOUNT_TRIGGER_PX, tailWindowStart } from "./mount-window";
+import { RetryNote } from "./RetryNote";
+import { SelectionToolbar } from "./SelectionToolbar";
+import { SubagentRunCard } from "./SubagentRunCard";
+import { TurnDiffChip } from "./TurnDiffChip";
+import { useShownWorking } from "./use-shown-working";
+
+/** 距底 ≤ 此值视为「在底部」，自动恢复跟随 */
+const BOTTOM_THRESHOLD = 48;
+
+/**
+ * 中央消息流：最大宽度 760px 居中。
+ * 合并规则：assistant 消息的思考/工具全部并入一个折叠组，正文（text）是边界——
+ * 正文出现时组关闭、正文作为独立块渲染（与 working 定义一致：用户消息 → 下一次正文之间）。
+ *
+ * 底部跟随：ResizeObserver 监听内容/容器尺寸（流式追加、图片加载、窗口缩放），
+ * 跟随中即时贴底（RO 回调早于 paint，无闪烁）；仅「向上滚动」脱离跟随，回到底部恢复；
+ * 用户发出新消息与切换会话时强制回底。脱离跟随时显示浮动回底按钮。
+ *
+ * 挂载窗口（长会话切换性能，见 mount-window.ts）：切到会话只挂尾部一段行，更早的行在用户
+ * 上滑接近顶部时成块补挂（只增不减）。切换瞬间的挂载量与会话长度解耦——两三千条消息的会话
+ * 不再在切换时把主线程冻结一秒。
+ */
+export function MessageList() {
+	const t = useT();
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
+	const streaming = transcript.streaming;
+	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
+	const agentWorking = isAgentWorking(transcript);
+
+	// 中央状态动画（设置开关，与状态行小 orb 解耦）：与 MetaGroup 同一 working 信号 + 同一滞后缓冲，
+	// 显隐节奏一致；动画两态合一为中速单动画（无状态切换），CenterOrb 只收 visible。
+	// 滞后缓冲只在 run 存活期内生效：正文在输出或 run 已终结（!agentActive）时立即结束——
+	// 杜绝结束/中止后的 1.5s 滞留；resetKey=会话 id：切会话立即对齐新信号，不滞留旧动画
+	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
+	const shownWorking = useShownWorking(
+		agentWorking,
+		transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive,
+		activeSessionId,
+	);
+
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
+	// 历史图片的私有 root：滚动容器元素本身。用 state 而不是只存 ref —— 挂载顺序上
+	// 后代 effect 需要拿到**已存在**的 DOM 元素才能建立观察，state 变化会触发它们重跑
+	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(null);
+	// ref 用 useCallback 固定：否则每次渲染都是新函数，React 会先 detach 再 attach，
+	// 既让 setHistoryImageRoot 反复触发，也会让历史图的观察目标重挂
+	const attachScroller = useCallback((element: HTMLDivElement | null) => {
+		scrollRef.current = element;
+		setHistoryImageRoot((previous) => (previous === element ? previous : element));
+	}, []);
+	// 对话正文的边界淡出：**只淡上沿**（在顶栏下渐隐）——
+	// 下沿紧贴输入框，那里不要淡出（用户明确不要）；28px < 内容区 pt-8（32px），
+	// 所以静止在顶时只会淡到空白内边距，不会咬正文
+	useEdgeFade(scrollRef, "top");
+	/** 跟随状态的 ref 镜像：ResizeObserver / scroll 回调里读最新值 */
+	const followingRef = useRef(true);
+	const [following, setFollowing] = useState(true);
+	const lastScrollTopRef = useRef(0);
+	const lastScrollHeightRef = useRef(0);
+
+	const updateFollowing = useCallback((value: boolean) => {
+		followingRef.current = value;
+		setFollowing(value);
+	}, []);
+
+	const pinToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+		const el = scrollRef.current;
+		if (el) el.scrollTo({ top: el.scrollHeight, behavior });
+	}, []);
+
+	// 尺寸变化（流式追加、图片加载、窗口缩放）→ 跟随中保持贴底
+	useEffect(() => {
+		const scroll = scrollRef.current;
+		const content = contentRef.current;
+		if (!scroll || !content) return;
+		const observer = new ResizeObserver(() => {
+			if (followingRef.current) pinToBottom();
+		});
+		observer.observe(content);
+		observer.observe(scroll);
+		return () => observer.disconnect();
+	}, [pinToBottom]);
+
+	// 用户发出新消息（末条变为 user）→ 立即回底并恢复跟随
+	const lastMessage = transcript.messages[transcript.messages.length - 1];
+	const lastUserMessageId = lastMessage?.kind === "user" ? lastMessage.id : null;
+	useEffect(() => {
+		if (!lastUserMessageId) return;
+		updateFollowing(true);
+		pinToBottom();
+	}, [lastUserMessageId, pinToBottom, updateFollowing]);
+
+	// 切换会话 → 回到底部并恢复跟随
+	// 切会话：缩略图服务换代（terminate worker、清队列/在途/缓存），旧句柄随组件卸载释放；
+	// 不做这一步也能靠组件卸载清掉订阅，但 worker 在途任务与 LRU 会跨会话残留
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
+	useEffect(() => {
+		thumbnailService().reset();
+	}, [activeSessionId]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器（切换会话时重新贴底）
+	useEffect(() => {
+		updateFollowing(true);
+		pinToBottom();
+	}, [activeSessionId, pinToBottom, updateFollowing]);
+
+	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间
+	// 持续拉回底部，出现「Worked 上移 + 内容下展」两边同动的不稳定感。释放后视口钉在点击处、
+	// 新内容向下展开，与「向上滚动脱离」同一语义（滚回底部即恢复跟随）
+	const handleSummaryToggle = (e: MouseEvent) => {
+		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
+	};
+
+	// 轮次数据：文件变更 + 计时。进场动画只给「本会话查看期间新出现的最后一轮」播：基线在切会话/
+	// 历史重建时对齐，不随渲染更新（防 turn_end 紧随的二次渲染摘掉动画类）；行定位/上提规则全部在
+	// shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
+	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
+	const turnTimings = useMemo(
+		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
+		[transcript.messages, transcript.runEndedAt],
+	);
+	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
+	if (turnBaselineRef.current.sid !== activeSessionId) {
+		turnBaselineRef.current = { sid: activeSessionId, count: turnTimings.length };
+	}
+	const enteringTurn =
+		turnTimings.length > turnBaselineRef.current.count
+			? (turnTimings[turnTimings.length - 1]?.turnIndex ?? null)
+			: null;
+
+	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
+	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
+	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/turnTimings/enteringTurn 是轮末行输入
+	// 订阅收窄（ChatRowsInput）：rows 只随 messages/streaming/agentActive/compacting/runEndedAt 重算——
+	// todos/pendingPermissions 等同会话其它字段更新（新 entry 引用）不再触发全量 buildChatRows
+	const rows = useMemo(
+		() =>
+			buildChatRows(
+				{
+					messages: transcript.messages,
+					streaming,
+					agentActive: transcript.agentActive,
+					compacting: transcript.compacting,
+					runEndedAt: transcript.runEndedAt,
+				},
+				String(activeSessionId),
+				Date.now(),
+				{
+					turnChanges,
+					turnTimings,
+					enteringTurn,
+				},
+			),
+		[
+			transcript.messages,
+			streaming,
+			transcript.agentActive,
+			transcript.compacting,
+			transcript.runEndedAt,
+			activeSessionId,
+			turnChanges,
+			turnTimings,
+			enteringTurn,
+		],
+	);
+
+	// —— 挂载窗口 ——
+	// 切到会话只挂尾部窗口（会话切换耗时与会话长度解耦）；更早的行在用户上滑接近顶部时成块补挂。
+	// 窗口只增不减：流式/工具结果追加都在尾部，起点不动 → 长会话连挂载规模都保持在窗口量级。
+	const [mountFrom, setMountFrom] = useState(0);
+	const viewSessionRef = useRef<string | null>(null);
+	// 渲染期直接调整派生 state（React 允许、不提交本轮输出）：切会话立即回到尾部窗口。
+	// 本轮同时用 sessionChanged 直接取尾部窗口——被丢弃的那一轮不白算整份行序列。
+	const sessionChanged = viewSessionRef.current !== activeSessionId;
+	if (sessionChanged) {
+		viewSessionRef.current = activeSessionId;
+		setMountFrom(tailWindowStart(rows.length));
+	}
+	const renderedFrom = sessionChanged
+		? tailWindowStart(rows.length)
+		: clampWindowStart(mountFrom, rows.length);
+	const renderedFromRef = useRef(renderedFrom);
+	renderedFromRef.current = renderedFrom;
+	/** 补挂前的锚点：旧首行元素 + 它的视口相对 top。DOM 更新后若浏览器滚动锚定没把它钉住，用它补差 */
+	const prependAnchorRef = useRef<{ el: Element; viewportTop: number } | null>(null);
+
+	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
+	const requestEarlierRows = () => {
+		const next = expandWindowStart(renderedFromRef.current, rows.length);
+		if (next === renderedFromRef.current) return; // 已到顶 / 无更早的行
+		const anchor = contentRef.current?.firstElementChild;
+		if (!anchor) return;
+		const scroller = scrollRef.current;
+		if (!scroller) return;
+		prependAnchorRef.current = {
+			el: anchor,
+			viewportTop: anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+		};
+		setMountFrom(next);
+	};
+
+	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
+	// 压缩/消息重建会让内容变矮——高度收缩导致的位置下降不是用户意图，不释放跟随
+	// （否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
+	// 同时作为挂载窗口的补挂触发器：接近顶部时向更早的行补挂一块。
+	const handleScroll = () => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
+		if (atBottom) updateFollowing(true);
+		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
+		lastScrollTopRef.current = el.scrollTop;
+		lastScrollHeightRef.current = el.scrollHeight;
+		if (renderedFromRef.current > 0 && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
+	};
+
+	// 补挂的锚定交给**浏览器滚动锚定**（容器不能加 overflow-anchor: none）：新行整块插在视口上方，
+	// 浏览器会自己把 scrollTop 补回来，且**异步定型的内容**（monaco 迟到定型、图片加载）引起的
+	// 视口上方高度变化它也会一并补偿——手写补偿只看提交那一刻的高度，
+	// 定型后内容变矮会把位置往下钳，钳到底部还会被误判成「用户到底」而复活跟随（用户会感到上滚被反复拽回底部）。
+	// （markstream 容器原本的 content-visibility 600px 估值占位也是这类异步高度源，已在 globals.css 关掉）
+	// 这里只兜底一种情况：Chromium 在 scrollTop === 0 时不调整锚点（到顶了没地方调），此时按锚点的
+	// 视口位置漂移补差；浏览器已经钉住时 drift === 0，本段是 no-op，不会与它叠加。
+	// 顺带补一屏下限：窗口里的行特别矮（连续折叠行）时内容填不满视口，继续补挂直到填满或到顶。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: renderedFrom 是刻意的重跑触发器（窗口变化后才需要补差 / 补足一屏）
+	useLayoutEffect(() => {
+		const el = scrollRef.current;
+		const pending = prependAnchorRef.current;
+		prependAnchorRef.current = null;
+		if (el && pending?.el.isConnected) {
+			const drift = pending.el.getBoundingClientRect().top - pending.viewportTop;
+			if (drift !== 0) el.scrollTop += drift;
+		}
+		if (el && renderedFromRef.current > 0 && el.scrollHeight <= el.clientHeight) requestEarlierRows();
+	}, [renderedFrom]);
+
+	const items: React.ReactNode[] = [];
+	const visibleRows = renderedFrom > 0 ? rows.slice(renderedFrom) : rows;
+	visibleRows.forEach((row) => {
+		if (row.kind === "turnDiff") {
+			// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
+			// ① 当前运行轮（running）——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
+			// ② 前面紧邻的是折叠组（afterMetaGroup，纯工具轮 / 被打断轮无正文，组自带 -mb-4 对消 gap）——
+			//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
+			items.push(
+				<div key={row.key} className={row.running || row.afterMetaGroup ? undefined : "-mt-4"}>
+					<TurnDiffChip
+						changes={row.changes}
+						timing={row.timing}
+						running={row.running}
+						entering={row.entering}
+					/>
+				</div>,
+			);
+			return;
+		}
+		if (row.kind === "metaGroup") {
+			items.push(
+				<MetaGroup
+					key={row.key}
+					items={row.items}
+					working={row.working}
+					endImmediately={row.endImmediately}
+					subagentCount={row.subagentCount}
+				/>,
+			);
+			return;
+		}
+		if (row.kind === "streamingSubagents") {
+			items.push(
+				<Slot
+					key={row.key}
+					name={UI_SLOTS.SubagentCard}
+					props={{ runs: row.runs }}
+					fallback={SubagentRunCard}
+				/>,
+			);
+			return;
+		}
+		items.push(
+			<MessageItem
+				key={row.key}
+				message={row.message}
+				metaInGroup={row.metaInGroup}
+				showActions={row.showActions}
+				streaming={row.streaming}
+				sessionId={activeSessionId}
+			/>,
+		);
+	});
+
+	return (
+		<div className="relative h-full">
+			{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
+			    凸显动画本体（用户规格：工作中不看文字）；pointer-events-none 不拦截交互 */}
+			{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
+			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
+			{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
+			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
+			{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
+			    交互不受影响（orb 整层 pointer-events-none） */}
+			<div
+				ref={attachScroller}
+				onScroll={handleScroll}
+				onClickCapture={handleSummaryToggle}
+				style={{ "--edge-fade-size": "28px" } as CSSProperties}
+				className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
+			>
+				{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
+				<div
+					ref={contentRef}
+					data-chat-column
+					className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
+				>
+					{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
+					<HistoryImageRootProvider root={historyImageRoot}>
+						{items}
+						{transcript.retrying && <RetryNote info={transcript.retrying} />}
+					</HistoryImageRootProvider>
+				</div>
+			</div>
+			{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}
+			<SelectionToolbar containerRef={scrollRef} />
+			{!following && (
+				<button
+					type="button"
+					onClick={() => {
+						updateFollowing(true);
+						pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+					}}
+					className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-ui-12 leading-[calc(1_/_0.75)] text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"
+					aria-label={t("message.scrollToBottom")}
+				>
+					<svg
+						width="13"
+						height="13"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M12 5v14" />
+						<path d="m19 12-7 7-7-7" />
+					</svg>
+					{t("message.scrollToBottom")}
+				</button>
+			)}
+		</div>
+	);
+}

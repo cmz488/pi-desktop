@@ -1,4 +1,5 @@
 import { readdir } from "node:fs/promises";
+import { UI_NEXT_ASSETS as uiNextAssets } from "../ui-next/generated-assets.mjs";
 
 // Source files may move; these public URLs are shared by all browser hosts.
 export const packageRoot = new URL("../../", import.meta.url);
@@ -122,6 +123,21 @@ const pages = {
 /** Enumerate public assets; never expose a source or dependency directory. */
 export function publicAssets(page) {
   const entries = pages[page === "preview" ? "chat" : page];
+  if (page === "next") return new Map([...sharedAssets, ...nextPageAssets]);
   if (!entries) throw new TypeError(`未知页面资产：${page}`);
   return new Map([...sharedAssets, ...entries]);
 }
+
+/**
+ * Percho 渲染层（src/ui-next/）的构建产物页面。
+ *
+ * 接口：publicAssets("next") 返回该页面的完整资产表。
+ * 不变量：产物清单来自构建生成的 generated-assets.mjs，不手写；未构建时为空表，
+ *   Host 会以 404 暴露"未构建"，而不是悄悄提供旧文件。
+ */
+export const nextPageAssets = new Map([
+  ...uiNextAssets.map(({ url, file, type }) => [url, [file, type]]),
+  // 目录形式的入口：浏览器请求 /ui-next/ 时要拿到 index.html。
+  ["/ui-next/", ["build/ui-next/index.html", "text/html"]],
+  ["/ui-next", ["build/ui-next/index.html", "text/html"]],
+]);

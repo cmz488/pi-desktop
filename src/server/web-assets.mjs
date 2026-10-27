@@ -4,8 +4,8 @@ import { promisify } from "node:util";
 import { gzip, brotliCompress, constants } from "node:zlib";
 import { encodingQuality } from "./http-transfer.mjs";
 
-import { assetFile, sharedAssets, publicAssets } from "./asset-manifest.mjs";
-export { publicAssets };
+import { assetFile, sharedAssets, publicAssets, nextPageAssets } from "./asset-manifest.mjs";
+export { publicAssets, nextPageAssets };
 export const richAssets = sharedAssets;
 const compress = promisify(gzip);
 const compressBrotli = promisify(brotliCompress);

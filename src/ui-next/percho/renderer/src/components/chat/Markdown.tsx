@@ -1,0 +1,172 @@
+import { environmentEntityRef } from "@percho/shared";
+import MarkdownRender, { type SmoothMarkdownStreamOptions } from "markstream-react";
+import "markstream-react/index.css";
+// KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
+// 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
+import "katex/dist/katex.min.css";
+import { type MouseEvent, useMemo, useRef, useState } from "react";
+import { getPi } from "../../api";
+import { errText } from "../../lib/error-text";
+import { monacoFontSizeFor, monacoLineHeightFor } from "../../lib/typography";
+import { useThemeStore } from "../../stores/theme";
+import { pushToast } from "../../stores/toasts";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { FilePathMenu } from "../ui/FilePathMenu";
+import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
+import { classifyMarkdownLink } from "./markdown-link";
+// 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
+import "./MermaidBlock";
+
+/**
+ * 平滑输出速率参数（markstream 内置 smooth streaming controller，grapheme 级 pacing）：
+ * - min 80 cps：小 delta 时的基速（利落的打字机感，不拖沓）
+ * - 自适应：backlog <600 字在 900ms 内追平；超过则切换到 350ms 快进（≤1000 cps、
+ *   每次 commit ≤80 字、30fps）——大 trunk 变成连续滑出而非整块蹦现，且不会越积越多
+ * - flushOnFinish 保持 false：final（turn_end 固化）后不跳变，继续平滑追完剩余 backlog
+ */
+const SMOOTH_OPTIONS: SmoothMarkdownStreamOptions = {
+	minCharsPerSecond: 80,
+	// 其余（targetLatencyMs 900 / catchUpLatencyMs 350 / catchUpThreshold 600 / max 1000cps）用默认
+};
+
+const CODE_BLOCK_PROPS_BASE = {
+	// 标题栏在视觉上被 CSS 悬浮化（见 globals.css），这里只裁掉多余按钮：字号三键/全屏/预览/折叠，
+	// 保留复制。不能用 showHeader:false——它会连复制按钮一起去掉。
+	showFontSizeButtons: false,
+	showExpandButton: false,
+	showPreviewButton: false,
+	showCollapseButton: false,
+	// 首行灰底修复：库的 monaco 默认值（renderLineHighlight:"none" 等）只对 diff 块生效
+	//（En() 首行 if(!e) return o），普通块裸奔 —— 只读编辑器光标恒停第一行，当前行高亮
+	// 让首行比其他行多一层灰底。显式关掉。同理关掉右侧概览标尺（overview ruler）——
+	// 光标行在右缘留一枚黑色短杠标记，只读块无导航价值。编辑器式 decoration 也关闭：
+	// 全角标点/不可见字符、同词和括号的描边在只读展示里像残留选区，且没有修复动作。
+	monacoOptions: {
+		renderLineHighlight: "none",
+		selectionHighlight: false,
+		occurrencesHighlight: "off",
+		matchBrackets: "never",
+		bracketPairColorization: { enabled: false },
+		unicodeHighlight: {
+			ambiguousCharacters: false,
+			invisibleCharacters: false,
+			nonBasicASCII: false,
+		},
+		overviewRulerLanes: 0,
+		renderOverviewRuler: false,
+		overviewRulerBorder: false,
+		hideCursorInOverviewRuler: true,
+	},
+} as const;
+
+/** 减速动效偏好：关闭 pacing，直接输出 */
+const REDUCED_MOTION =
+	typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * Markdown 渲染：markstream-react（增量解析，为流式 token 设计，避免 react-markdown 每帧全量 re-parse）。
+ * final=false 时未闭合的构造（代码块/表格/链接）按 pending 渲染；提交后必须 true。
+ *
+ * 流式丝滑性（两层）：
+ * 1. smoothStreaming：内容经自适应速率控制器逐字放出（大 trunk 平滑滑出）。只对「挂载时就在流式」
+ *    的消息启用——历史/固化后打开的消息直出（mount 初值锁定，否则整篇会重播一遍）。
+ *    流式 → turn_end 固化依赖 MessageList 的 key 稳定（StreamingState.id）保持组件不 remount，
+ *    controller 才能存活并平滑追平。
+ * 2. fade 必须关闭：开启后 smooth controller 每次 commit 都会创建带 opacity/will-change 的临时
+ *    span；高频合成层切换会让整个文本排版区域看起来闪烁。fade=false 走库内稳定文本 span 分支，
+ *    不依赖 animationend 沉淀。样式覆写集中在 globals.css 的 .markdown-body 下。
+ * isDark 驱动代码块 shiki 主题（vitesse-light/dark）与容器深浅。注意必须显式传
+ * codeBlockLightTheme/codeBlockDarkTheme：不传时 stream-monaco 回退到 themes[0]（默认 vitesse-dark），
+ * 浅色模式下代码块也会是深色。
+ */
+export function Markdown({
+	text,
+	streaming,
+	cwd = null,
+}: {
+	text: string;
+	streaming?: boolean;
+	cwd?: string | null;
+}) {
+	const isDark = useThemeStore((s) => s.resolved === "dark");
+	const [menu, setMenu] = useState<{ target: string; cwd: string; anchor: MenuAnchor } | null>(null);
+	const onLinkClick = (event: MouseEvent<HTMLDivElement>) => {
+		const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+		if (!anchor || !event.currentTarget.contains(anchor)) return;
+		const href = anchor.getAttribute("href");
+		if (!href) return;
+		const link = classifyMarkdownLink(href);
+		if (link.kind === "anchor") return;
+		// 包括 Cmd/Ctrl 点击的默认行为都不应把应用页面导航走；主进程另有兜底拦截。
+		event.preventDefault();
+		if (link.kind === "unsupported") return;
+		if (link.kind === "file" && cwd && environmentEntityRef(cwd).environment.kind === "ssh") {
+			setMenu({ target: link.target, cwd, anchor: anchorOfElement(anchor) });
+			return;
+		}
+		const operation =
+			link.kind === "external"
+				? getPi().openExternal({ url: link.url })
+				: cwd
+					? getPi().openPath({ target: link.target, cwd })
+					: Promise.reject(new Error("No session working directory for relative link"));
+		void operation.catch((error: unknown) => {
+			pushToast("error", "toast.pathOpenFailed", errText(error));
+		});
+	};
+	// 挂载初值锁定：流式中挂载 → 本次生命周期始终启用平滑（含固化后追平）；历史消息挂载 → 永不启用
+	const smoothableRef = useRef<boolean>(Boolean(streaming) && !REDUCED_MOTION);
+	// 代码块字号（spec D4.4）：monaco 的字号/行高是它自己以 inline style 写在 .view-lines 上的，
+	// 不经过我们的 CSS 变量，所以只能在这里按档位算好传进去（darwin 基准 12px / 行高比 1.5）。
+	// **必须 useMemo**：markstream 的 renderCtx memo 依赖 codeBlockProps 的对象身份，
+	// 每次 render 新建对象会让流式期间大量子树重渲染。
+	const codeFontSize = useUiPreferencesStore((s) => s.codeFontSize);
+	const codeBlockProps = useMemo(() => {
+		const fontSize = monacoFontSizeFor(codeFontSize, getPi().platform);
+		return {
+			...CODE_BLOCK_PROPS_BASE,
+			monacoOptions: {
+				...CODE_BLOCK_PROPS_BASE.monacoOptions,
+				fontSize,
+				lineHeight: monacoLineHeightFor(fontSize, getPi().platform),
+			},
+		};
+	}, [codeFontSize]);
+	return (
+		<>
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: delegates native anchor clicks */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: native anchors dispatch keyboard clicks */}
+			<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
+				{/* key 里带 codeFontSize：monaco 的字号/行高**只在编辑器创建时**应用（库内没有 updateOptions
+			    调用，`monacoOptions` 换了也不会生效），所以换代码字号时必须让代码块重新挂载。
+			    代价：改档位会重建这一条消息的 markdown 子树（设置项，用户极少动；流式中改会重放当前
+			    消息的打字机动画）。key 只随 codeFontSize 变，流式期间稳定。 */}
+				{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
+			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
+			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
+				<MarkdownRender
+					key={`code-font-${codeFontSize}`}
+					content={text}
+					final={!streaming}
+					fade={false}
+					smoothStreaming={smoothableRef.current}
+					smoothStreamingOptions={SMOOTH_OPTIONS}
+					isDark={isDark}
+					codeBlockLightTheme="vitesse-light"
+					codeBlockDarkTheme="vitesse-dark"
+					codeBlockProps={codeBlockProps}
+					deferNodesUntilVisible={false}
+				/>
+			</div>
+			{menu && (
+				<FilePathMenu
+					target={menu.target}
+					cwd={menu.cwd}
+					fileUrl
+					anchor={menu.anchor}
+					onClose={() => setMenu(null)}
+				/>
+			)}
+		</>
+	);
+}

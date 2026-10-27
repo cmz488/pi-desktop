@@ -1,0 +1,94 @@
+import type { ProviderInfo } from "@percho/shared";
+import { useEffect, useState } from "react";
+import { useT } from "../../../i18n";
+import { useSettingsStore } from "../../../stores/settings";
+import { RefreshIcon } from "../../icons";
+import { CustomProviderForm } from "./CustomProviderForm";
+import { LoginDialog } from "./LoginDialog";
+import { IconAction, ProviderRow } from "./ProviderRow";
+import { RemoteAuthHelp } from "./RemoteAuthHelp";
+import { SubagentPanel } from "./SubagentPanel";
+
+type ModelSettingsTab = "providers" | "subagents";
+
+/** 模型配置：Provider 目录/可见性与子代理模型覆盖。 */
+export function ProvidersPanel() {
+	const t = useT();
+	const [tab, setTab] = useState<ModelSettingsTab>("providers");
+	const providers = useSettingsStore((s) => s.providers);
+	const loading = useSettingsStore((s) => s.loading);
+	const refreshing = useSettingsStore((s) => s.refreshing);
+	const refreshFromNetwork = useSettingsStore((s) => s.refreshProvidersFromNetwork);
+	const error = useSettingsStore((s) => s.error);
+
+	// 每次进入模型分类（本面板挂载）自动联网刷新一次目录（spec D3），手动刷新入口保留。
+	// 触发面 = 组件挂载：分类切换 / 关闭设置重开都会各触发一次；
+	// 面板内的 providers↔subagents 子 tab 切换不重新挂载 ⇒ 不额外触发。
+	// 并发入口由 store 的 single-flight 兜底（同一在途请求复用；StrictMode 双跑也只发一次）。
+	useEffect(() => {
+		void refreshFromNetwork();
+	}, [refreshFromNetwork]);
+
+	return (
+		<div>
+			<RemoteAuthHelp />
+			<div className="mb-3 flex gap-1 border-b border-border">
+				{(["providers", "subagents"] as const).map((id) => (
+					<button
+						key={id}
+						type="button"
+						className={`px-2.5 py-1.5 text-ui-12 transition-colors ${
+							tab === id ? "border-b-2 border-ink text-ink" : "text-ink-faint hover:text-ink"
+						}`}
+						onClick={() => setTab(id)}
+					>
+						{t(`settings.models.${id}`)}
+					</button>
+				))}
+			</div>
+			{tab === "subagents" ? (
+				<SubagentPanel />
+			) : (
+				<>
+					<div className="mb-2 flex items-center justify-between gap-2">
+						<p className="text-ui-11 text-ink-faint">{t("settings.providers.catalogHint")}</p>
+						<IconAction
+							label={t("settings.providers.refresh")}
+							align="end"
+							disabled={loading || refreshing}
+							onClick={() => void refreshFromNetwork()}
+						>
+							{refreshing ? (
+								<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+							) : (
+								<RefreshIcon />
+							)}
+						</IconAction>
+					</div>
+					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-ui-12 text-red-600">{error}</p>}
+					{loading && providers.length === 0 ? (
+						<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.loading")}</p>
+					) : (
+						<ProviderList providers={providers} />
+					)}
+					<CustomProviderForm />
+					<LoginDialog />
+				</>
+			)}
+		</div>
+	);
+}
+
+function ProviderList({ providers }: { providers: ProviderInfo[] }) {
+	const t = useT();
+	if (providers.length === 0) {
+		return <p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.providers.empty")}</p>;
+	}
+	return (
+		<ul className="divide-y divide-border">
+			{providers.map((provider) => (
+				<ProviderRow key={provider.id} provider={provider} />
+			))}
+		</ul>
+	);
+}
