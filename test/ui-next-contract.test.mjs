@@ -235,11 +235,14 @@ test("订阅返回只移除自己的退订函数，未实现的订阅同样抛�
   offB();
   assert.equal(listeners.get("onEvent").size, 0);
 
+  // 未实现的订阅不抛错（订阅发生在启动阶段），但必须可观测。
   const unsupported = Object.entries(UI_SUBSCRIPTION_SUPPORT).find(
     ([, row]) => row.status === "unsupported",
   );
-  assert.throws(
-    () => api[unsupported[0]](() => {}),
-    (error) => error instanceof HostApiUnsupported && error.channel === unsupported[0],
-  );
+  const off = api[unsupported[0]](() => {});
+  assert.equal(typeof off, "function");
+  off();
+  assert.deepEqual(Object.keys(api.subscriptionReport()), [unsupported[0]]);
+  assert.equal(api.subscriptionReport()[unsupported[0]].used, 1);
+  assert.ok(api.subscriptionReport()[unsupported[0]].reason.length > 0);
 });

@@ -102,10 +102,23 @@ export function buildHostApi({
     };
   }
 
+  /**
+   * 事件订阅。
+   *
+   * 未实现的订阅**不抛错**：订阅发生在应用启动阶段，一个未实现的频道不该让整个界面崩掉；
+   * 但它必须可见——`subscriptionReport()` 会列出本次会话里触达过的未实现订阅，与 A3 的
+   * `onTerminalInput` 同一原则：可用的退订函数 + 可观测的降级，而不是静默假成功。
+   */
+  const unsupportedSubscriptions = new Map();
   for (const [name, row] of Object.entries(subscriptionSupport)) {
     api[name] = (listener) => {
-      if (row.status !== "implemented")
-        throw new HostApiUnsupported(name, row.reason);
+      if (row.status !== "implemented") {
+        unsupportedSubscriptions.set(
+          name,
+          (unsupportedSubscriptions.get(name) ?? 0) + 1,
+        );
+        return () => {};
+      }
       if (typeof listener !== "function") return () => {};
       if (!subscribe) return () => {};
       return subscribe(name, row.channel ?? name, listener);
@@ -115,5 +128,19 @@ export function buildHostApi({
   api.platform = platform;
   // Percho 的 renderer 用 `getPathForFile` 处理拖入文件的路径；GUI 宿主没有真实文件路径。
   api.getPathForFile = () => undefined;
+  /**
+   * `forEnvironment(ref)`：Percho 多环境版的执行入口。
+   *
+   * 我们只有一个环境（本 Host），所以返回同一个 api；渲染层的环境身份键仍然有效，
+   * 只是不会分流到另一个宿主。这不是降级——单环境宿主就是完整实现。
+   */
+  api.forEnvironment = () => api;
+  /** 本次会话触达过的未实现订阅：让“少了什么”可查，而不是静默。 */
+  api.subscriptionReport = () =>
+    Object.fromEntries(
+      [...unsupportedSubscriptions.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, used]) => [name, { used, reason: subscriptionSupport[name].reason }]),
+    );
   return api;
 }
