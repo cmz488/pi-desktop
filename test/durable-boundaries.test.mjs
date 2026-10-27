@@ -322,7 +322,7 @@ test("工具回合只分发一次，afterTurn 拿到已提交的助手和工具�
     name: "boundary_echo",
     description: "echo",
     parameters: Type.Object({}),
-    execute: async () => ({ content: [{ type: "text", text: "TOOL_RESULT" }] }),
+    execute: async () => ({ output: [{ type: "text", text: "TOOL_RESULT" }] }),
   });
   f = await fixture(
     t,
@@ -544,7 +544,7 @@ test("工具终止候选也等待 beforeSettle，显式继续仍属于原 run", 
     description: "stop",
     parameters: Type.Object({}),
     execute: async () => ({
-      content: [{ type: "text", text: "STOP_RESULT" }],
+      output: [{ type: "text", text: "STOP_RESULT" }],
       control: { terminate: true },
     }),
   });
@@ -601,7 +601,7 @@ test("afterTurn 不能绕过工具 terminate，终止候选仍交给 beforeSettl
     description: "stop",
     parameters: Type.Object({}),
     execute: async () => ({
-      content: [{ type: "text", text: "STOP_RESULT" }],
+      output: [{ type: "text", text: "STOP_RESULT" }],
       control: { terminate: true },
     }),
   });
