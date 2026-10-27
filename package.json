@@ -28,7 +28,8 @@
         "DESIGN.md",
         "SOURCES.md",
         "build/ui-next/**",
-        "src/ui-next/percho/LICENSE"
+        "src/ui-next/percho/LICENSE",
+        "build/ui-next/lan-web/**"
     ],
     "pi": {
         "extensions": [
@@ -97,7 +98,8 @@
         "desktop:durable": "node launch-desktop.mjs --single-process",
         "test:remote:desktop": "node test/desktop-remote-browser-check.mjs",
         "build:ui": "node src/ui-next/build.mjs",
-        "test:ui-next": "node --test test/ui-next-contract.test.mjs test/ui-next-http.test.mjs"
+        "test:ui-next": "node --test test/ui-next-contract.test.mjs test/ui-next-http.test.mjs",
+        "test:mobile": "node --test test/mobile.test.mjs"
     },
     "allowScripts": {
         "electron@41.10.7": true
