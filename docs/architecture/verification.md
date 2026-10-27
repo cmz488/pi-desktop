@@ -43,6 +43,19 @@ Chromium 夹具仅对一次性测试 profile 使用 `--password-store=basic`，�
 
 测试使用临时目录和本地模型／Git／HTTPS 夹具，不触碰真实用户配置、会话或远端仓库。Chromium／Electron／PTY 的专项需要对应本机工具，详见 package.json 中各命令。真实 Tailscale 公网、第三方 OAuth 和任意 Pi 自定义 TUI 控件不能由本地夹具保证。
 
+## 已知上游限制
+
+以下缺口已在 1.4.0 上升级中定位到上游，不在本仓库内绕过：
+
+- **嵌套工具输出**：`pi-durable@1.4.0` 的 `NestedToolExecutionResult` 只含
+  `{taskId, isError, diagnostics, durationMs}`；`ToolExecutionResult.output` 是模型可见字段，
+  不会进入嵌套结果（上游注释：“the output for the model is not kept”）。未声明
+  `structuredOutputSchema` 的工具（包括内置 `bash`）因此无法把 stdout 交给调用方。
+  影响：`pi-coding-agent` 的 `codemode` 中 `text(await tools.bash(...))` 打印空输出。
+  实测：嵌套 `bash` 回传 `["taskId","isError","diagnostics","durationMs"]`。
+  回归：`test/durable-features.test.mjs` 的嵌套工具用例。不自行注入 `structuredOutput`
+  绕过——那会绕过 Durable 的 schema 校验，属于改上游契约。
+
 ## 标准 Pi 扩展兼容基线
 
 `node --test test/standard-extension-baseline.test.mjs` 已纳入 `npm test`：两个独立标准包经真实 Pi 安装／持久化／发现接入默认 Host，验证工具与参数／结果 hook、命令与普通 custom 消息、多次重载、私有状态、禁用／恢复及两包各自独立运行。相同源码另由内嵌 SDK 原生 runtime 对照输入决策、system override、消息替换、边界 continuation、标准 UI 协议和关闭。当前版本、来源、完整命令与已确认缺口见[扩展兼容基线](../references/pi-extension-compatibility-baseline.md)。
