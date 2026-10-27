@@ -8,27 +8,39 @@ import { launchService } from "../src/control-plane/process.mjs";
 import { readUntil } from "./sse-reader.mjs";
 
 test("workspace page loads its first-paint theme bootstrap as a same-origin script", async (t) => {
-  // CSP 是 script-src 'self'：内联脚本会被拦截，外壳就会先按浅色绘制。
-  // 入口 / 已交给移植后的渲染层；这条针对旧外壳的约束在它的显式 URL 上验证。
+  // CSP 是 script-src 'self'：内联脚本会被拦截，首帧就会先按浅色绘制。
+  // 入口 / 现在是移植后的渲染层；它的外部脚本必须同源可取，且不能依赖内联脚本。
   const f = await desktopFixture();
   t.after(() => f.close());
-  const response = await fetch(new URL("/workspace.html", f.app.url));
+  const response = await fetch(new URL("/", f.app.url));
   assert.match(
     response.headers.get("content-security-policy"),
     /script-src 'self'/,
   );
   const html = await response.text();
-  assert(html.includes('<script src="workspace-boot.js"></script>'));
+  const scripts = [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(scripts.length > 0, "入口页必须有外部脚本");
   assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "HTML 不能依赖内联脚本");
-  const boot = await fetch(new URL("/workspace-boot.js", f.app.url));
-  assert.equal(boot.status, 200);
-  assert.match(boot.headers.get("content-type"), /javascript/);
+  for (const src of scripts) {
+    const asset = await fetch(new URL(src, f.app.url));
+    assert.equal(asset.status, 200, `${src} 必须可取`);
+    assert.match(asset.headers.get("content-type"), /javascript/);
+  }
 });
 
 test("workspace browser module imports are served without starting an Agent", async (t) => {
   const f = await desktopFixture();
   t.after(() => f.close());
-  const pending = [new URL("/workspace.js", f.app.url)];
+  // 从入口页的脚本出发，跟随相对 import 直到闭合。
+  const page = await fetch(new URL("/", f.app.url));
+  const html = await page.text();
+  const entryScripts = [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map(
+    (match) => new URL(match[1], f.app.url),
+  );
+  assert.ok(entryScripts.length > 0, "入口页必须有外部脚本");
+  const pending = [...entryScripts];
   const visited = new Set();
   while (pending.length) {
     const url = pending.pop();
@@ -48,7 +60,7 @@ test("workspace browser module imports are served without starting an Agent", as
       pending.push(new URL(specifier, url));
     }
   }
-  assert(visited.has(new URL("/extension-adapters.mjs", f.app.url).href));
+  for (const script of entryScripts) assert(visited.has(script.href));
   assert.equal((await f.call("/api/workspace")).agents.length, 0);
 });
 
@@ -132,8 +144,9 @@ test(
       html.headers.get("content-security-policy"),
       /frame-ancestors 'self'/,
     );
+    // 旧 /prototype.js 已删除；改用入口页的脚本验证 worker 前缀可服务静态资产。
     assert.equal(
-      (await fetch(`${origin}/agents/${a.id}/prototype.js`)).status,
+      (await fetch(`${origin}/agents/${a.id}/ui-next/assets/index.js`)).status,
       200,
     );
     assert.equal(

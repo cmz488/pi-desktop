@@ -15,22 +15,6 @@ export const sharedAssets = new Map([
     "/agent-browser-view.js",
     ["src/ui/shared/agent-browser-view.js", javascript],
   ],
-  [
-    "/composer-model-picker.js",
-    ["src/ui/chat/composer-model-picker.js", javascript],
-  ],
-  ["/chat-dialog.js", ["src/ui/chat/chat-dialog.js", javascript]],
-  [
-    "/preferences-settings.js",
-    ["src/ui/chat/preferences-settings.js", javascript],
-  ],
-  ["/provider-settings.js", ["src/ui/chat/provider-settings.js", javascript]],
-  ["/resource-settings.js", ["src/ui/chat/resource-settings.js", javascript]],
-  ["/package-settings.js", ["src/ui/chat/package-settings.js", javascript]],
-  [
-    "/composer-attachments.js",
-    ["src/ui/chat/composer-attachments.js", javascript],
-  ],
   ["/workspace-panels.js", ["src/ui/shared/workspace-panels.js", javascript]],
   [
     "/extension-workbench.js",
@@ -54,8 +38,6 @@ export const sharedAssets = new Map([
     ["src/ui/shared/session-panel-loader.js", javascript],
   ],
   ["/design-tokens.css", ["src/ui/design-tokens.css", "text/css"]],
-  ["/chat-shell.css", ["src/ui/chat/chat-shell.css", "text/css"]],
-  ["/composer.css", ["src/ui/chat/composer.css", "text/css"]],
   ["/dsh-icons.mjs", ["src/ui/shared/dsh-icons.mjs", javascript]],
   ["/session-drafts.mjs", ["src/shared/session-drafts.mjs", javascript]],
   ["/connection.mjs", ["src/shared/connection.mjs", javascript]],
@@ -67,10 +49,6 @@ export const sharedAssets = new Map([
   ["/markdown.mjs", ["src/ui/shared/markdown.mjs", javascript]],
   ["/pi-commands.mjs", ["src/shared/pi-commands.mjs", javascript]],
   ["/sidebar-view.mjs", ["src/shared/sidebar-view.mjs", javascript]],
-  [
-    "/settings-schema.json",
-    ["src/ui/chat/settings-schema.json", "application/json"],
-  ],
   [
     "/fonts/DepartureMono-Regular.woff2",
     ["assets/fonts/DepartureMono-Regular.woff2", "font/woff2"],
@@ -117,37 +95,30 @@ export const nextPageAssets = new Map([
   ["/ui-next", ["build/ui-next/index.html", "text/html"]],
 ]);
 
-const pages = {
-  // 旧聊天页仍在显式 URL 上可达；入口 `/` 已交给移植后的渲染层（见 publicAssets）。
-  chat: [
-    ["/prototype.html", ["src/ui/chat/index.html", "text/html"]],
-    ["/prototype.js", ["src/ui/chat/chat.js", javascript]],
-    ["/boot.js", ["src/ui/boot.js", javascript]],
-    ["/prototype.css", ["src/ui/chat/chat.css", "text/css"]],
-  ],
-  workspace: [
-    ["/workspace.html", ["src/ui/workspace.html", "text/html"]],
-    ["/workspace.js", ["src/ui/workspace.js", javascript]],
-    ["/workspace-boot.js", ["src/ui/boot.js", javascript]],
-    ["/workspace.css", ["src/ui/workspace.css", "text/css"]],
-  ],
-};
+/**
+ * 页面壳已移除。
+ *
+ * 入口 `/` 与浏览器界面由移植后的 Percho 渲染层承担（见 `nextPageAssets`）；旧聊天页与
+ * 工作区页没有 URL 入口，因此这里不再登记它们。`sharedAssets` 仍保留：其中的面板与工具模块
+ * 是独立的纯逻辑，测试与后续界面继续复用。
+ */
+const pages = {};
 
 /**
  * 枚举公共资产；不暴露源码或依赖目录。
  *
- * 入口 `/` 由移植后的渲染层承担（它与旧聊天页／工作区页是两套独立界面，不能共存于同一 URL）。
- * 旧页面仍从 `/prototype.html`、`/workspace.html` 提供，使回归测试与回滚仍可直接访问它们。
+ * 入口 `/` 由移植后的渲染层承担。旧聊天页与工作区页的页面壳已删除，不再有 URL 入口；
+ * 其中的面板与工具模块仍在 `sharedAssets` 里，供测试与后续界面复用。
  */
 export function publicAssets(page) {
-  if (page === "next") return new Map([...sharedAssets, ...nextPageAssets]);
-  const entries = pages[page === "preview" ? "chat" : page];
-  if (!entries) throw new TypeError(`未知页面资产：${page}`);
+  // 所有页面都由同一套资产承担：共享模块 + 移植后的渲染层产物 + 入口 `/`。
+  // `chat`／`workspace`／`preview` 作为历史名字仍接受，但不再有独立页面壳。
+  if (!["next", "chat", "workspace", "preview"].includes(page))
+    throw new TypeError(`未知页面资产：${page}`);
   return new Map([
     ...sharedAssets,
-    ...entries,
-    ["/", ["build/ui-next/index.html", "text/html"]],
     ...nextPageAssets,
+    ["/", ["build/ui-next/index.html", "text/html"]],
   ]);
 }
 

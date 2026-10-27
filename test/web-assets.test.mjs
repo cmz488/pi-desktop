@@ -100,11 +100,10 @@ test("large static modules use gzip and conditional requests avoid repeat downlo
 test("page scripts and styles reduce cold-transfer bytes", async (t) => {
   const f = await fixture(t);
   const paths = [
-    "/prototype.html",
-    "/prototype.js",
-    "/prototype.css",
+    "/",
+    "/ui-next/assets/index.js",
+    "/ui-next/assets/index.css",
     "/design-tokens.css",
-    "/chat-shell.css",
     "/extension-workbench.js",
     "/connection.mjs",
     "/markdown.mjs",
@@ -120,7 +119,10 @@ test("page scripts and styles reduce cold-transfer bytes", async (t) => {
     const plain = await f.request(path);
     const compressed = await f.request(path, { "Accept-Encoding": "gzip" });
     assert.equal(compressed.status, 200);
-    assert.deepEqual(gunzipSync(compressed.body), plain.body);
+    // 小于压缩阈值（1 KiB）的资源按设计不发压缩体；只有真的压缩了才解压比对。
+    if (compressed.headers["content-encoding"] === "gzip")
+      assert.deepEqual(gunzipSync(compressed.body), plain.body);
+    else assert.deepEqual(compressed.body, plain.body);
     plainBytes += plain.body.length;
     compressedBytes += compressed.body.length;
   }
@@ -132,62 +134,65 @@ test("page scripts and styles reduce cold-transfer bytes", async (t) => {
 
 test("static encoding negotiation respects gzip exclusions and representation validators", async (t) => {
   const f = await fixture(t);
-  const plain = await f.request("/prototype.js", {
+  const plain = await f.request("/ui-next/assets/index.js", {
     "Accept-Encoding": "gzip;q=0, br;q=0, *;q=1",
   });
   assert.equal(plain.headers["content-encoding"], undefined);
   assert(plain.headers.etag);
   for (const encoding of ["gzip;q=0.2, identity;q=1", "gzip;q=invalid", ""]) {
-    const result = await f.request("/prototype.js", {
+    const result = await f.request("/ui-next/assets/index.js", {
       "Accept-Encoding": encoding,
     });
     assert.equal(result.headers["content-encoding"], undefined);
   }
-  const excluded = await f.request("/prototype.js", {
+  const excluded = await f.request("/ui-next/assets/index.js", {
     "Accept-Encoding": "*;q=0",
   });
   assert.equal(excluded.status, 406);
-  const wildcardEncoding = await f.request("/prototype.js", {
+  const wildcardEncoding = await f.request("/ui-next/assets/index.js", {
     "Accept-Encoding": "*",
   });
   assert.equal(wildcardEncoding.headers["content-encoding"], "br");
-  const compressed = await f.request("/prototype.js", {
+  const compressed = await f.request("/ui-next/assets/index.js", {
     "Accept-Encoding": "br, gzip",
     "If-None-Match": plain.headers.etag,
   });
   assert.equal(compressed.status, 200);
   assert.equal(compressed.headers["content-encoding"], "br");
   assert.deepEqual(brotliDecompressSync(compressed.body), plain.body);
-  const weak = await f.request("/prototype.js", {
+  const weak = await f.request("/ui-next/assets/index.js", {
     "If-None-Match": `"other", W/${plain.headers.etag}`,
   });
   assert.equal(weak.status, 304);
-  const wildcard = await f.request("/prototype.js", { "If-None-Match": "*" });
+  const wildcard = await f.request("/ui-next/assets/index.js", { "If-None-Match": "*" });
   assert.equal(wildcard.status, 304);
 });
 
 test("live HTML loads its first-paint bootstrap as a same-origin script", async (t) => {
-  // CSP 是 script-src 'self'：内联脚本会被拦截，主题与嵌入布局就会在延迟模块
-  // 运行前闪一下。首次绘制引导必须由外部脚本承担。
-  // 入口 / 已是移植后的渲染层，所以这条针对旧聊天页的约束在它的显式 URL 上验证。
+  // CSP 是 script-src 'self'：内联脚本会被拦截。入口页必须由外部模块脚本引导，
+  // 且这些脚本必须能从同一 Host 取到（否则首屏空白）。
   const f = await fixture(t);
-  const page = await f.request("/prototype.html");
+  const page = await f.request("/");
   const html = page.body.toString();
-  assert(html.includes('<script src="boot.js"></script>'));
+  const scripts = [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(scripts.length > 0, "入口页必须有外部脚本");
   assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "HTML 不能依赖内联脚本");
-  const boot = await f.request("/boot.js");
-  assert.equal(boot.status, 200);
-  assert.equal(boot.headers["content-type"], "text/javascript; charset=utf-8");
-  assert(boot.body.length > 0);
+  for (const src of scripts) {
+    const asset = await f.request(src.startsWith("/") ? src : `/${src}`);
+    assert.equal(asset.status, 200, `${src} 必须可取`);
+    assert.match(asset.headers["content-type"], /javascript/);
+    assert.ok(asset.body.length > 0);
+  }
 });
 
 test("live HTML and HEAD use the same static representation; fonts stay binary", async (t) => {
   const f = await fixture(t);
-  // 同样改到旧聊天页的显式 URL：GET 与 HEAD 必须指向同一份表示。
-  const page = await f.request("/prototype.html");
-  assert(page.body.toString().includes('name="pi-desk-mode" content="live"'));
+  // 入口页：GET 与 HEAD 必须指向同一份表示。
+  const page = await f.request("/");
   assert.equal(page.headers["content-type"], "text/html; charset=utf-8");
-  const head = await f.request("/prototype.html", {}, "HEAD");
+  const head = await f.request("/", {}, "HEAD");
   assert.equal(head.status, 200);
   assert.equal(head.body.length, 0);
   assert.equal(head.headers.etag, page.headers.etag);
