@@ -1,11 +1,11 @@
 # Release artifacts
 
-`pi-desktop-extension-0.26.16.tgz` is the npm package built from this tree with
+`pi-desktop-extension-0.28.19.tgz` is the npm package built from this tree with
 `npm pack`. It installs the `pi-desktop` / `pi-web` / `pi-desk` launchers.
 
 ```bash
-npm install --global ./release/pi-desktop-extension-0.26.16.tgz
+npm install --global ./release/pi-desktop-extension-0.28.19.tgz
 pi-desktop --port 4318
 ```
 
-SHA-256: `69ef13f5f91f3b9cdd2aeece6fd89f0410aa5f59ab5fa85cfb3d58b92e976d20`
+SHA-256: `caff3a56fca697844ac222af9a16ac13ed4abb018e06f4149ee2c547955a9e65`
