@@ -27,6 +27,12 @@ Slash 命令也导航到这些真实位置。侧栏会话选择只改变观察�
 
 浏览器画面适配器增加可选 `framePath`，由选定会话生成 worker 地址，修复根 Host 页面错误读取默认画面路径的问题。默认地址仍兼容原有直接宿主 URL。
 
+## 异步操作回归修复
+
+后续审查的五项问题已沿现有界面和协议修复：侧聊取消独立于提问的等待状态；委托提交期间锁定原表单；人格与运行时设置共用加载状态，刷新原生 revision 时保留未保存字段；文件预览只接受最后一次文件选择的回复；Electron 回退按主进程的 owner／标签 UUID、动作和单标签回执适配，隐藏面板保留原生网页。
+
+`test/ui-parity-browser-check.mjs` 追加延迟委托回执、乱序文件回复、人格变更后保留草稿并保存，以及真实侧聊模型请求挂起时取消。`test/ui-next-native-browser.test.mjs` 复用实际 `createBrowserPanels` 处理函数，用模拟 WebContentsView 验证协议、标签选择／关闭、观察隐藏与 owner 隔离；这项测试不替代 Electron 窗口的平台验收。
+
 ## 验证
 
 `npm run test:ui-next:browser` 从实际左右侧栏和设置操作，验证原生聊天与状态、保留的委托草稿、真实子代理与关闭观察、文件预览、真实 Chromium 画面及 worker 绑定、Git 暂存与确认提交、原生设置保存、人格、提供商与包管理入口、侧聊隔离，以及窄屏和主题。脚本同时捕获 HTTP 失败、页面异常与未处理 Promise。

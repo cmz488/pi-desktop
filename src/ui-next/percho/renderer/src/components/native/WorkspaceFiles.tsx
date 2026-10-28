@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { NativeBrowserSession, type BrowserState } from "./native-browser";
 import { desktopSessions, nativeRequest } from "../../pi-http-bridge";
 import { useNativeSession } from "../../stores/desktop-workspace";
 import { getPi } from "../../api";
@@ -24,8 +25,10 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 	const [error, setError] = useState("");
 	const [search, setSearch] = useState("");
 	const generation = useRef(0);
-	const read = async (path: string) => {
+	const previewRequest = useRef(0);
+	const read = async (path: string, preview = false) => {
 		const owner = generation.current;
+		const request = preview ? ++previewRequest.current : 0;
 		try {
 			const file = await nativeRequest(
 				`/api/files?path=${encodeURIComponent(path)}`,
@@ -33,11 +36,13 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 				sessionId,
 			);
 			if (owner !== generation.current) return;
+			if (preview && request !== previewRequest.current) return;
 			setError("");
 			if (file.kind === "directory") setCache((value) => ({ ...value, [path]: file }));
 			else setPreview(file);
 		} catch (reason) {
-			if (owner === generation.current) setError((reason as Error).message);
+			if (owner === generation.current && (!preview || request === previewRequest.current))
+				setError((reason as Error).message);
 		}
 	};
 	useEffect(() => {
@@ -69,7 +74,7 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 										return next;
 									});
 									if (!open) void read(full);
-								} else void read(full);
+								} else void read(full, true);
 							}}
 						>
 							{row.directory ? (
@@ -122,7 +127,14 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 						<span className="min-w-0 flex-1 truncate text-ui-12 text-ink" title={preview.path}>
 							{preview.path}
 						</span>
-						<Button size="sm" aria-label="关闭文件预览" onClick={() => setPreview(null)}>
+						<Button
+							size="sm"
+							aria-label="关闭文件预览"
+							onClick={() => {
+								previewRequest.current++;
+								setPreview(null);
+							}}
+						>
 							<CloseIcon size={13} />
 						</Button>
 					</header>
@@ -143,8 +155,8 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 	);
 }
 
-type BrowserTab = { id: string; url: string; title: string; active?: boolean };
-type BrowserState = { tabs: BrowserTab[]; connected?: boolean };
+// Closing a panel only detaches its viewport; Electron owns the actual tabs.
+const nativeSessions = new Map<string, NativeBrowserSession>();
 function webAddress(value: string) {
 	const text = value.trim();
 	if (!text) throw new Error("请输入网址或搜索内容");
@@ -161,6 +173,16 @@ function webAddress(value: string) {
 }
 export function BrowserPanel({ sessionId }: { sessionId: string }) {
 	const { snapshot, error: stateError } = useNativeSession(sessionId);
+	const host = (window as any).piDesk;
+	const nativeSession = useMemo(() => {
+		if (!host?.browserCommand) return null;
+		let session = nativeSessions.get(sessionId);
+		if (!session) {
+			session = new NativeBrowserSession(host);
+			nativeSessions.set(sessionId, session);
+		}
+		return session;
+	}, [sessionId, host]);
 	const viewport = useRef<HTMLDivElement>(null);
 	const controller = useRef<any>(null);
 	const [state, setState] = useState<BrowserState>({ tabs: [] });
@@ -180,7 +202,7 @@ export function BrowserPanel({ sessionId }: { sessionId: string }) {
 			if (!native && !controller.current) throw new Error("浏览器正在连接，请稍后重试");
 			setError("");
 			const value = native
-				? await (window as any).piDesk.browserCommand({ action, id: active?.id, ...extra })
+				? await nativeSession!.execute(action, { id: active?.id, ...extra })
 				: await controller.current?.execute(action, { id: active?.id, ...extra });
 			if (value?.tabs) update(value);
 		} catch (reason) {
@@ -223,9 +245,12 @@ export function BrowserPanel({ sessionId }: { sessionId: string }) {
 				view.attach(true);
 				resize = new ResizeObserver(() => view.attach(true));
 				resize.observe(viewport.current!);
-			} else if (host?.browserCommand) {
-				off = host.onBrowserState?.((value: BrowserState) => {
-					if (!disposed) update(value);
+			} else if (nativeSession) {
+				update(nativeSession.state());
+				off = host.onBrowserState?.((value: Parameters<NativeBrowserSession["accept"]>[0]) => {
+					if (disposed) return;
+					const state = nativeSession.accept(value);
+					if (state) update(state);
 				});
 				let lastLayout = "";
 				const layout = () => {
@@ -241,7 +266,7 @@ export function BrowserPanel({ sessionId }: { sessionId: string }) {
 					const signature = JSON.stringify(input);
 					if (lastLayout === signature) return;
 					lastLayout = signature;
-					void host.browserCommand(input).catch((reason: Error) => {
+					void nativeSession.execute(input.action, input).catch((reason: Error) => {
 						if (!disposed) setError(reason.message);
 					});
 				};
@@ -261,10 +286,16 @@ export function BrowserPanel({ sessionId }: { sessionId: string }) {
 			resize?.disconnect();
 			observer?.disconnect();
 			off?.();
-			if (host?.browserCommand && native)
-				void host.browserCommand({ action: "hide" }).catch(console.error);
+			if (nativeSession && native) void nativeSession.execute("hide").catch(console.error);
 		};
-	}, [sessionId, Boolean(snapshot?.capabilities?.agentBrowser), native]);
+	}, [
+		sessionId,
+		Boolean(snapshot),
+		Boolean(snapshot?.capabilities?.agentBrowser),
+		native,
+		nativeSession,
+		native ? active?.id : undefined,
+	]);
 	const available = snapshot?.capabilities?.agentBrowser || native;
 	return (
 		<section aria-label="网页浏览器" className="flex h-full min-h-0 flex-col">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { desktopRequest, desktopSessions, nativeRequest } from "../../pi-http-bridge";
 import {
 	useDesktopWorkspace,
@@ -476,44 +476,32 @@ export function AgentSettingsPanel() {
 						))}
 				</select>
 			</Field>
-			{selected ? (
-				<>
-					<AgentPolicy id={selected} />
-					<AgentForm key={selected} id={selected} />
-				</>
-			) : (
-				<EmptySession />
-			)}
+			{selected ? <AgentForm key={selected} id={selected} /> : <EmptySession />}
 		</section>
 	);
 }
-function AgentPolicy({ id }: { id: string }) {
+function AgentPolicy({
+	id,
+	busy,
+	onChange,
+}: {
+	id: string;
+	busy: boolean;
+	onChange: (command: string, extra: Record<string, unknown>) => Promise<void>;
+}) {
 	const workspace = useDesktopWorkspace((s) => s.workspace);
 	const row = workspace?.agents.find((agent) => agent.id === id);
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState("");
-	const change = async (command: string, extra: Record<string, unknown>) => {
-		if (!workspace) return;
-		setBusy(true);
-		setError("");
-		try {
-			await useDesktopWorkspace.getState().command(command, id, extra, workspace.revision);
-		} catch (reason) {
-			setError((reason as Error).message);
-		} finally {
-			setBusy(false);
-		}
-	};
 	return row ? (
 		<div className="space-y-3 border-b border-border pb-4">
-			<Feedback error={error} />
 			<Field label="追加人格">
 				<select
 					aria-label="追加人格"
 					className={inputClass}
 					disabled={busy}
 					value={row.promptProfileId ?? "standard"}
-					onChange={(event) => void change("agent.prompt", { promptProfileId: event.target.value })}
+					onChange={(event) =>
+						void onChange("agent.prompt", { promptProfileId: event.target.value })
+					}
 				>
 					<option value="standard">Pi 默认</option>
 					{workspace?.promptProfiles.map((profile) => (
@@ -529,7 +517,7 @@ function AgentPolicy({ id }: { id: string }) {
 					className={inputClass}
 					disabled={busy}
 					value={row.approvalMode ?? "ask-risky"}
-					onChange={(event) => void change("agent.policy", { mode: event.target.value })}
+					onChange={(event) => void onChange("agent.policy", { mode: event.target.value })}
 				>
 					<option value="ask-risky">风险操作确认</option>
 					<option value="ask-all">全部确认</option>
@@ -546,20 +534,38 @@ function AgentForm({ id }: { id: string }) {
 	const [error, setError] = useState("");
 	const [message, setMessage] = useState("");
 	const [busy, setBusy] = useState(false);
-	const load = async () => {
-		const data = await nativeRequest("/api/agent", undefined, id);
+	const baseline = useRef<any>(null);
+	const apply = (data: any, preserveDraft = false) => {
+		const previous = baseline.current;
 		setDescriptor(data);
-		setForm(data.active);
-		setEnvironment("");
+		setForm((draft: any) => {
+			if (!data.active) return null;
+			const next = { ...data.active };
+			// Only edits made against this form's old baseline survive our own policy refresh.
+			if (preserveDraft && draft && previous)
+				for (const key of [
+					"name",
+					"cwd",
+					"shellPath",
+					"model",
+					"instructions",
+					"tools",
+					"extensions",
+				])
+					if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) next[key] = draft[key];
+			return next;
+		});
+		baseline.current = data.active;
+		if (!preserveDraft) setEnvironment("");
+	};
+	const load = async (preserveDraft = false) => {
+		apply(await nativeRequest("/api/agent", undefined, id), preserveDraft);
 	};
 	useEffect(() => {
 		let live = true;
 		void nativeRequest("/api/agent", undefined, id)
 			.then((data) => {
-				if (live) {
-					setDescriptor(data);
-					setForm(data.active);
-				}
+				if (live) apply(data);
 			})
 			.catch((reason: Error) => {
 				if (live) setError(reason.message);
@@ -568,6 +574,21 @@ function AgentForm({ id }: { id: string }) {
 			live = false;
 		};
 	}, [id]);
+	const changePolicy = async (command: string, extra: Record<string, unknown>) => {
+		if (busy) return;
+		const workspace = useDesktopWorkspace.getState().workspace;
+		if (!workspace) return;
+		setBusy(true);
+		setError("");
+		try {
+			await useDesktopWorkspace.getState().command(command, id, extra, workspace.revision);
+			await load(true);
+		} catch (reason) {
+			setError((reason as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	};
 	const save = async () => {
 		if (!form || busy) return;
 		setBusy(true);
@@ -606,6 +627,7 @@ function AgentForm({ id }: { id: string }) {
 	return (
 		<>
 			<Feedback error={error} message={message} />
+			<AgentPolicy id={id} busy={busy || !form} onChange={changePolicy} />
 			{form ? (
 				<form
 					className="space-y-4"
@@ -614,87 +636,92 @@ function AgentForm({ id }: { id: string }) {
 						void save();
 					}}
 				>
-					{[
-						["name", "名称"],
-						["cwd", "项目目录"],
-						["shellPath", "Shell 路径"],
-					].map(([key, label]) => (
-						<Field key={key} label={label}>
-							<input
-								aria-label={label}
-								required={key !== "shellPath"}
+					<fieldset disabled={busy} className="space-y-4">
+						{[
+							["name", "名称"],
+							["cwd", "项目目录"],
+							["shellPath", "Shell 路径"],
+						].map(([key, label]) => (
+							<Field key={key} label={label}>
+								<input
+									aria-label={label}
+									required={key !== "shellPath"}
+									className={inputClass}
+									value={form[key] ?? ""}
+									onChange={(event) => setForm({ ...form, [key]: event.target.value })}
+								/>
+							</Field>
+						))}
+						<Field label="模型">
+							<select
+								aria-label="Agent 模型"
 								className={inputClass}
-								value={form[key] ?? ""}
-								onChange={(event) => setForm({ ...form, [key]: event.target.value })}
+								value={JSON.stringify(form.model ?? null)}
+								onChange={(event) => setForm({ ...form, model: JSON.parse(event.target.value) })}
+							>
+								<option value="null">保持当前模型</option>
+								{descriptor.models.map((row: any) => {
+									const model = { provider: row.provider, modelId: row.modelId ?? row.id };
+									return (
+										<option
+											key={`${model.provider}/${model.modelId}`}
+											value={JSON.stringify(model)}
+										>
+											{model.provider} / {row.name ?? model.modelId}
+										</option>
+									);
+								})}
+							</select>
+						</Field>
+						<Field label="额外指令">
+							<textarea
+								aria-label="额外指令"
+								className={inputClass}
+								rows={4}
+								value={form.instructions ?? ""}
+								onChange={(event) => setForm({ ...form, instructions: event.target.value })}
 							/>
 						</Field>
-					))}
-					<Field label="模型">
-						<select
-							aria-label="Agent 模型"
-							className={inputClass}
-							value={JSON.stringify(form.model ?? null)}
-							onChange={(event) => setForm({ ...form, model: JSON.parse(event.target.value) })}
+						<Field
+							label="工具环境变量"
+							hint={`留空保留已有值；填写 JSON 替换。已配置：${form.environmentKeys?.join(", ") || "无"}`}
 						>
-							<option value="null">保持当前模型</option>
-							{descriptor.models.map((row: any) => {
-								const model = { provider: row.provider, modelId: row.modelId ?? row.id };
-								return (
-									<option key={`${model.provider}/${model.modelId}`} value={JSON.stringify(model)}>
-										{model.provider} / {row.name ?? model.modelId}
-									</option>
-								);
-							})}
-						</select>
-					</Field>
-					<Field label="额外指令">
-						<textarea
-							aria-label="额外指令"
-							className={inputClass}
-							rows={4}
-							value={form.instructions ?? ""}
-							onChange={(event) => setForm({ ...form, instructions: event.target.value })}
-						/>
-					</Field>
-					<Field
-						label="工具环境变量"
-						hint={`留空保留已有值；填写 JSON 替换。已配置：${form.environmentKeys?.join(", ") || "无"}`}
-					>
-						<textarea
-							aria-label="工具环境变量"
-							className={`${inputClass} font-mono`}
-							rows={3}
-							value={environment}
-							onChange={(event) => setEnvironment(event.target.value)}
-						/>
-					</Field>
-					{(["tools", "extensions"] as const).map((key) => (
-						<fieldset key={key} className="space-y-2">
-							<legend className="mb-2 text-ui-12 text-ink">
-								{key === "tools" ? "工具" : "Durable 扩展"}
-							</legend>
-							{descriptor[key].map((value: string) => (
-								<label key={value} className="flex items-center gap-2 text-ui-12 text-ink-dim">
-									<input
-										type="checkbox"
-										checked={form[key]?.includes(value) ?? false}
-										onChange={(event) =>
-											setForm({
-												...form,
-												[key]: event.target.checked
-													? [...(form[key] ?? []), value]
-													: form[key].filter((item: string) => item !== value),
-											})
-										}
-									/>
-									{value}
-								</label>
-							))}
-						</fieldset>
-					))}
-					<Button type="submit" variant="primary" disabled={busy}>
-						保存会话配置
-					</Button>
+							<textarea
+								aria-label="工具环境变量"
+								className={`${inputClass} font-mono`}
+								rows={3}
+								value={environment}
+								onChange={(event) => setEnvironment(event.target.value)}
+							/>
+						</Field>
+						{(["tools", "extensions"] as const).map((key) => (
+							<fieldset key={key} className="space-y-2">
+								<legend className="mb-2 text-ui-12 text-ink">
+									{key === "tools" ? "工具" : "Durable 扩展"}
+								</legend>
+								{descriptor[key].map((value: string) => (
+									<label key={value} className="flex items-center gap-2 text-ui-12 text-ink-dim">
+										<input
+											type="checkbox"
+											checked={form[key]?.includes(value) ?? false}
+											onChange={(event) =>
+												setForm({
+													...form,
+													[key]: event.target.checked
+														? [...(form[key] ?? []), value]
+														: form[key].filter((item: string) => item !== value),
+												})
+											}
+										/>
+										{value}
+									</label>
+								))}
+							</fieldset>
+						))}
+						<Button type="submit" variant="primary" disabled={busy}>
+							保存会话配置
+						</Button>
+					</fieldset>
 				</form>
 			) : (
 				!error && (

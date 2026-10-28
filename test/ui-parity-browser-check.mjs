@@ -8,6 +8,8 @@ import { desktopFixture, until as untilValue } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
 
 const childGate = Promise.withResolvers();
+const sideGate = Promise.withResolvers();
+let sideStarted = false;
 const f = await desktopFixture({
   noExtensions: false,
   modelReply: (input) => ({
@@ -24,6 +26,20 @@ const f = await desktopFixture({
   beforeModelResponse: async (input) => {
     if (input.messages.at(-1)?.content === "BROWSER_CHILD")
       await childGate.promise;
+    const content = input.messages.at(-1)?.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join("\n")
+          : "";
+    if (text.includes("BROWSER_SIDE_CANCEL")) {
+      sideStarted = true;
+      await sideGate.promise;
+    }
   },
 });
 const git = (args) => promisify(execFile)("git", args, { cwd: f.cwd });
@@ -50,6 +66,7 @@ try {
  }});}`,
   );
   await writeFile(join(f.cwd, "parity.txt"), "BROWSER_FILE_CONTENT\n");
+  await writeFile(join(f.cwd, "preview-new.txt"), "NEW_PREVIEW_CONTENT\n");
   await git(["init", "-b", "main"]);
   await git(["config", "user.name", "Fixture"]);
   await git(["config", "user.email", "fixture@example.invalid"]);
@@ -84,7 +101,7 @@ try {
   driver = await browserDriver(profile);
   const { call, evaluate, until } = driver;
   await call("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.__httpErrors=[];window.__requestPaths=[];window.__frameUrls=[];window.__uiErrors=[];window.addEventListener('error',e=>window.__uiErrors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__uiErrors.push(String(e.reason)));const original=window.fetch;window.fetch=async(...args)=>{window.__requestPaths.push(String(args[0]));const r=await original(...args);if(String(args[0]).includes('/_browser/frame') && r.status===200)window.__frameUrls.push(String(args[0]));if(!r.ok)window.__httpErrors.push({path:String(args[0]),status:r.status});return r;};`,
+    source: `window.__httpErrors=[];window.__requestPaths=[];window.__frameUrls=[];window.__uiErrors=[];window.addEventListener('error',e=>window.__uiErrors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__uiErrors.push(String(e.reason)));const original=window.fetch;window.fetch=async(...args)=>{window.__requestPaths.push(String(args[0]));const r=await original(...args);if(window.__holdSpawn && String(args[1]?.body).includes('subagent.spawn'))await new Promise(resolve=>{window.__releaseSpawn=()=>{window.__holdSpawn=false;resolve()}});if(window.__holdFile && String(args[0]).includes('/api/files?path=parity.txt')){await new Promise(resolve=>{window.__releaseFile=()=>{window.__holdFile=false;resolve()}});window.__fileReleased=true}if(String(args[0]).includes('/_browser/frame') && r.status===200)window.__frameUrls.push(String(args[0]));if(!r.ok)window.__httpErrors.push({path:String(args[0]),status:r.status});return r;};`,
   });
   await call("Emulation.setDeviceMetricsOverride", {
     width: 1440,
@@ -250,6 +267,7 @@ try {
   await until(
     'document.querySelector("[data-task-compose] textarea[name=prompt]")?.value==="BROWSER_CHILD"',
   );
+  await evaluate("window.__holdSpawn=true");
   await evaluate(
     'document.querySelector("[data-task-compose]").requestSubmit()',
   );
@@ -258,6 +276,15 @@ try {
     (value) =>
       value.conversations?.some((row) => row.name === "BROWSER_CHILD_NAME"),
   );
+  await until('typeof window.__releaseSpawn==="function"');
+  assert(
+    await evaluate(
+      'document.querySelector("[data-task-compose] textarea[name=prompt]").matches(":disabled")',
+    ),
+    "pending submission locks its original draft",
+  );
+  await evaluate("window.__releaseSpawn()");
+  await until('!document.querySelector("[data-task-compose]")');
   await closeRight();
   assert(
     (await f.call(`/agents/${actor.id}/api/tasks`)).tasks.some(
@@ -286,7 +313,27 @@ try {
   await until(
     'document.querySelector("[aria-label=文件预览]")?.innerText.includes("BROWSER_FILE_CONTENT")',
   );
-  console.log("PASS right sidebar file tree and preview");
+  await evaluate("window.__holdFile=true");
+  await click("[aria-label=项目文件] button", "parity.txt");
+  await until('typeof window.__releaseFile==="function"');
+  await click("[aria-label=项目文件] button", "preview-new.txt");
+  await until(
+    'document.querySelector("[aria-label=文件预览]")?.innerText.includes("NEW_PREVIEW_CONTENT")',
+  );
+  await evaluate("window.__releaseFile()");
+  await until("window.__fileReleased===true");
+  await evaluate("new Promise(requestAnimationFrame)");
+  assert(
+    (
+      await evaluate(
+        'document.querySelector("[aria-label=文件预览]").innerText',
+      )
+    ).includes("NEW_PREVIEW_CONTENT"),
+    "late A response cannot replace last selected B",
+  );
+  console.log(
+    "PASS right sidebar file tree, preview and out-of-order selection",
+  );
   const observer = await f.command("conversation.create", {
     projectId: project.id,
     name: "BROWSER_OBSERVER",
@@ -296,8 +343,14 @@ try {
     (value) =>
       value.agents.find((row) => row.id === observer.id)?.status === "running",
   );
-  await f.call(`/agents/${observer.id}/api/prompt`, { message: "BROWSER_OBSERVER_HISTORY" });
-  await untilValue(() => f.call(`/agents/${observer.id}/api/state`), state => state.idle && state.messages.some(row => row.role === "assistant"));
+  await f.call(`/agents/${observer.id}/api/prompt`, {
+    message: "BROWSER_OBSERVER_HISTORY",
+  });
+  await untilValue(
+    () => f.call(`/agents/${observer.id}/api/state`),
+    (state) =>
+      state.idle && state.messages.some((row) => row.role === "assistant"),
+  );
   await until(
     `!!document.querySelector('select[aria-label=侧栏会话] option[value="${observer.id}"]')`,
   );
@@ -329,6 +382,73 @@ try {
   );
   console.log(
     "PASS right web browser: actual Chromium frame stays bound to the selected worker",
+  );
+  await closeRight();
+  await evaluate(`(() => {
+    const calls=[],tabs=new Map(),listeners=new Set();
+    window.__electron={calls,tabs,listeners,visible:null};
+    window.__electronFetch=window.fetch;
+    window.fetch=async(...args)=>{
+      const response=await window.__electronFetch(...args);
+      if(String(args[0]).includes('/api/state')){
+        const state=await response.clone().json(); state.capabilities.agentBrowser=false;
+        return new Response(JSON.stringify(state),{status:response.status,headers:{'Content-Type':'application/json'}});
+      }
+      return response;
+    };
+    window.piDesk={onBrowserState(callback){listeners.add(callback);return()=>listeners.delete(callback)},async browserCommand(input){
+      calls.push(input);
+      if(input.action==='hide'){window.__electron.visible=null;return}
+      if(!/^[a-f0-9-]{36}$/.test(input.owner)||!/^[a-f0-9-]{36}$/.test(input.id))throw Error('invalid native owner/tab');
+      const key=input.owner+':'+input.id;
+      if(input.action==='navigate'){
+        const tab={owner:input.owner,id:input.id,url:input.url,title:'ELECTRON_TAB'};tabs.set(key,tab);listeners.forEach(callback=>callback(tab));return tab;
+      }
+      const tab=tabs.get(key);if(!tab)throw Error('unknown native tab');
+      if(input.action==='layout')window.__electron.visible=input.id;
+      else if(input.action==='close'){tabs.delete(key);return}
+      else if(input.action!=='state')throw Error('unsupported native action '+input.action);
+      return tab;
+    }};
+  })()`);
+  await openRight("网页");
+  await until("window.__electron.listeners.size===1");
+  await fill(
+    "input[aria-label=搜索或输入网址]",
+    "https://example.invalid/native",
+  );
+  await click(".workspace-dock button", "打开");
+  try {
+    await until("window.__electron.visible!==null");
+  } catch (error) {
+    console.error(
+      "Electron viewport:",
+      await evaluate(
+        '({calls:window.__electron.calls,bounds:document.querySelector(".native-browser-viewport")?.getBoundingClientRect().toJSON(),modal:document.querySelector(\'[role="dialog"][aria-modal]\')?.outerHTML.slice(0,500)})',
+      ),
+    );
+    throw error;
+  }
+  assert.equal(await evaluate("window.__electron.tabs.size"), 1);
+  await closeRight();
+  await until(
+    "window.__electron.visible===null && window.__electron.listeners.size===0",
+  );
+  await openRight("网页");
+  await until(
+    'window.__electron.visible!==null && document.querySelector(".workspace-dock").innerText.includes("ELECTRON_TAB")',
+  );
+  assert.equal(
+    await evaluate(
+      'window.__electron.calls.filter(row=>row.action==="navigate").length',
+    ),
+    1,
+    "reopening observation restores the existing native tab",
+  );
+  await closeRight();
+  await evaluate("window.fetch=window.__electronFetch;delete window.piDesk");
+  console.log(
+    "PASS Electron fallback UI: native protocol, viewport layout and retained tabs after reopen",
   );
   await writeFile(join(f.cwd, "parity.txt"), "BROWSER_FILE_CONTENT\nchanged\n");
   await openRight("Git");
@@ -400,8 +520,56 @@ try {
     () => f.call("/api/personality"),
     (doc) => doc.content === "BROWSER_PERSONALITY",
   );
+  await click("[role=dialog] button", "新建人格");
+  await fill("input[aria-label=人格名称]", "BROWSER_PROFILE");
+  await fill("textarea[aria-label=系统提示词]", "PROFILE_INSTRUCTIONS");
+  await click("[role=dialog] button", "保存人格");
+  const catalog = await untilValue(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.promptProfiles.some((row) => row.name === "BROWSER_PROFILE"),
+  );
+  const personality = catalog.promptProfiles.find(
+    (row) => row.name === "BROWSER_PROFILE",
+  );
   await openSettings("会话配置");
   await until('!!document.querySelector("input[aria-label=名称]")');
+  await fill("textarea[aria-label=额外指令]", "LOCAL_AGENT_DRAFT");
+  await fill(
+    "textarea[aria-label=工具环境变量]",
+    '{"REGRESSION_KEEP":"fixture"}',
+  );
+  await fill("select[aria-label=追加人格]", personality.id);
+  await untilValue(
+    () => f.call(`/agents/${actor.id}/api/agent`),
+    (value) => value.active.instructions === "PROFILE_INSTRUCTIONS",
+  );
+  await until(
+    '!![...document.querySelectorAll("[role=dialog] button")].find(n=>n.textContent==="保存会话配置" && !n.disabled)',
+  );
+  assert.equal(
+    await evaluate(
+      'document.querySelector("textarea[aria-label=额外指令]").value',
+    ),
+    "LOCAL_AGENT_DRAFT",
+  );
+  assert(
+    (
+      await evaluate(
+        'document.querySelector("textarea[aria-label=工具环境变量]").value',
+      )
+    ).includes("REGRESSION_KEEP"),
+  );
+  await click("[role=dialog] button", "保存会话配置");
+  await untilValue(
+    () => f.call(`/agents/${actor.id}/api/agent`),
+    (value) =>
+      value.active.instructions === "LOCAL_AGENT_DRAFT" &&
+      value.active.environmentKeys.includes("REGRESSION_KEEP"),
+  );
+  console.log(
+    "PASS persona refresh preserves local edits and saves with the new native revision",
+  );
   await writeFile(
     "/tmp/percho-integrated-settings.png",
     Buffer.from(
@@ -498,6 +666,24 @@ try {
     'document.querySelector("[contenteditable=true]").innerText.includes("BROWSER_SIDE_QUESTION")',
   );
   console.log("PASS right sidebar BTW isolation and bring-back");
+  await click(".workspace-dock button", "新侧聊");
+  await fill("textarea[aria-label=侧聊问题]", "BROWSER_SIDE_CANCEL");
+  await click(".workspace-dock button", "提问");
+  await untilValue(() => sideStarted, Boolean);
+  assert(
+    await evaluate(
+      '[...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="提问").disabled',
+    ),
+  );
+  await click(".workspace-dock button", "取消侧聊");
+  await untilValue(
+    () => f.call(`/agents/${actor.id}/api/btw`, { action: "list" }),
+    (value) => value.rows.every((row) => !row.running),
+  );
+  sideGate.resolve();
+  console.log(
+    "PASS cancelling a pending BTW model request without enabling duplicate submission",
+  );
   await call("Emulation.setDeviceMetricsOverride", {
     width: 480,
     height: 850,
@@ -543,6 +729,7 @@ try {
   );
 } finally {
   childGate.resolve();
+  sideGate.resolve();
   driver?.close();
   if (chrome && chrome.exitCode === null) {
     const exited = once(chrome, "exit");

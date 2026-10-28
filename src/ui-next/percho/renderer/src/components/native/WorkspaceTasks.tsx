@@ -316,98 +316,102 @@ export function TasksPanel({ sessionId }: { sessionId: string }) {
 								void run(spawn);
 							}}
 						>
-							<Field label="名称（可选）">
-								<input
-									name="name"
-									aria-label="子代理名称"
-									className={inputClass}
-									maxLength={120}
-									value={draft.name}
-									onChange={(event) => change("name", event.target.value)}
-								/>
-							</Field>
-							<Field label="委托任务">
-								<textarea
-									name="prompt"
-									aria-label="委托任务"
-									className={inputClass}
-									required
-									rows={4}
-									maxLength={512000}
-									value={draft.prompt}
-									onChange={(event) => change("prompt", event.target.value)}
-								/>
-							</Field>
-							<details>
-								<summary className="cursor-pointer text-ui-12 text-ink-dim">
-									模型、工具与回合预算
-								</summary>
-								<div className="mt-3 space-y-3">
-									<Field label="模型">
-										<select
-											name="model"
-											className={inputClass}
-											value={draft.model}
-											onChange={(event) => change("model", event.target.value)}
-										>
-											<option value="">继承当前模型</option>
-											{data?.models?.map((row: any) => (
-												<option
-													key={`${row.provider}/${row.modelId}`}
-													value={JSON.stringify({ provider: row.provider, modelId: row.modelId })}
-												>
-													{row.provider} / {row.name ?? row.modelId}
-												</option>
-											))}
-										</select>
-									</Field>
-									<Field label="思考等级">
-										<select
-											name="thinkingLevel"
-											className={inputClass}
-											value={draft.thinkingLevel}
-											onChange={(event) => change("thinkingLevel", event.target.value)}
-										>
-											<option value="">继承当前设置</option>
-											{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => (
-												<option key={level}>{level}</option>
-											))}
-										</select>
-									</Field>
-									<Field label="额外指令">
-										<textarea
-											name="instructions"
-											className={inputClass}
-											value={draft.instructions}
-											onChange={(event) => change("instructions", event.target.value)}
-										/>
-									</Field>
-									<Field label="工具（逗号分隔，留空继承）">
-										<input
-											name="tools"
-											className={inputClass}
-											value={draft.tools}
-											onChange={(event) => change("tools", event.target.value)}
-										/>
-									</Field>
-									<Field label="最大模型回合">
-										<input
-											name="maxTurns"
-											type="number"
-											min={1}
-											max={256}
-											step={1}
-											className={inputClass}
-											value={draft.maxTurns}
-											onChange={(event) => change("maxTurns", event.target.value)}
-										/>
-									</Field>
-								</div>
-							</details>
-							<Button type="submit" variant="primary" disabled={busy || !policy.canManageTasks}>
-								创建子代理
-							</Button>
-							<Button onClick={() => setCompose(false)}>收起</Button>
+							<fieldset disabled={busy} className="space-y-3">
+								<Field label="名称（可选）">
+									<input
+										name="name"
+										aria-label="子代理名称"
+										className={inputClass}
+										maxLength={120}
+										value={draft.name}
+										onChange={(event) => change("name", event.target.value)}
+									/>
+								</Field>
+								<Field label="委托任务">
+									<textarea
+										name="prompt"
+										aria-label="委托任务"
+										className={inputClass}
+										required
+										rows={4}
+										maxLength={512000}
+										value={draft.prompt}
+										onChange={(event) => change("prompt", event.target.value)}
+									/>
+								</Field>
+								<details>
+									<summary className="cursor-pointer text-ui-12 text-ink-dim">
+										模型、工具与回合预算
+									</summary>
+									<div className="mt-3 space-y-3">
+										<Field label="模型">
+											<select
+												name="model"
+												className={inputClass}
+												value={draft.model}
+												onChange={(event) => change("model", event.target.value)}
+											>
+												<option value="">继承当前模型</option>
+												{data?.models?.map((row: any) => (
+													<option
+														key={`${row.provider}/${row.modelId}`}
+														value={JSON.stringify({ provider: row.provider, modelId: row.modelId })}
+													>
+														{row.provider} / {row.name ?? row.modelId}
+													</option>
+												))}
+											</select>
+										</Field>
+										<Field label="思考等级">
+											<select
+												name="thinkingLevel"
+												className={inputClass}
+												value={draft.thinkingLevel}
+												onChange={(event) => change("thinkingLevel", event.target.value)}
+											>
+												<option value="">继承当前设置</option>
+												{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map(
+													(level) => (
+														<option key={level}>{level}</option>
+													),
+												)}
+											</select>
+										</Field>
+										<Field label="额外指令">
+											<textarea
+												name="instructions"
+												className={inputClass}
+												value={draft.instructions}
+												onChange={(event) => change("instructions", event.target.value)}
+											/>
+										</Field>
+										<Field label="工具（逗号分隔，留空继承）">
+											<input
+												name="tools"
+												className={inputClass}
+												value={draft.tools}
+												onChange={(event) => change("tools", event.target.value)}
+											/>
+										</Field>
+										<Field label="最大模型回合">
+											<input
+												name="maxTurns"
+												type="number"
+												min={1}
+												max={256}
+												step={1}
+												className={inputClass}
+												value={draft.maxTurns}
+												onChange={(event) => change("maxTurns", event.target.value)}
+											/>
+										</Field>
+									</div>
+								</details>
+								<Button type="submit" variant="primary" disabled={busy || !policy.canManageTasks}>
+									创建子代理
+								</Button>
+								<Button onClick={() => setCompose(false)}>收起</Button>
+							</fieldset>
 						</form>
 					)}
 					{!policy.canReadTasks && snapshot && (
@@ -819,6 +823,7 @@ export function BtwPanel({
 	const [text, setText] = useState(initialQuestion);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [cancelling, setCancelling] = useState(false);
 	const available =
 		snapshot &&
 		Boolean(
@@ -873,6 +878,7 @@ export function BtwPanel({
 					<div className="flex flex-wrap gap-1">
 						<Button
 							size="sm"
+							disabled={busy || cancelling}
 							onClick={() => {
 								setSelected(null);
 								setText("");
@@ -884,6 +890,7 @@ export function BtwPanel({
 							<Button
 								size="sm"
 								key={row.id}
+								disabled={busy || cancelling}
 								onClick={() =>
 									void act(async () => {
 										await run({ action: "open", threadId: row.id });
@@ -914,7 +921,7 @@ export function BtwPanel({
 								onChange={(event) => setText(event.target.value)}
 							/>
 						</Field>
-						<Button type="submit" variant="primary" disabled={busy || !available}>
+						<Button type="submit" variant="primary" disabled={busy || cancelling || !available}>
 							提问
 						</Button>
 					</form>
@@ -927,17 +934,20 @@ export function BtwPanel({
 					{selected && (
 						<div className="flex flex-wrap gap-1">
 							<Button
-								disabled={busy}
-								onClick={() =>
-									void act(async () => {
-										await run({ action: "cancel", threadId: selected.id });
-									})
-								}
+								disabled={cancelling}
+								onClick={() => {
+									const threadId = selected.id;
+									setCancelling(true);
+									setError("");
+									void run({ action: "cancel", threadId })
+										.catch((reason: Error) => setError(reason.message))
+										.finally(() => setCancelling(false));
+								}}
 							>
 								取消侧聊
 							</Button>
 							<Button
-								disabled={busy || !selected.turns.length}
+								disabled={busy || cancelling || !selected.turns.length}
 								onClick={() =>
 									void act(async () => {
 										await openSession(sessionId);
