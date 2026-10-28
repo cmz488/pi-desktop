@@ -1,12 +1,12 @@
-import type { McpExposure, McpServerView, McpUpsertInput } from "@percho/shared";
+import { MCP_EXPOSURES, type McpExposure, type McpServerView, type McpUpsertInput } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { ArrowLeftIcon } from "../../icons";
 import { parsePastedServers } from "./pure";
 
-/** 暴露档位：五档全部平铺（总共就 5 个，折叠反而多一次点击；设计稿 v1.2） */
-const EXPOSURES: McpExposure[] = ["deferred", "codemode", "direct", "model-only", "hidden"];
+/** Only expose values supported by the native SDK and config validator. */
+const EXPOSURES: readonly McpExposure[] = MCP_EXPOSURES;
 
 interface FormState {
 	name: string;

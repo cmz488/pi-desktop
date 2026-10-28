@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import { CUSTOM_PROVIDER_APIS } from "../shared/resource-options.mjs";
 
 export class DeskError extends Error {
   constructor(status, message) {
@@ -80,12 +81,7 @@ export function patchProvider(data, input, options = {}) {
       endpoint.hash)
   )
     throw new DeskError(422, "端点必须是无凭据和查询参数的 HTTP(S) 地址");
-  const apis = [
-    "openai-completions",
-    "openai-responses",
-    "anthropic-messages",
-    "google-generative-ai",
-  ];
+  const apis = CUSTOM_PROVIDER_APIS;
   if (
     (input.api === undefined && !options.allowDefaultEndpoint) ||
     (input.api !== undefined &&
@@ -95,8 +91,16 @@ export function patchProvider(data, input, options = {}) {
     throw new DeskError(422, "不支持的 API 类型");
   data.providers ??= {};
   const prior = data.providers[input.id] ?? {};
+  if (
+    input.name !== undefined &&
+    (typeof input.name !== "string" ||
+      input.name.length > 256 ||
+      /[\x00-\x1f]/.test(input.name))
+  )
+    throw new DeskError(422, "提供商名称无效");
   const next = {
     ...prior,
+    ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.api === undefined ? {} : { api: input.api }),
   };
   if (resetEndpoint) delete next.baseUrl;

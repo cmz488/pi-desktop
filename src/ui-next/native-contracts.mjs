@@ -100,11 +100,13 @@ export function mcpView(inventory) {
       .filter((row) => row.scope === "project")
       .map(view),
     errors: [],
-    projectTrusted: !(inventory.rows ?? []).some(
-      (row) => row.scope === "project" && !row.trusted,
-    ),
-    globalPath: "用户 mcp.json",
-    projectPath: "项目 .pi/mcp.json",
+    projectTrusted:
+      inventory.projectTrusted ??
+      !(inventory.rows ?? []).some(
+        (row) => row.scope === "project" && !row.trusted,
+      ),
+    globalPath: inventory.globalPath,
+    projectPath: inventory.projectPath,
     ...(inventory.pending
       ? {
           notice: {
@@ -132,30 +134,59 @@ export function createProviderLogins({
   emit = (_name, _payload) => {},
 }) {
   const jobs = new Map();
-  async function start(args, key) {
+  async function cancelNative(job) {
+    if (!job.id || job.cancelSent) return;
+    job.cancelling ??= (async () => {
+      try {
+        await sessions.post(
+          "/api/interaction-reply",
+          { id: job.id, cancel: true },
+          job.sessionId,
+        );
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        const current = (
+          await sessions.get("/api/interactions", job.sessionId)
+        ).rows.find((row) => row.id === job.id);
+        if (current?.status === "running") throw error;
+      }
+      job.cancelSent = true;
+    })().finally(() => {
+      delete job.cancelling;
+    });
+    return job.cancelling;
+  }
+  async function start(args, key, sessionId) {
     if (jobs.has(args.loginId)) throw new Error("登录已开始");
-    const target = await sessions.target();
-    const inventory = await sessions.get("/api/providers", target.id);
-    const provider = [
-      ...(inventory.rows ?? []),
-      ...(inventory.catalog ?? []),
-    ].find((row) => row.id === args.providerId);
-    if (!provider) throw new Error("提供商不存在");
-    const type =
-      key === undefined && provider.auth?.oauth ? "oauth" : "api_key";
-    const created = await sessions.post(
-      "/api/auth-start",
-      { provider: args.providerId, type },
-      target.id,
-    );
     const job = {
-      id: created.id,
-      sessionId: target.id,
+      id: null,
+      sessionId: null,
       seen: new Set(),
       promptId: null,
+      cancelled: false,
+      cancelSent: false,
     };
     jobs.set(args.loginId, job);
     try {
+      const target = await sessions.target(sessionId);
+      job.sessionId = target.id;
+      if (job.cancelled) return { ok: false, cancelled: true };
+      const inventory = await sessions.get("/api/providers", target.id);
+      const provider = [
+        ...(inventory.rows ?? []),
+        ...(inventory.catalog ?? []),
+      ].find((row) => row.id === args.providerId);
+      if (!provider) throw new Error("提供商不存在");
+      if (job.cancelled) return { ok: false, cancelled: true };
+      const type =
+        key === undefined && provider.auth?.oauth ? "oauth" : "api_key";
+      const created = await sessions.post(
+        "/api/auth-start",
+        { provider: args.providerId, type },
+        target.id,
+      );
+      job.id = created.id;
+      if (job.cancelled) await cancelNative(job);
       for (;;) {
         const current = (
           await sessions.get("/api/interactions", target.id)
@@ -177,15 +208,15 @@ export function createProviderLogins({
             cancelled: current.status === "cancelled",
             ...(current.error ? { error: current.error } : {}),
           };
-        if (current.prompt && current.prompt.id !== job.promptId) {
+        if (
+          !job.cancelled &&
+          current.prompt &&
+          current.prompt.id !== job.promptId
+        ) {
           job.promptId = current.prompt.id;
           if (key !== undefined) {
             if (!["secret", "text"].includes(current.prompt.type)) {
-              await sessions.post(
-                "/api/interaction-reply",
-                { id: job.id, cancel: true },
-                target.id,
-              );
+              await cancelNative(job);
               throw new Error("此提供商需要交互登录，请使用登录按钮");
             }
             await sessions.post(
@@ -226,26 +257,27 @@ export function createProviderLogins({
     },
     async cancel(args) {
       const job = jobs.get(args.loginId);
-      if (!job) throw new Error("登录已结束");
-      return sessions.post(
-        "/api/interaction-reply",
-        { id: job.id, cancel: true },
-        job.sessionId,
-      );
+      if (!job) return;
+      job.cancelled = true;
+      return cancelNative(job);
     },
   };
 }
 
 export { composerInput } from "../shared/composer-input.mjs";
 
-export async function checkoutBranch(sessions, args, confirm) {
-  const id = await sessions.forCwd(args.cwd);
-  const preview = await sessions.post(
-    "/api/git",
-    { action: "switch", branch: args.branch },
-    id,
-  );
+export async function checkoutBranch(sessions, args, confirm, project) {
+  const id = project ? undefined : await sessions.forCwd(args.cwd);
+  const io = project ?? {
+    get: (path) => sessions.get(path, id),
+    post: (path, input) => sessions.post(path, input, id),
+  };
+  const preview = await io.post("/api/git", {
+    action: "switch",
+    branch: args.branch,
+  });
   if (!preview.token) throw new Error("Git 未提供确认令牌");
-  if (!(await confirm(preview))) return;
-  return sessions.post("/api/git", { token: preview.token }, id);
+  if (await confirm(preview))
+    await io.post("/api/git", { token: preview.token });
+  return (await io.get("/api/git")).branch;
 }

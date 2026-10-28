@@ -35,7 +35,7 @@ interface ProviderLoginStore {
 	/** 应答登录中的输入/选择提示 */
 	respondLoginPrompt: (value: string) => void;
 	/** 取消进行中的登录（invoke 收尾时统一清空状态） */
-	cancelProviderLogin: () => void;
+	cancelProviderLogin: () => Promise<void>;
 	/** 关闭登录对话框（错误态保留展示时用） */
 	dismissLogin: () => void;
 }
@@ -62,7 +62,12 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 			const state = get().login;
 			if (!state || state.loginId !== loginId) return;
 			if (payload.kind === "prompt") {
-				set({ login: { ...state, pendingPrompt: { promptId: payload.promptId, prompt: payload.prompt } } });
+				set({
+					login: {
+						...state,
+						pendingPrompt: { promptId: payload.promptId, prompt: payload.prompt },
+					},
+				});
 				return;
 			}
 			if (payload.kind === "prompt-cancel") {
@@ -154,10 +159,23 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 		}
 	},
 
-	cancelProviderLogin: () => {
+	cancelProviderLogin: async () => {
 		const state = get().login;
 		if (!state) return;
-		void getExecutionApi(LOCAL_ENVIRONMENT).cancelProviderLogin({ loginId: state.loginId });
+		try {
+			await getExecutionApi(LOCAL_ENVIRONMENT).cancelProviderLogin({ loginId: state.loginId });
+		} catch (error) {
+			set((current) =>
+				current.login?.loginId === state.loginId
+					? {
+							login: {
+								...current.login,
+								error: error instanceof Error ? error.message : String(error),
+							},
+						}
+					: {},
+			);
+		}
 	},
 
 	dismissLogin: () => set({ login: null }),

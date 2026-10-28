@@ -28,6 +28,8 @@
 
 ## 发布资产 seam
 
+`src/control-plane/project-access.mjs` 承接无 worker 草稿目录的文件／Git／MCP 与原生信任操作，复用既有模块并保留本机、路径、信任和确认边界，不启动执行进程。协议和 MCP 暴露取值共用 `src/shared/resource-options.mjs`。见[后续接口修复](../history/percho-interface-followup-repair.md)。
+
 [src/server/asset-manifest.mjs](../../src/server/asset-manifest.mjs) 是公共 URL 与磁盘位置的唯一映射。生产 React／手机资源由 `src/ui-next/build.mjs` 和 Vite 生成并经同一清单发布；共享 module、字体与 schema 也从此映射。浏览器画面复用公开的 `/agent-browser-view.js`，不会直接加载远端网页脚本到界面进程。
 
 Percho 的首屏引导、主题与骨架由其 `main.tsx`、`splash.ts` 和 stores 拥有。共享控制器仍用于兼容宿主与专门契约测试，不是当前生产页面壳。

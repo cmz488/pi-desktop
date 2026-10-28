@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { once } from "node:events";
 import { join } from "node:path";
 import { desktopFixture } from "./desktop-fixture.mjs";
@@ -8,6 +10,9 @@ import { browserDriver } from "./durable-browser-driver.mjs";
 const f = await desktopFixture({ defaultConversation: false });
 let chrome, driver;
 try {
+  const git = (args) => promisify(execFile)("git", args, { cwd: f.other });
+  await writeFile(join(f.other, "draft.txt"), "DRAFT_FILE_CONTENT");
+  await git(["init", "-b", "main"]);
   const profile = join(f.root, "capabilities-browser");
   chrome = spawn(
     "/usr/bin/chromium",
@@ -141,6 +146,52 @@ try {
   assert.deepEqual(await evaluate("window.__failures"), []);
   console.log(
     "PASS add project: real validation error, corrected method and persisted directory without starting workers",
+  );
+  await evaluate(
+    `document.querySelector('button[aria-label="在 other 中新建会话"]').click()`,
+  );
+  await until(
+    `!![...document.querySelectorAll('button')].find(node=>node.textContent.replace(/\\s/g,'')==='⎇main')`,
+  );
+  await evaluate(
+    `[...document.querySelectorAll('.sidebar button')].find(node=>node.textContent.trim()==='设置').click()`,
+  );
+  await until(`!!document.querySelector('[role=dialog][aria-modal]')`);
+  assert.equal(await clickIfPresent("MCP"), true);
+  await until(
+    `!![...document.querySelectorAll('[role=dialog][aria-modal] button')].find(node=>node.textContent.trim()==='配置文件')`,
+  );
+  assert.equal(await clickIfPresent("配置文件"), true);
+  await until(
+    `document.querySelector('[role=dialog][aria-modal]').textContent.includes(${JSON.stringify(join(f.other, ".pi", "mcp.json"))})`,
+  );
+  assert.equal(await clickIfPresent("添加服务器"), true);
+  await until(`!!document.querySelector('#mcp-name')`);
+  assert.equal(
+    await clickIfPresent("仅模型"),
+    false,
+    "unsupported SDK exposure is not offered",
+  );
+  for (const [id, value] of [
+    ["mcp-name", "draft-browser"],
+    ["mcp-command", "/usr/bin/node"],
+    ["mcp-args", "--version"],
+  ])
+    await evaluate(
+      `(()=>{const node=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,${JSON.stringify(value)});node.dispatchEvent(new Event('input',{bubbles:true}))})()`,
+    );
+  await clickIfPresent("仅本项目");
+  await clickIfPresent("隐藏");
+  await clickIfPresent("保存");
+  await until(`!document.querySelector('#mcp-name')`);
+  const saved = JSON.parse(
+    await readFile(join(f.other, ".pi", "mcp.json"), "utf8"),
+  );
+  assert.equal(saved.mcpServers["draft-browser"].exposure, "hidden");
+  assert.equal((await f.call("/api/workspace")).agents.length, 0);
+  assert.deepEqual(await evaluate("window.__failures"), []);
+  console.log(
+    "PASS draft project Git and MCP editor: actual paths, native exposure options, saved config and no worker",
   );
   console.log(
     "PASS empty Host settings: no unsupported controls, uncaught exceptions, or accidental worker; theme remains usable",

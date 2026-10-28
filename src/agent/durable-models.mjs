@@ -50,6 +50,7 @@ export async function openDurableModels({ agentDir, directory }) {
   const authPath = join(directory, "auth.json"),
     modelPath = join(directory, "models.json");
   const credentialViews = new AsyncLocalStorage();
+  let configuredKeys = new Map();
   let mutation = Promise.resolve();
   function serial(run) {
     const result = mutation.then(run);
@@ -65,9 +66,14 @@ export async function openDurableModels({ agentDir, directory }) {
     if (view) value = view[id];
     else {
       const own = (await readDocument(authPath)).data;
-      value = Object.hasOwn(own, id)
-        ? own[id]
-        : (await readDocument(join(agentDir, "auth.json"))).data[id];
+      if (Object.hasOwn(own, id)) value = own[id];
+      else {
+        const inherited = (await readDocument(join(agentDir, "auth.json")))
+          .data;
+        value = Object.hasOwn(inherited, id)
+          ? inherited[id]
+          : configuredKeys.get(id);
+      }
     }
     if (value?.type === "api_key")
       return { ...value, key: resolveKey(value.key) };
@@ -78,7 +84,11 @@ export async function openDurableModels({ agentDir, directory }) {
       readDocument(join(agentDir, "auth.json")),
       readDocument(authPath),
     ]);
-    return { ...inherited.data, ...own.data };
+    return {
+      ...Object.fromEntries(configuredKeys),
+      ...inherited.data,
+      ...own.data,
+    };
   }
   async function withCredentialView(read) {
     // 同一次目录读取不必为每个提供商重读文件；作用域外的模型认证和写操作仍取新值。
@@ -152,6 +162,12 @@ export async function openDurableModels({ agentDir, directory }) {
     const inherited =
       (await readDocument(join(agentDir, "models.json"))).data.providers ?? {};
     const own = (await readDocument(modelPath)).data.providers ?? {};
+    const configs = { ...inherited, ...own };
+    configuredKeys = new Map(
+      Object.entries(configs)
+        .filter(([, config]) => config?.apiKey && !config.disabled)
+        .map(([id, config]) => [id, { type: "api_key", key: config.apiKey }]),
+    );
     for (const id of customIds) models.deleteProvider(id);
     customIds = new Set();
     // Re-register builtins before applying deliberate custom overrides.
@@ -160,16 +176,18 @@ export async function openDurableModels({ agentDir, directory }) {
       modelsStore,
     }).getProviders())
       models.setProvider(provider);
-    for (const [id, config] of Object.entries({ ...inherited, ...own })) {
+    for (const [id, config] of Object.entries(configs)) {
       if (config?.disabled) {
         models.deleteProvider(id);
         continue;
       }
-      // An endpoint-only override retains the SDK provider's OAuth, APIs and dynamic catalog.
-      if (builtinIds.has(id) && !Array.isArray(config.models)) {
-        const provider = models.getProvider(id);
-        if (!config.baseUrl) continue;
-        const endpoint = new URL(config.baseUrl);
+      if (config.baseUrl) {
+        let endpoint;
+        try {
+          endpoint = new URL(config.baseUrl);
+        } catch {
+          continue;
+        }
         if (
           !["http:", "https:"].includes(endpoint.protocol) ||
           endpoint.username ||
@@ -178,17 +196,66 @@ export async function openDurableModels({ agentDir, directory }) {
           endpoint.hash
         )
           continue;
-        const override = (model) => ({
+      }
+      // Keep the owning SDK provider's auth, protocols and dynamic model discovery.
+      const builtin = builtinIds.has(id) ? models.getProvider(id) : undefined;
+      if (
+        builtin &&
+        (config.api === undefined ||
+          builtin.getModels().some((model) => model.api === config.api))
+      ) {
+        const project = (model) => ({
           ...model,
-          baseUrl: config.baseUrl,
+          ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
           headers: { ...model.headers, ...config.headers },
         });
+        const overlay = (source) => {
+          const result = new Map(
+            source.map((model) => [
+              `${model.type ?? "chat"}/${model.id}`,
+              project(model),
+            ]),
+          );
+          for (const row of config.models ?? []) {
+            const known = builtin
+              .getModels()
+              .find((model) => model.id === row.id);
+            const base =
+              known ??
+              builtin.getModels().find((model) => model.api === config.api) ??
+              builtin.getModels()[0];
+            result.set(
+              `chat/${row.id}`,
+              project({
+                ...base,
+                ...row,
+                provider: id,
+                api: row.api ?? config.api ?? base?.api,
+                name: row.name ?? known?.name ?? row.id,
+                input: row.input ?? known?.input ?? ["text"],
+                reasoning: row.reasoning ?? known?.reasoning ?? false,
+                contextWindow:
+                  row.contextWindow ?? known?.contextWindow ?? 128000,
+                maxTokens: row.maxTokens ?? known?.maxTokens ?? 8192,
+                cost: row.cost ??
+                  known?.cost ?? {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                  },
+              }),
+            );
+          }
+          return [...result.values()];
+        };
         models.setProvider({
-          ...provider,
-          baseUrl: config.baseUrl,
-          getModels: () => provider.getModels().map(override),
-          ...(provider.getAllModels
-            ? { getAllModels: () => provider.getAllModels().map(override) }
+          ...builtin,
+          name: config.name || builtin.name,
+          ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+          getModels: () => overlay(builtin.getModels()),
+          ...(builtin.getAllModels
+            ? { getAllModels: () => overlay(builtin.getAllModels()) }
             : {}),
         });
         customIds.add(id);
@@ -210,7 +277,7 @@ export async function openDurableModels({ agentDir, directory }) {
       const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
       const provider = createProvider({
         id,
-        name: id,
+        name: config.name || id,
         baseUrl: config.baseUrl,
         headers: config.headers,
         auth: {
@@ -264,7 +331,9 @@ export async function openDurableModels({ agentDir, directory }) {
       return patchProvider(data, input, {
         allowEmptyModels: !!models.getProvider(input.id),
         allowDefaultEndpoint: builtinIds.has(input.id),
-        additionalApi: models.getProvider(input.id)?.getModels()[0]?.api,
+        additionalApi: builtinIds.has(input.id)
+          ? models.getProvider(input.id)?.getModels()[0]?.api
+          : undefined,
       });
     });
     await reload();
@@ -307,17 +376,15 @@ export async function openDurableModels({ agentDir, directory }) {
       builtin: builtinIds.has(provider.id),
       api: provider.getModels()[0]?.api,
       baseUrl: publicEndpoint(provider.baseUrl),
-      models: provider
-        .getModels()
-        .map((model) => ({
-          id: model.id,
-          name: model.name,
-          input: model.input,
-          reasoning: model.reasoning,
-          contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens,
-          available: availableKeys.has(`${provider.id}\0${model.id}`),
-        })),
+      models: provider.getModels().map((model) => ({
+        id: model.id,
+        name: model.name,
+        input: model.input,
+        reasoning: model.reasoning,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        available: availableKeys.has(`${provider.id}\0${model.id}`),
+      })),
       auth: {
         apiKey: !!provider.auth?.apiKey?.login,
         oauth: !!provider.auth?.oauth,

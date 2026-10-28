@@ -40,7 +40,7 @@ import {
 } from "../resources/plugin-config.mjs";
 
 import {
-  mcpProjection,
+  readMcpInventory,
   patchMcp,
   validMcpName,
 } from "../resources/mcp-config.mjs";
@@ -172,58 +172,17 @@ export function createDeskBridge(input) {
     };
   }
   async function mcpInventory() {
-    const rows = [],
-      revisions = {},
-      configured = new Set();
-    const project = await readDocument(mcpPath("project"));
-    const trusted = host.capabilities.projectTrusted ? trustedNow() : true;
-    for (const scope of ["global", "project"]) {
-      const document =
-        scope === "project" ? project : await readDocument(mcpPath("global"));
-      revisions[scope] = document.revision;
-      for (const [name, config] of Object.entries(
-        document.data.mcpServers ?? {},
-      )) {
-        if (!config || typeof config !== "object") continue;
-        configured.add(name);
-        rows.push({
-          name,
-          scope,
-          revision: document.revision,
-          config: mcpProjection(config),
-          enabled: config.enabled !== false,
-          overridden:
-            scope === "global" &&
-            trusted &&
-            Object.hasOwn(project.data.mcpServers ?? {}, name),
-          trusted: scope !== "project" || trusted,
-        });
-      }
-    }
-    for (const server of host.capabilities.mcp
-      ? (resources.mcpRegistered() ?? [])
-      : []) {
-      if (!configured.has(server.name))
-        rows.push({
-          name: server.name,
-          scope: "extension",
-          config: mcpProjection(server.config),
-          enabled: server.config.enabled !== false,
-          trusted: true,
-        });
-    }
-    const tools = host.capabilities.mcp ? (resources.mcpTools() ?? []) : [];
-    return {
-      pending,
-      revisions,
-      rows: rows.map((row) => ({
-        ...row,
-        tools: tools.filter((tool) =>
-          tool.name.startsWith(`mcp__${row.name.replaceAll("-", "_")}__`),
-        ),
-      })),
+    return readMcpInventory({
+      globalPath: mcpPath("global"),
+      projectPath: mcpPath("project"),
+      projectTrusted: host.capabilities.projectTrusted ? trustedNow() : true,
+      registered: host.capabilities.mcp
+        ? (resources.mcpRegistered() ?? [])
+        : [],
+      tools: host.capabilities.mcp ? (resources.mcpTools() ?? []) : [],
       supported: host.capabilities.mcp,
-    };
+      pending,
+    });
   }
   // Keep the original npm-only endpoint for already-open older frontends.
   // New clients use /api/package-catalog and never label this as pi.dev data.

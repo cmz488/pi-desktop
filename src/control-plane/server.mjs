@@ -17,6 +17,7 @@ import {
 } from "../desktop/directory-picker.mjs";
 import { createDesktopGlobal } from "../resources/desktop-global.mjs";
 import { sendJson } from "../server/http-transfer.mjs";
+import { createProjectAccess } from "./project-access.mjs";
 import { workspaceIndex } from "../shared/lazy-data.mjs";
 
 /**
@@ -166,6 +167,10 @@ export async function startDesktopHost(options = {}) {
     agentDir,
     directory,
   });
+  const projectAccess = createProjectAccess({
+    agentDir,
+    catalog: () => supervisor.read(),
+  });
   const serve = createStaticAssetHandler(assets);
   const directoryPicker = options.directoryPicker ?? createDirectoryPicker();
   let origin,
@@ -271,6 +276,42 @@ export async function startDesktopHost(options = {}) {
         throw new DeskError(403, "写入需要同源 JSON 请求");
       if (sharedBusy && request.method === "POST")
         throw new DeskError(409, "全局配置正在更新，请稍后重试");
+      const draftRoute =
+        /^\/api\/workspace\/project-(files|git|mcp|trust)$/.exec(url.pathname);
+      if (draftRoute) {
+        if (request.headers["x-pi-remote-client"] === "1")
+          throw new DeskError(403, "远程连接不提供目录管理");
+        const input =
+          request.method === "POST" ? await body(request) : undefined;
+        const cwd = input?.cwd ?? url.searchParams.get("cwd");
+        const kind = draftRoute[1];
+        let result;
+        if (request.method === "GET")
+          result =
+            kind === "files"
+              ? await projectAccess.files(
+                  cwd,
+                  url.searchParams.get("path") ?? "",
+                )
+              : kind === "git"
+                ? await projectAccess.git(cwd)
+                : kind === "mcp"
+                  ? await projectAccess.mcp(cwd)
+                  : await projectAccess.trusted(cwd);
+        else if (request.method === "POST" && kind !== "files") {
+          if (kind === "git") result = await projectAccess.git(cwd, input);
+          else
+            result = await globalWrite(() =>
+              supervisor.shared(() =>
+                kind === "mcp"
+                  ? projectAccess.mcp(cwd, input)
+                  : projectAccess.trust(cwd),
+              ),
+            );
+        } else throw new DeskError(405, "请求方式不支持");
+        sendJson(response, 200, result);
+        return;
+      }
       if (
         url.pathname === "/api/workspace/validate-directory" &&
         request.method === "POST"

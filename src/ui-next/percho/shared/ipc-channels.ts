@@ -9,6 +9,7 @@ import type {
 	ExtensionEditorTextEvent,
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
+import { MCP_EXPOSURES } from "./mcp";
 import type { LanStatus } from "./lan";
 import type {
 	McpConfigListResult,
@@ -457,7 +458,7 @@ export const MCP_CHANNELS = {
 		url: input.optional(input.text),
 		description: input.optional(input.text),
 		enabled: input.optional(input.boolean),
-		exposure: input.optional(input.oneOf("direct", "deferred", "codemode")),
+		exposure: input.optional(input.oneOf(...MCP_EXPOSURES)),
 	}),
 	/** 重连：reload 会话让官方 mcp 扩展重读配置并重连（面板「重连」入口） */
 	mcpConfigReload: ch(

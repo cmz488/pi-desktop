@@ -61,6 +61,47 @@ export function createHttpHandlers({
 }) {
   const get = (path) => sessions.get(path);
   const post = (path, input) => sessions.post(path, input);
+  const providerTarget = async () => {
+    const { id } = await sessions.target();
+    return {
+      id,
+      get: (path) => sessions.get(path, id),
+      post: (path, input) => sessions.post(path, input, id),
+    };
+  };
+  const projectTarget = async (cwd) => {
+    const id = await sessions.forCwd(cwd, { required: false });
+    if (id)
+      return {
+        id,
+        get: (path) => sessions.get(path, id),
+        post: (path, input) => sessions.post(path, input, id),
+      };
+    if (!(await sessions.detect()))
+      throw new Error("请先在此项目创建或打开会话");
+    const directory = cwd ?? (await rawGet("/api/daily-dir")).path;
+    const route = (path) => {
+      const url = new URL(path, "http://localhost");
+      const kind = {
+        "/api/files": "files",
+        "/api/git": "git",
+        "/api/mcp": "mcp",
+        "/api/project-trust": "trust",
+      }[url.pathname];
+      if (!kind) throw new Error("目录操作无效");
+      return { url, endpoint: `/api/workspace/project-${kind}` };
+    };
+    return {
+      id: null,
+      get: (path) => {
+        const { url, endpoint } = route(path);
+        url.searchParams.set("cwd", directory);
+        return rawGet(endpoint + url.search);
+      },
+      post: (path, input) =>
+        rawPost(route(path).endpoint, { ...input, cwd: directory }),
+    };
+  };
   return {
     "project:pickDirectory": async () =>
       desktop?.pickDirectory
@@ -267,26 +308,24 @@ export function createHttpHandlers({
       return providerViews(await sessions.get("/api/providers", id));
     },
     "project:listFiles": async (args) => {
-      const id = await sessions.forCwd(args.cwd);
-      return projectFiles((route) => sessions.get(route, id), args.path ?? "");
+      const io = await projectTarget(args.cwd);
+      return projectFiles(io.get, args.path ?? "");
     },
     "project:getGitBranch": async (args) => {
-      const body = await sessions.get(
-        "/api/git",
-        await sessions.forCwd(args.cwd),
-      );
+      const io = await projectTarget(args.cwd);
+      const body = await io.get("/api/git");
       return body?.branch ?? null;
     },
     "project:listGitBranches": async (args) => {
-      const body = await sessions.get(
-        "/api/git",
-        await sessions.forCwd(args.cwd),
-      );
+      const io = await projectTarget(args.cwd);
+      const body = await io.get("/api/git");
       return { current: body?.branch ?? null, branches: body?.branches ?? [] };
     },
     // `/api/mcp` 实测返回 { pending, revisions, rows, supported }。
-    "mcp:configList": async (args) =>
-      mcpView(await sessions.get("/api/mcp", await sessions.forCwd(args?.cwd))),
+    "mcp:configList": async (args) => {
+      const io = await projectTarget(args?.cwd);
+      return mcpView(await io.get("/api/mcp"));
+    },
 
     // ── 包管理 ────────────────────────────────────────────────────────────
     // `/api/package` 的 body 是 { action, ...params }，由 packageManagement 解释。
@@ -335,8 +374,8 @@ export function createHttpHandlers({
 
     // ── MCP ───────────────────────────────────────────────────────────────
     "mcp:configUpsert": async (args) => {
-      const id = await sessions.forCwd(args.cwd);
-      const inventory = await sessions.get("/api/mcp", id);
+      const io = await projectTarget(args.cwd);
+      const inventory = await io.get("/api/mcp");
       const scope = args.scope === "project" ? "project" : "global";
       const config = Object.fromEntries(
         ["command", "args", "url", "description", "enabled", "exposure"]
@@ -346,47 +385,39 @@ export function createHttpHandlers({
       if (args.url !== undefined)
         Object.assign(config, { command: null, args: null });
       if (args.command !== undefined) config.url = null;
-      await sessions.post(
-        "/api/mcp",
-        {
-          action: "save",
-          scope,
-          revision: inventory.revisions[scope],
-          name: args.name,
-          config,
-        },
-        id,
-      );
+      await io.post("/api/mcp", {
+        action: "save",
+        scope,
+        revision: inventory.revisions[scope],
+        name: args.name,
+        config,
+      });
       return {
-        config: mcpView(await sessions.get("/api/mcp", id)),
+        config: mcpView(await io.get("/api/mcp")),
         reload: { reloaded: 0, skipped: [] },
       };
     },
     "mcp:configRemove": async (args) => {
-      const id = await sessions.forCwd(args.cwd);
-      const inventory = await sessions.get("/api/mcp", id);
+      const io = await projectTarget(args.cwd);
+      const inventory = await io.get("/api/mcp");
       const scope = args.scope === "project" ? "project" : "global";
-      await sessions.post(
-        "/api/mcp",
-        {
-          action: "remove",
-          name: args.name,
-          scope,
-          revision: inventory.revisions[scope],
-        },
-        id,
-      );
+      await io.post("/api/mcp", {
+        action: "remove",
+        name: args.name,
+        scope,
+        revision: inventory.revisions[scope],
+      });
       return {
-        config: mcpView(await sessions.get("/api/mcp", id)),
+        config: mcpView(await io.get("/api/mcp")),
         reload: { reloaded: 0, skipped: [] },
       };
     },
     "mcp:configReload": async (args) => {
-      const id = await sessions.forCwd(args?.cwd);
-      await sessions.post("/api/reload", {}, id);
+      const io = await projectTarget(args?.cwd);
+      if (io.id) await sessions.post("/api/reload", {}, io.id);
       return {
-        config: mcpView(await sessions.get("/api/mcp", id)),
-        reload: { reloaded: 1, skipped: [] },
+        config: mcpView(await io.get("/api/mcp")),
+        reload: { reloaded: io.id ? 1 : 0, skipped: [] },
       };
     },
 
@@ -457,21 +488,27 @@ export function createHttpHandlers({
 
     // ── 项目 ──────────────────────────────────────────────────────────────
     "project:ensureTrust": async (args) => {
-      const id = await sessions.forCwd(args.cwd);
-      if ((await sessions.state(id)).projectTrusted) return true;
+      const io = await projectTarget(args.cwd);
+      if (
+        io.id
+          ? (await sessions.state(io.id)).projectTrusted
+          : await io.get("/api/project-trust")
+      )
+        return true;
       if (!(await confirmTrust(args.cwd))) return false;
-      await sessions.post("/api/project-trust", { trusted: true }, id);
+      await io.post("/api/project-trust", { trusted: true });
       return true;
     },
     "project:validateDirectory": async (args) =>
       (await rawPost("/api/workspace/validate-directory", { path: args.path }))
         .path,
-    "project:checkoutBranch": (args) =>
-      checkoutBranch(sessions, args, confirmGit),
+    "project:checkoutBranch": async (args) =>
+      checkoutBranch(sessions, args, confirmGit, await projectTarget(args.cwd)),
 
     // ── 设置：provider 与登录 ─────────────────────────────────────────────
     // /api/provider 与 /api/provider-remove 都要 revision（配置版本围栏）。
     "settings:saveApiKey": async (args) => {
+      const { get, post, id } = await providerTarget();
       const inventory = await get("/api/providers");
       const row = inventory.rows.find((row) => row.id === args.providerId);
       const native = [...inventory.rows, ...(inventory.catalog ?? [])].find(
@@ -481,6 +518,7 @@ export function createHttpHandlers({
         const result = await logins.start(
           { providerId: args.providerId, loginId: `key-${args.providerId}` },
           args.key,
+          id,
         );
         if (!result.ok) throw new Error(result.error ?? "凭据未保存");
         return result;
@@ -494,17 +532,22 @@ export function createHttpHandlers({
         revision: inventory.revision,
       });
     },
-    "settings:removeCredential": (args) =>
-      post("/api/auth-logout", { provider: args.providerId }),
+    "settings:removeCredential": async (args) => {
+      const { post } = await providerTarget();
+      return post("/api/auth-logout", { provider: args.providerId });
+    },
     "settings:addCustomProvider": async (args) => {
+      const { get, post } = await providerTarget();
       const revision = await providerRevision(get);
       return await post("/api/provider", { ...args?.input, revision });
     },
     "settings:updateCustomProvider": async (args) => {
+      const { get, post } = await providerTarget();
       const revision = await providerRevision(get);
       return await post("/api/provider", { ...args?.input, revision });
     },
     "settings:removeCustomProvider": async (args) => {
+      const { get, post } = await providerTarget();
       const revision = await providerRevision(get);
       return await post("/api/provider-remove", {
         id: args.providerId,
@@ -512,6 +555,7 @@ export function createHttpHandlers({
       });
     },
     "settings:setProviderBaseUrl": async (args) => {
+      const { get, post, id } = await providerTarget();
       const inventory = await get("/api/providers");
       const row = [...inventory.rows, ...(inventory.catalog ?? [])].find(
         (row) => row.id === args.providerId,
@@ -533,6 +577,7 @@ export function createHttpHandlers({
         const result = await logins.start(
           { providerId: args.providerId, loginId: `key-${args.providerId}` },
           args.apiKey,
+          id,
         );
         if (!result.ok) throw new Error(result.error ?? "凭据未保存");
       }

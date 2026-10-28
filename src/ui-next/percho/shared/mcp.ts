@@ -8,8 +8,9 @@
  *   `session_start`/`before_agent_start`/`turn_end` 调 `getAllTools()` 过滤前缀，集合变化时发事件。
  */
 
-/** 官方 `McpExposure`（server 级 / 逐工具覆盖都用它）；**缺省 = "codemode"**（不是 direct） */
-export type McpExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+import { MCP_EXPOSURES } from "../../../shared/resource-options.mjs";
+export { MCP_EXPOSURES };
+export type McpExposure = (typeof MCP_EXPOSURES)[number];
 
 /** 传输方式（面板只做展示与表单，不解析 `${VAR}`） */
 export type McpTransportView =

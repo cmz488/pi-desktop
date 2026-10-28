@@ -174,6 +174,7 @@ test("Provider 参数使用 Percho 的 providerId，端点修改保留随表单�
     get: async () => ({}),
     post: async () => ({}),
     sessions: {
+      target: async () => ({ id: "fixture-session" }),
       get: async () => ({
         revision: "native-revision",
         rows: [{ id: "fixture", api: "openai-completions" }],

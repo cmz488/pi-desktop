@@ -1,18 +1,9 @@
+import { CUSTOM_PROVIDER_APIS } from "../../../shared/resource-options.mjs";
+
 /** 设置页相关类型（IPC 往返用，独立于 pi 内部类型） */
 
 /** pi-ai 的 KnownApi 协议可选值（自定义 provider 时用） */
-export const KNOWN_APIS = [
-	"openai-completions",
-	"openai-responses",
-	"anthropic-messages",
-	"google-generative-ai",
-	"google-vertex",
-	"azure-openai-responses",
-	"mistral-conversations",
-	"bedrock-converse-stream",
-	"openai-codex-responses",
-	"pi-messages",
-] as const;
+export const KNOWN_APIS = CUSTOM_PROVIDER_APIS;
 
 export type KnownApiId = (typeof KNOWN_APIS)[number];
 

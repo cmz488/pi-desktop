@@ -28,7 +28,7 @@ const EMPTY_FORM: ProviderFormState = {
 function toInput(form: ProviderFormState): CustomProviderInput {
 	return {
 		id: form.id,
-		name: form.name || undefined,
+		name: form.name.trim(),
 		baseUrl: form.baseUrl,
 		api: form.api,
 		models: rowsToModelInputs(form.models),

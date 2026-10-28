@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DeskError } from "../config/config-store.mjs";
+import { DeskError, readDocument } from "../config/config-store.mjs";
 
-export const exposures = ["codemode", "deferred", "direct", "hidden"];
+import { MCP_EXPOSURES } from "../shared/resource-options.mjs";
+export const exposures = MCP_EXPOSURES;
 const record = (value) =>
   value && typeof value === "object" && !Array.isArray(value);
 export const validMcpName = (name) =>
@@ -225,6 +226,72 @@ export function mcpProjection(config) {
     );
   return result;
 }
+/** Read native MCP documents without starting an Agent or executing project resources. */
+export async function readMcpInventory({
+  globalPath,
+  projectPath,
+  projectTrusted,
+  registered = [],
+  tools = [],
+  supported = true,
+  pending = false,
+}) {
+  const [global, project] = await Promise.all([
+    readDocument(globalPath),
+    readDocument(projectPath),
+  ]);
+  const rows = [],
+    revisions = {},
+    configured = new Set();
+  for (const [scope, document] of [
+    ["global", global],
+    ["project", project],
+  ]) {
+    revisions[scope] = document.revision;
+    for (const [name, config] of Object.entries(
+      document.data.mcpServers ?? {},
+    )) {
+      if (!config || typeof config !== "object") continue;
+      configured.add(name);
+      rows.push({
+        name,
+        scope,
+        revision: document.revision,
+        config: mcpProjection(config),
+        enabled: config.enabled !== false,
+        overridden:
+          scope === "global" &&
+          projectTrusted &&
+          Object.hasOwn(project.data.mcpServers ?? {}, name),
+        trusted: scope !== "project" || projectTrusted,
+      });
+    }
+  }
+  for (const server of registered)
+    if (!configured.has(server.name))
+      rows.push({
+        name: server.name,
+        scope: "extension",
+        config: mcpProjection(server.config),
+        enabled: server.config.enabled !== false,
+        trusted: true,
+      });
+  return {
+    pending,
+    revisions,
+    projectTrusted,
+    globalPath,
+    projectPath,
+    supported,
+    rows: rows.map((row) => ({
+      ...row,
+      tools: tools.filter((tool) =>
+        tool.name.startsWith(`mcp__${row.name.replaceAll("-", "_")}__`),
+      ),
+    })),
+  };
+}
+
 export function patchMcp(data, input) {
   if (!validMcpName(input.name)) throw new DeskError(422, "MCP 服务名称无效");
   const servers = data.mcpServers ?? {};

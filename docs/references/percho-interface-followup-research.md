@@ -1,5 +1,7 @@
 # Percho 前端 ↔ 本仓库 Host/SDK 接口追查（续，基线 606a234）
 
+后续八项已确认问题的修复与验证见[接口差异修复](../history/percho-interface-followup-repair.md)。以下保留调查时的原始结论与限制。
+
 范围：以 `src/ui-next/http-handlers.mjs`、`native-contracts.mjs`、`session-transport.mjs` 为起点，
 后台初审重点覆盖**会话 rename/close/archive/fork/recall、Git、包管理、MCP** 通道，对比 Percho 真实
 renderer store/组件、共享类型、本仓库真实后端（`src/server/*`、`src/resources/*`、`src/agent/*`）
