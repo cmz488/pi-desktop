@@ -2,6 +2,7 @@
 export function createAgentBrowserView({
   viewport,
   request,
+  framePath,
   onState,
   onError,
   onResolution = () => {},
@@ -82,7 +83,7 @@ export function createAgentBrowserView({
     const current = controller;
     try {
       const response = await fetch(
-        `${root}/_browser/frame?after=${encodeURIComponent(frameId)}`,
+        `${framePath ?? `${root}/_browser/frame`}${(framePath ?? "").includes("?") ? "&" : "?"}after=${encodeURIComponent(frameId)}`,
         { cache: "no-store", signal: current.signal },
       );
       if (response.status === 204) return;

@@ -12,7 +12,8 @@
 | `src/resources/`                 | 插件／模型资源配置、包管理和人格                                                      |
 | `src/tui/`                       | 原生 TUI 与会话命令兼容 adapter                                                       |
 | `src/shared/`                    | Node／浏览器共用的投影、卡片、草稿、连接和索引逻辑                                    |
-| `src/ui/`                        | 项目导航、生产聊天页面及浏览器专用 module                                             |
+| `src/ui-next/`                   | Percho React 桌面与手机界面、Host 接口适配和 UI 构建                                   |
+| `src/ui/`                        | 共享纯逻辑、浏览器画面与兼容控制器                                                    |
 | `src/remote/`                    | 局域网地址发现（`lan.mjs`）；手机端服务见 `src/server/mobile*.mjs`                     |
 | `src/git/`、`src/workspace/`     | Git 审阅 limits／permitted actions、项目文件和只读诊断                                |
 | `src/config/`                    | revision、锁和原子配置写入                                                            |
@@ -21,13 +22,17 @@
 | `docs/`                          | 指南、当前设计、研究来源与历史验收                                                    |
 | `test/`、`examples/`、`scripts/` | 独立验证、示例和维护命令                                                              |
 
+## 当前 Percho 界面
+
+当前生产入口为 `src/ui-next/percho/renderer/src/App.tsx`。设置功能注册在 `components/settings/SettingsDialog.tsx`；原生配置、人格、会话配置与资源组件位于 `components/native/NativePreferences.tsx` 和 `NativeResources.tsx`。左侧菜单接入 `NativeSidebar.tsx`，右侧 `WorkspaceSidebar.tsx` 集成文件、共享网页浏览器、Git、任务、分支与侧聊。瞬时导航使用 Percho stores，原生执行与存储继续由所属 worker 拥有。顶部总工作台及旧页面样式已移除，见[整合记录](../history/percho-native-ui-integration.md)。
+
 ## 发布资产 seam
 
-[src/server/asset-manifest.mjs](../../src/server/asset-manifest.mjs) 是公共 URL 与磁盘位置的唯一映射。聊天、项目工作区和预览共用它；外部地址 `/prototype.js`、`/prototype.css`、`/workspace.js` 等继续兼容，生产聊天源码位于 `src/ui/chat/`。
+[src/server/asset-manifest.mjs](../../src/server/asset-manifest.mjs) 是公共 URL 与磁盘位置的唯一映射。生产 React／手机资源由 `src/ui-next/build.mjs` 和 Vite 生成并经同一清单发布；共享 module、字体与 schema 也从此映射。浏览器画面复用公开的 `/agent-browser-view.js`，不会直接加载远端网页脚本到界面进程。
 
-两个页面共用 `src/ui/boot.js` 的同步首屏引导，保留 `/boot.js`（聊天，含预览）与 `/workspace-boot.js`（项目工作区）两个既有 URL。宿主与 Agent 页面的 CSP 都是 `script-src 'self'`，引导必须作为同源外部脚本加载；主题与嵌入背景在聊天延迟模块运行前就生效。模块加载期间只显示加载提示，脚本失败时提供重新加载入口，不按超时展示演示占位内容；聊天控制器接管后才显示骨架或真实会话。
+Percho 的首屏引导、主题与骨架由其 `main.tsx`、`splash.ts` 和 stores 拥有。共享控制器仍用于兼容宿主与专门契约测试，不是当前生产页面壳。
 
-输入区与其菜单、状态读数的基础／嵌入／响应式规则统一由 `src/ui/chat/composer.css` 拥有，保留 `/prototype.css` 与 `/chat-shell.css` 的公共地址，并在 shell／token 后加载 `/composer.css`。其他界面不为这些控件追加后置覆盖，见[样式契约](interfaces/composer-styles.md)。
+Percho 输入区在 `components/composer/`，沿用自己的 React 组件、编辑器和主题 token。下述 `src/ui/chat/` 样式与控制器说明属于保留的兼容实现及历史契约，不能作为当前页面入口。
 
 浏览器源码中的相对 import 按公共 URL 解释。它们不等同于磁盘目录关系；浏览器专用文件不能直接改成相对 `src/shared` 的路径。共享纯逻辑放在同一物理目录，使 Node 与浏览器都能跨相同 seam 使用。
 

@@ -1,0 +1,19 @@
+.workspace-dock {
+ width: min(520px, 48vw);
+ background: var(--color-surface);
+}
+.workspace-dock .diff-sidebar-in { background: var(--color-surface); }
+.native-browser-viewport { min-height: 240px; }
+.native-browser-viewport .agent-browser-canvas { display: block; width: 100%; height: calc(100% - 38px); min-height: 200px; object-fit: contain; background: var(--color-hover); outline-offset: -2px; }
+.native-browser-viewport .agent-browser-text { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--color-border); }
+.native-browser-viewport .agent-browser-text input { min-width: 0; flex: 1; color: var(--color-ink); background: transparent; font-size: var(--text-ui-12); outline: none; }
+.native-browser-viewport .agent-browser-text button { padding: 2px 8px; color: var(--color-ink-dim); border-radius: 6px; }
+.native-browser-viewport .agent-browser-text button:hover { background: var(--color-hover); }
+.desktop-card { margin: 8px 0; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-ink-dim); font-size: var(--text-ui-12); }
+.desktop-card p, .desktop-card pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.desktop-card h2, .desktop-card h3, .desktop-card strong { color: var(--color-ink); }
+.desktop-card :is(button, summary) { cursor: pointer; }
+.desktop-card button { padding: 4px 8px; border-radius: 6px; }
+.desktop-card button:hover { background: var(--color-hover); }
+.desktop-automatic { margin: 8px 0; color: var(--color-ink-dim); font-size: var(--text-ui-12); }
+@media (max-width: 700px) { .workspace-dock { width: min(100vw, 520px); } }

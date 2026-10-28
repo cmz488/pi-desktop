@@ -7,7 +7,7 @@ import { getSettingsStore } from "./settings";
 
 interface CatalogStore {
 	/** 扩展面板分段：浏览社区 / 已加载（进 store 保「切面板往返不丢 tab」） */
-	extensionsTab: "browse" | "loaded";
+	extensionsTab: "browse" | "loaded" | "installed";
 	/** 社区包目录（pi.dev，服务端模糊搜索） */
 	catalogQuery: string;
 	catalogType: "" | CatalogPackageType;
@@ -29,7 +29,7 @@ interface CatalogStore {
 	removeErrors: Record<string, string>;
 	/** settings.json 已配置的包（null = 未加载；「已安装」态匹配/卸载用） */
 	configuredPackages: ConfiguredPackageInfo[] | null;
-	setExtensionsTab: (tab: "browse" | "loaded") => void;
+	setExtensionsTab: (tab: "browse" | "loaded" | "installed") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
 	/** 搜索社区包目录；append=true 时加载下一页并追加 */

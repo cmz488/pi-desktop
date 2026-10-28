@@ -39,15 +39,10 @@ try {
     source: `window.__failed=[];const previous=window.fetch;window.fetch=async(...args)=>{const r=await previous(...args);if(!r.ok && !String(args[0]).endsWith('/api/workspace'))window.__failed.push({url:String(args[0]),status:r.status});return r;};`,
   });
   await call("Page.navigate", { url: app.url });
-  await until(
-    '!!document.querySelector(".desktop-toolbar button") && !document.querySelector("#splash")',
-  );
-  await evaluate('document.querySelector(".desktop-toolbar button").click()');
-  await until('!!document.querySelector(".native-row button")');
-  await evaluate('document.querySelector(".native-row button").click()');
-  await until(
-    '!!document.querySelector("[data-session-page]")?.dataset.sessionId && !document.querySelector(".native-dialog")',
-  );
+  await until('!!document.querySelector(".sidebar") && !document.querySelector("#splash")');
+  await until('!!document.querySelector(".sidebar button[data-session-id]")');
+  await evaluate('document.querySelector(".sidebar button[data-session-id]").click()');
+  await until('!!document.querySelector("[data-session-page]")?.dataset.sessionId');
   await until(
     '!!document.querySelector("[contenteditable=true][role=textbox]")',
   );

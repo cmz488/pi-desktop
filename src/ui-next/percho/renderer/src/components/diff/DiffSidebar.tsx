@@ -115,7 +115,7 @@ function BranchRowForDirectory({ cwd }: { cwd: string | null }) {
  * chip 跳转 = stores/ui.ts 的 diffFocus → 这里直接操作 DOM（开卡片 + 滚动定位 + 闪烁）。
  * 开关状态内存态不持久化（重启统一关闭，用户已定）。
  */
-export function DiffSidebar() {
+export function SessionChanges() {
 	const t = useT();
 	const open = useUiStore((s) => s.diffSidebarOpen);
 	const setOpen = useUiStore((s) => s.setDiffSidebarOpen);
@@ -176,8 +176,7 @@ export function DiffSidebar() {
 	}, [diffFocus, visibleTurns, clearDiffFocus]);
 
 	return (
-		<aside className={`diff-sidebar${open ? " open" : ""}`} aria-hidden={!open} inert={!open}>
-			<div className="diff-sidebar-in">
+		<div className="diff-sidebar-in">
 				<div className="diff-side-head">
 					<span className="diff-side-title">{t("diff.title")}</span>
 					<span className="diff-side-sum">
@@ -233,7 +232,6 @@ export function DiffSidebar() {
 						))
 					)}
 				</div>
-			</div>
-		</aside>
+		</div>
 	);
 }

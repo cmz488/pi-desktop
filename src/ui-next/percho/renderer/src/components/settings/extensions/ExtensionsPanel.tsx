@@ -1,3 +1,4 @@
+import { InstalledPackages } from "../../native/NativeResources";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
 import { BrowseSection } from "./BrowseSection";
@@ -14,7 +15,7 @@ export function ExtensionsPanel() {
 			<h3 className="text-ui-13 font-medium text-ink">{t("settings.extensions.title")}</h3>
 			<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.extensions.hint")}</p>
 			<div className="mt-3 flex rounded-lg bg-hover p-0.5">
-				{(["browse", "loaded"] as const).map((id) => (
+				{(["browse", "installed", "loaded"] as const).map((id) => (
 					<button
 						key={id}
 						type="button"
@@ -27,7 +28,15 @@ export function ExtensionsPanel() {
 					</button>
 				))}
 			</div>
-			<div className="mt-3">{tab === "browse" ? <BrowseSection /> : <LoadedSection />}</div>
+			<div className="mt-3">
+				{tab === "browse" ? (
+					<BrowseSection />
+				) : tab === "installed" ? (
+					<InstalledPackages />
+				) : (
+					<LoadedSection />
+				)}
+			</div>
 		</div>
 	);
 }

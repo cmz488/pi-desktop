@@ -35,7 +35,7 @@ function DiffLine({
 }
 
 /** edit 段：unified patch 结构化渲染；解析失败（空 hunks）回退纯文本 pre */
-function PatchView({ patch }: { patch: string }) {
+export function PatchView({ patch }: { patch: string }) {
 	const t = useT();
 	const hunks = useMemo(() => parsePatch(patch), [patch]);
 	const [expanded, setExpanded] = useState(false);

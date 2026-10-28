@@ -109,7 +109,7 @@ export function mcpView(inventory) {
       ? {
           notice: {
             level: "info",
-            message: "配置已保存；请在 Pi 工作台中重载资源后生效。",
+            message: "配置已保存；请在设置的扩展分类中重载资源后生效。",
           },
         }
       : {}),

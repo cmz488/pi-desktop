@@ -1,3 +1,6 @@
+import { useDesktopWorkspace } from "../../stores/desktop-workspace";
+import { pushExtensionToast } from "../../stores/toasts";
+import { RenamePopover } from "../session/RenamePopover";
 import type { EnvironmentRef } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
@@ -24,7 +27,8 @@ import { projectMenuItems } from "./ProjectMenu";
  * 字号：项目名/日常名 14px/500（行高 34），见画板 E 的 v6 表。
  */
 export function ProjectRow({
-	label,
+	label: fallbackLabel,
+	cwd,
 	environment,
 	kind,
 	expanded,
@@ -36,6 +40,7 @@ export function ProjectRow({
 	onRemove,
 }: {
 	label: string;
+	cwd?: string;
 	environment?: EnvironmentRef;
 	kind: "daily" | "project";
 	expanded: boolean;
@@ -50,6 +55,11 @@ export function ProjectRow({
 	/** 给了才在 «⋯» 里出「移除项目」（日常不可移除） */
 	onRemove?: () => void;
 }) {
+	const workspace = useDesktopWorkspace((s) => s.workspace);
+	const project = workspace?.projects.find((row) => row.cwd === cwd);
+	const label = project?.name ?? fallbackLabel;
+	const [renaming, setRenaming] = useState<MenuAnchor | null>(null);
+	const [renameRevision, setRenameRevision] = useState<string>();
 	const t = useT();
 	const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
 	const [confirming, setConfirming] = useState(false);
@@ -115,8 +125,28 @@ export function ProjectRow({
 						pinned,
 						onTogglePin: togglePin,
 						onRemove: remove ? () => setConfirming(true) : undefined,
+						onRename: project
+							? () => {
+									setRenameRevision(workspace?.revision);
+									setRenaming(anchor);
+								}
+							: undefined,
 					})}
 					onClose={() => setAnchor(null)}
+				/>
+			)}
+			{renaming && project && (
+				<RenamePopover
+					anchor={renaming}
+					value={project.name}
+					onCancel={() => setRenaming(null)}
+					onCommit={(name) => {
+						setRenaming(null);
+						void useDesktopWorkspace
+							.getState()
+							.command("project.save", project.id, { cwd: project.cwd, name }, renameRevision)
+							.catch((reason: Error) => pushExtensionToast("error", reason.message));
+					}}
 				/>
 			)}
 			{confirming && remove && (

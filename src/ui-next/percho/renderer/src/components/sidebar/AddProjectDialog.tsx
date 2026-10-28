@@ -1,9 +1,14 @@
-import { supportsHostChannel } from "../../api";
+import { useState } from "react";
 import { createPortal } from "react-dom";
+import { getPi, supportsHostChannel } from "../../api";
+import { getExecutionApi } from "../../environment-api";
+import { LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
+import { useDesktopWorkspace } from "../../stores/desktop-workspace";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { Button } from "../ui/Button";
+import { Feedback, Field, inputClass } from "../native/NativeControls";
 
 export function AddProjectDialog({
 	onClose,
@@ -13,6 +18,25 @@ export function AddProjectDialog({
 	onLocalProject?: () => Promise<void>;
 }) {
 	const t = useT();
+	const [path, setPath] = useState("");
+	const [error, setError] = useState("");
+	const [busy, setBusy] = useState(false);
+	const add = async () => {
+		setBusy(true);
+		setError("");
+		try {
+			const cwd = await getExecutionApi(LOCAL_ENVIRONMENT).validateDirectory({ path });
+			if (useDesktopWorkspace.getState().supported)
+				await useDesktopWorkspace.getState().command("project.save", undefined, { cwd });
+			useProjectsStore.getState().addKnownProject(cwd);
+			useProjectsStore.getState().select(cwd);
+			onClose();
+		} catch (reason) {
+			setError((reason as Error).message);
+		} finally {
+			setBusy(false);
+		}
+	};
 	return createPortal(
 		<div
 			role="dialog"
@@ -20,18 +44,48 @@ export function AddProjectDialog({
 			aria-label={t("sidebar.addProject")}
 			className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20"
 		>
-			<div className="w-[360px] max-w-[calc(100vw-32px)] rounded-xl bg-surface p-5 shadow-dialog">
+			<form
+				className="w-[400px] max-w-[calc(100vw-32px)] space-y-4 rounded-xl bg-surface p-5 shadow-dialog"
+				onSubmit={(event) => {
+					event.preventDefault();
+					void add();
+				}}
+			>
 				<h2 className="text-ui-14 font-semibold text-ink">{t("sidebar.addProject")}</h2>
-				<p className="mt-2 text-ui-12 text-ink-faint">{t("remote.projectLocationHint")}</p>
-				<div className="mt-4 flex justify-end gap-2">
-					<Button onClick={onClose}>{t("common.cancel")}</Button>
+				<Field label="项目目录">
+					<input
+						aria-label="项目目录"
+						required
+						className={inputClass}
+						value={path}
+						onChange={(event) => setPath(event.target.value)}
+						placeholder="项目的本地目录"
+					/>
+				</Field>
+				<Feedback error={error} />
+				<div className="flex flex-wrap justify-end gap-1">
+					<Button onClick={onClose} disabled={busy}>
+						{t("common.cancel")}
+					</Button>
 					<Button
+						disabled={busy}
 						onClick={() => {
-							onClose();
-							void (onLocalProject ? onLocalProject() : useProjectsStore.getState().addProject());
+							void (async () => {
+								try {
+									if (onLocalProject) {
+										await onLocalProject();
+										onClose();
+									} else {
+										const cwd = await getPi().pickDirectory();
+										if (cwd) setPath(cwd);
+									}
+								} catch (reason) {
+									setError((reason as Error).message);
+								}
+							})();
 						}}
 					>
-						{t("remote.localProject")}
+						选择目录
 					</Button>
 					{supportsHostChannel("remote:getStatus") && (
 						<Button
@@ -43,8 +97,11 @@ export function AddProjectDialog({
 							{t("remote.remoteProject")}
 						</Button>
 					)}
+					<Button type="submit" variant="primary" disabled={busy || !path.trim()}>
+						添加项目
+					</Button>
 				</div>
-			</div>
+			</form>
 		</div>,
 		document.body,
 	);

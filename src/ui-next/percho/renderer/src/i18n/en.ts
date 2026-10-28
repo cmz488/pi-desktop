@@ -401,7 +401,7 @@ export const en: Messages = {
 		imageLoadError: "Image failed to load",
 	},
 	diff: {
-		toggle: "Changes sidebar",
+		toggle: "Workspace sidebar",
 		title: "Changes",
 		filesChanged: "{count} {unit} changed",
 		workedFor: "Worked for {duration}",
@@ -449,7 +449,7 @@ export const en: Messages = {
 		archive: "Archive session",
 		archiveTitle: "Archive this session?",
 		archiveDesc:
-			"Stop the idle session process and archive its record. History is preserved and can be restored from the Pi workbench.",
+			"Archive this session record. History is preserved and can be restored from Archived sessions in the left sidebar.",
 	},
 	sidebar: {
 		title: "Navigation",
@@ -494,6 +494,10 @@ export const en: Messages = {
 		category: {
 			remote: "SSH Connection",
 			general: "General",
+   personality: "Personality & prompts",
+   agent: "Session configuration",
+   network: "Network & retries",
+   resources: "Resources & Shell",
 			appearance: "Appearance",
 			models: "Models",
 			skills: "Skills",
@@ -776,6 +780,7 @@ export const en: Messages = {
 			tab: {
 				browse: "Browse",
 				loaded: "Loaded",
+    installed: "Installed",
 			},
 			type: {
 				all: "All",

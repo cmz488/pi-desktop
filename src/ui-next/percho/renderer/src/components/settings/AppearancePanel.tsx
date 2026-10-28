@@ -4,6 +4,7 @@ import {
 	type ThemeMode,
 	UI_FONT_SIZE_PRESETS,
 } from "@percho/shared";
+import { NativePreferences } from "../native/NativePreferences";
 import { supportsHostChannel } from "../../api";
 import { useState } from "react";
 import { useT } from "../../i18n";
@@ -237,7 +238,21 @@ export function AppearancePanel() {
 					</button>
 				))}
 			</div>
-			<div className="pt-5">{tab === "basics" ? <AppearanceBasics /> : <UiPluginsSection />}</div>
+			<div className="pt-5">
+				{tab === "basics" ? (
+					<>
+						<AppearanceBasics />
+						<details className="mt-6 border-t border-border pt-4">
+							<summary className="cursor-pointer text-ui-12 text-ink-dim">Pi 终端与显示</summary>
+							<div className="mt-4">
+								<NativePreferences group="display" />
+							</div>
+						</details>
+					</>
+				) : (
+					<UiPluginsSection />
+				)}
+			</div>
 		</div>
 	);
 }

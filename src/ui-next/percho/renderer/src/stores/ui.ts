@@ -7,7 +7,17 @@ export interface DiffFocus {
 	nonce: number;
 }
 
+export type RightPanelView = "changes" | "git" | "files" | "web" | "tasks" | "btw";
+
 interface UiStore {
+	rightPanelView: RightPanelView;
+	rightSessionId: string | null;
+	rightQuestion: string;
+	openRightPanel: (view: RightPanelView, sessionId?: string, question?: string) => void;
+	sidebarView: "sessions" | "processes" | "archive";
+	setSidebarView: (view: "sessions" | "processes" | "archive") => void;
+	settingsAgentId: string | null;
+	setSettingsAgentId: (id: string | null) => void;
 	/** todo 面板展开态（按会话，切换会话互不影响；不含持久化） */
 	todoExpanded: Record<string, boolean>;
 	toggleTodoExpanded: (sessionId: string) => void;
@@ -23,6 +33,20 @@ interface UiStore {
 
 /** 界面态里只放「不跨会话、不落盘」的瞬时开关；持久化偏好一律走 ui-preferences */
 export const useUiStore = create<UiStore>((set) => ({
+	rightPanelView: "changes",
+	rightSessionId: null,
+	rightQuestion: "",
+	openRightPanel: (view, sessionId, question = "") =>
+		set({
+			rightPanelView: view,
+			rightSessionId: sessionId ?? null,
+			rightQuestion: question,
+			diffSidebarOpen: true,
+		}),
+	sidebarView: "sessions",
+	setSidebarView: (view) => set({ sidebarView: view }),
+	settingsAgentId: null,
+	setSettingsAgentId: (id) => set({ settingsAgentId: id }),
 	todoExpanded: {},
 	toggleTodoExpanded: (sessionId) =>
 		set((state) => ({
@@ -33,6 +57,10 @@ export const useUiStore = create<UiStore>((set) => ({
 	toggleDiffSidebar: () => set((state) => ({ diffSidebarOpen: !state.diffSidebarOpen })),
 	diffFocus: null,
 	setDiffFocus: (sectionKey) =>
-		set((state) => ({ diffFocus: { sectionKey, nonce: (state.diffFocus?.nonce ?? 0) + 1 } })),
+		set((state) => ({
+			rightPanelView: "changes",
+			rightSessionId: null,
+			diffFocus: { sectionKey, nonce: (state.diffFocus?.nonce ?? 0) + 1 },
+		})),
 	clearDiffFocus: () => set({ diffFocus: null }),
 }));

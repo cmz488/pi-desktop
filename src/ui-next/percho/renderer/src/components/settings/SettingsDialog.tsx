@@ -37,6 +37,11 @@ import {
 } from "../icons";
 import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
 import { SelectionMenu } from "../ui/SelectionMenu";
+import {
+	AgentSettingsPanel,
+	NativePreferences,
+	PersonalityPanel,
+} from "../native/NativePreferences";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
@@ -48,6 +53,10 @@ import { SkillsPanel } from "./SkillsPanel";
 
 const STATIC_CATEGORIES = [
 	"general",
+	"personality",
+	"agent",
+	"network",
+	"resources",
 	"appearance",
 	"models",
 	"skills",
@@ -60,6 +69,10 @@ const STATIC_CATEGORIES = [
 
 const CATEGORY_ICONS = {
 	general: GearIcon,
+	personality: FileTextIcon,
+	agent: SubagentIcon,
+	network: ServerIcon,
+	resources: PuzzleIcon,
 	appearance: SunIcon,
 	models: SlidersIcon,
 	skills: FileTextIcon,
@@ -71,8 +84,18 @@ const CATEGORY_ICONS = {
 } satisfies Record<(typeof STATIC_CATEGORIES)[number], ComponentType<{ size?: number }>>;
 
 /** 面板注册表：新增分类 = 写一个面板组件 + 在这里登记（未登记显示 coming soon） */
+function NetworkPreferences() {
+	return <NativePreferences group="network" />;
+}
+function ResourcePreferences() {
+	return <NativePreferences group="resources" />;
+}
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
+	personality: PersonalityPanel,
+	agent: AgentSettingsPanel,
+	network: NetworkPreferences,
+	resources: ResourcePreferences,
 	appearance: AppearancePanel,
 	models: ProvidersPanel,
 	skills: SkillsPanel,
@@ -174,8 +197,12 @@ function SettingsDialogBody({
 	const Panel = PANELS[category];
 
 	return (
-		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
+		<div
+			className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20"
+			role="dialog"
+			aria-modal
+		>
+			<div className="flex h-[80vh] max-h-[calc(100dvh-24px)] w-[800px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
 				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
 				<div className="flex shrink-0 items-center justify-between px-4 py-3">
 					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">

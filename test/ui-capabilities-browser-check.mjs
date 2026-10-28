@@ -30,7 +30,7 @@ try {
   });
   await call("Page.navigate", { url: f.app.url });
   await until(
-    '!!document.querySelector(".desktop-toolbar button") && !document.querySelector("#splash")',
+    '!!document.querySelector(".sidebar") && !document.querySelector("#splash")',
   );
   await evaluate(
     `[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='设置').click()`,

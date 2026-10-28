@@ -21,7 +21,7 @@ import {
 import { isSessionSynchronizing } from "../../stores/session-event-boundary";
 import { useSessionsStore } from "../../stores/sessions";
 import { desktopSessions } from "../../pi-http-bridge";
-import { openDesktopWorkbench } from "../native/desktop-navigation";
+import { openDesktopPanel } from "../native/desktop-navigation";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { buildQuoteBlock } from "./quote";
@@ -129,30 +129,30 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				return true;
 			}
 			case "git":
-				openDesktopWorkbench("git", undefined, undefined, sessionId);
+				openDesktopPanel("git", undefined, undefined, sessionId);
 				return true;
 			case "settings":
-				openDesktopWorkbench("settings", "general", undefined, sessionId);
+				openDesktopPanel("settings", "general", undefined, sessionId);
 				return true;
 			case "model":
 			case "models":
 			case "login":
 			case "logout":
-				openDesktopWorkbench("settings", "providers", undefined, sessionId);
+				openDesktopPanel("settings", "providers", undefined, sessionId);
 				return true;
 			case "skills":
 			case "mcp":
-				openDesktopWorkbench("settings", name, undefined, sessionId);
+				openDesktopPanel("settings", name, undefined, sessionId);
 				return true;
 			case "resume":
 			case "sessions":
-				openDesktopWorkbench("agents", undefined, undefined, sessionId);
+				openDesktopPanel("agents", undefined, undefined, sessionId);
 				return true;
 			case "new":
 				useSessionsStore.getState().activateNewSessionDraft();
 				return true;
 			case "btw":
-				openDesktopWorkbench("btw", undefined, arg, sessionId);
+				openDesktopPanel("btw", undefined, arg, sessionId);
 				return true;
 			case "help": {
 				const commands = await pi.listSlashCommands({ sessionId });

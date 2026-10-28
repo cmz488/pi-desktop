@@ -8,9 +8,12 @@ import type { ContextMenuItem } from "../ui/ContextMenu";
  */
 export function projectMenuItems(
 	t: Translate,
-	ops: { pinned: boolean; onTogglePin: () => void; onRemove?: () => void },
+	ops: { pinned: boolean; onTogglePin: () => void; onRemove?: () => void; onRename?: () => void },
 ): ContextMenuItem[] {
 	return [
+		...(ops.onRename
+			? [{ key: "rename-project", label: "重命名项目", onSelect: ops.onRename }]
+			: []),
 		{
 			key: "pin",
 			label: ops.pinned ? t("sidebar.unpin") : t("sidebar.pin"),

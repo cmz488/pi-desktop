@@ -388,7 +388,7 @@ export const zh = {
 		imageLoadError: "图片加载失败",
 	},
 	diff: {
-		toggle: "变更侧栏",
+		toggle: "工作区侧栏",
 		title: "变更",
 		filesChanged: "修改了 {count} 个文件",
 		workedFor: "本轮工作 {duration}",
@@ -434,7 +434,7 @@ export const zh = {
 		deleteDesc: "该会话的记录与文件会被永久删除，无法恢复。",
 		archive: "归档会话",
 		archiveTitle: "归档此会话？",
-		archiveDesc: "将停止空闲会话的进程并归档记录。历史不会删除，可从 Pi 工作台恢复。",
+		archiveDesc: "将归档此会话记录。历史不会删除，可从左侧「归档会话」恢复。",
 	},
 	sidebar: {
 		title: "导航",
@@ -477,6 +477,10 @@ export const zh = {
 		category: {
 			remote: "SSH 连接",
 			general: "通用",
+   personality: "人格与提示词",
+   agent: "会话配置",
+   network: "网络与重试",
+   resources: "资源与 Shell",
 			appearance: "外观",
 			models: "模型",
 			skills: "Skills",
@@ -744,6 +748,7 @@ export const zh = {
 			tab: {
 				browse: "浏览社区",
 				loaded: "已加载",
+    installed: "已安装",
 			},
 			type: {
 				all: "全部",

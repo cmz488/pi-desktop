@@ -1,5 +1,7 @@
 # Percho 界面迁移后的能力恢复
 
+> 后续入口与组件已按 [Percho 原生能力整合](percho-native-ui-integration.md) 迁入左右侧栏及设置；本记录中的总工作台属于当时的过渡接线。
+
 原界面替换后，一部分能力仍在 Host／Pi 中，但新界面没有入口，或沿用了形状不同的 Percho 协议。本次以原 pi-desktop 的行为为恢复基线，保留 Percho React 主界面，使用已有控制器、HTTP 接口和原生 Pi 生命周期。
 
 ## 使用入口

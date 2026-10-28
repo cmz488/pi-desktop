@@ -1,3 +1,5 @@
+import { NativeSidebarList } from "../native/NativeSidebar";
+import { useUiStore } from "../../stores/ui";
 import { type CSSProperties, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
@@ -27,6 +29,7 @@ import { useSidebarRenderWidth } from "./useSidebarRenderWidth";
  */
 export function Sidebar() {
 	const t = useT();
+	const sidebarView = useUiStore((s) => s.sidebarView);
 	const collapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
 	const sidebarWidth = useUiPreferencesStore((s) => s.sidebarWidth);
 	const [resizing, setResizing] = useState(false);
@@ -102,31 +105,37 @@ export function Sidebar() {
 					style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					className="edge-fade min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				>
-					{data.dailies.map((group) => (
-						<SidebarGroup
-							key={group.key}
-							group={group}
-							activeSessionId={activeSessionId}
-							batching={batching}
-						/>
-					))}
-					<ProjectSection
-						projects={data.projects}
-						activeSessionId={activeSessionId}
-						batching={batching}
-						onTogglePin={toggleProjectPin}
-						onRemoveProject={(cwd) => {
-							// 计数等删除真的成功再清：失败了就留着，别让「已显示多少条」比真实数据跑在前面
-							void deleteProject(cwd).then(
-								() => batching.forget(cwd),
-								(error: unknown) => console.error("移除项目失败", error),
-							);
-						}}
-					/>
-					{empty && (
-						<p className="px-1.5 py-6 text-center text-ui-12 text-ink-faint">
-							{search ? t("sidebar.searchEmpty") : t("sidebar.noSessions")}
-						</p>
+					{sidebarView !== "sessions" ? (
+						<NativeSidebarList archived={sidebarView === "archive"} />
+					) : (
+						<>
+							{data.dailies.map((group) => (
+								<SidebarGroup
+									key={group.key}
+									group={group}
+									activeSessionId={activeSessionId}
+									batching={batching}
+								/>
+							))}
+							<ProjectSection
+								projects={data.projects}
+								activeSessionId={activeSessionId}
+								batching={batching}
+								onTogglePin={toggleProjectPin}
+								onRemoveProject={(cwd) => {
+									// 计数等删除真的成功再清：失败了就留着，别让「已显示多少条」比真实数据跑在前面
+									void deleteProject(cwd).then(
+										() => batching.forget(cwd),
+										(error: unknown) => console.error("移除项目失败", error),
+									);
+								}}
+							/>
+							{empty && (
+								<p className="px-1.5 py-6 text-center text-ui-12 text-ink-faint">
+									{search ? t("sidebar.searchEmpty") : t("sidebar.noSessions")}
+								</p>
+							)}
+						</>
 					)}
 				</div>
 				<SidebarFooter />

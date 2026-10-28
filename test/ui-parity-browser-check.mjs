@@ -42,13 +42,12 @@ try {
   await writeFile(
     join(f.cwd, ".pi", "extensions", "parity.ts"),
     `export default function(pi) {
-    pi.registerCommand("btw", { description: "Local fixture for Desktop BTW", handler: async () => {} });
-    pi.registerCommand("parity-card", { description: "Parity fixture", handler: async (_args, ctx) => {
-      ctx.ui.setStatus("parity", "BROWSER_STATUS"); ctx.ui.setTitle("BROWSER_TITLE"); ctx.ui.setToolsExpanded(true);
-      ctx.ui.setWidget("parity", ["BROWSER_WIDGET", "SECOND_WIDGET_LINE"]);
-      pi.sendMessage({ customType: "parity", content: "", display: true, details: { piDesktop: {version: 1, title: "BROWSER_CARD", body: "Card body"} } });
-    }});
-  }`,
+ pi.registerCommand("btw", {description:"Local Desktop BTW fixture",handler:async()=>{}});
+ pi.registerCommand("parity-card", {description:"Parity fixture",handler:async(_args,ctx)=>{
+ ctx.ui.setStatus("parity","BROWSER_STATUS");ctx.ui.setTitle("BROWSER_TITLE");ctx.ui.setToolsExpanded(true);
+ ctx.ui.setWidget("parity",["BROWSER_WIDGET","SECOND_WIDGET_LINE"]);
+ pi.sendMessage({customType:"parity",content:"",display:true,details:{piDesktop:{version:1,title:"BROWSER_CARD",body:"Card body"}}});
+ }});}`,
   );
   await writeFile(join(f.cwd, "parity.txt"), "BROWSER_FILE_CONTENT\n");
   await git(["init", "-b", "main"]);
@@ -85,7 +84,7 @@ try {
   driver = await browserDriver(profile);
   const { call, evaluate, until } = driver;
   await call("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.__httpErrors=[]; window.confirm=()=>true; const original=window.fetch; window.fetch=async(...args)=>{const r=await original(...args);if(!r.ok)window.__httpErrors.push({path:String(args[0]),status:r.status});return r;};`,
+    source: `window.__httpErrors=[];window.__requestPaths=[];window.__frameUrls=[];window.__uiErrors=[];window.addEventListener('error',e=>window.__uiErrors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__uiErrors.push(String(e.reason)));const original=window.fetch;window.fetch=async(...args)=>{window.__requestPaths.push(String(args[0]));const r=await original(...args);if(String(args[0]).includes('/_browser/frame') && r.status===200)window.__frameUrls.push(String(args[0]));if(!r.ok)window.__httpErrors.push({path:String(args[0]),status:r.status});return r;};`,
   });
   await call("Emulation.setDeviceMetricsOverride", {
     width: 1440,
@@ -95,25 +94,58 @@ try {
   });
   await call("Page.navigate", { url: f.app.url });
   await until(
-    '!!document.querySelector(".desktop-toolbar button") && !document.querySelector("#splash")',
+    '!!document.querySelector(".sidebar") && !document.querySelector("#splash")',
   );
-  const clickText = (selector, text) =>
-    evaluate(
-      `(() => { const node=[...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(text)});if(!node)throw new Error("Missing button: "+${JSON.stringify(text)});node.click(); })()`,
+  const click = async (selector, text) => {
+    await until(
+      `!![...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(text)} && !n.disabled)`,
     );
-  const open = async (tab) => {
-    if (!(await evaluate('!!document.querySelector(".native-dialog")')))
-      await clickText(".desktop-toolbar button", "Pi 工作台");
-    await until('!!document.querySelector(".native-dialog[open]")');
-    await clickText(".native-dialog > .native-tabs button", tab);
+    return evaluate(
+      `(()=>{const n=[...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(text)});n.click()})()`,
+    );
   };
-  const close = () =>
-    evaluate(
-      `document.querySelector('.native-header [aria-label="关闭 Pi 工作台"]').click()`,
-    );
   const fill = (selector, value) =>
     evaluate(
-      `(() => {const n=document.querySelector(${JSON.stringify(selector)});const setter=Object.getOwnPropertyDescriptor(n.tagName==="SELECT"?HTMLSelectElement.prototype:n.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,"value").set;setter.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event("input",{bubbles:true}));n.dispatchEvent(new Event("change",{bubbles:true}));})()`,
+      `(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n)throw new Error('Missing input '+${JSON.stringify(selector)});const setter=Object.getOwnPropertyDescriptor(n.tagName==='SELECT'?HTMLSelectElement.prototype:n.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set;setter.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+    );
+  const confirm = async (title) => {
+    await until(
+      `!!document.querySelector('[role=dialog][aria-label=${JSON.stringify(title)}]')`,
+    );
+    await click(
+      `[role=dialog][aria-label="${title}"] button`,
+      title.startsWith("确认 Git ") ? "确认执行" : "确认",
+    );
+  };
+  const openRight = async (tab) => {
+    if (
+      !(await evaluate(
+        'document.querySelector(".workspace-dock")?.classList.contains("open")',
+      ))
+    )
+      await evaluate(
+        'document.querySelector("button[aria-label=工作区侧栏]").click()',
+      );
+    await until(
+      'document.querySelector(".workspace-dock")?.classList.contains("open")',
+    );
+    await click('.workspace-dock [aria-label="工作区面板"] button', tab);
+  };
+  const closeRight = () =>
+    evaluate(
+      'document.querySelector("button[aria-label=关闭工作区侧栏]").click()',
+    );
+  const openSettings = async (category) => {
+    if (
+      !(await evaluate('!!document.querySelector("[role=dialog][aria-modal]")'))
+    )
+      await click(".sidebar button", "设置");
+    await until('!!document.querySelector("[role=dialog][aria-modal]")');
+    await click("[role=dialog][aria-modal] nav button", category);
+  };
+  const closeSettings = () =>
+    evaluate(
+      'document.querySelector("[role=dialog][aria-modal] button[aria-label=关闭]").click()',
     );
   const send = async (text) => {
     await evaluate(
@@ -142,24 +174,31 @@ try {
       windowsVirtualKeyCode: 13,
     });
   };
-  await open("会话与进程");
-  await until(
-    '!![...document.querySelectorAll(".native-agent")].find(n=>n.textContent.includes("BROWSER_ACTOR"))',
+  assert.equal(
+    await evaluate(
+      '!!document.querySelector(".desktop-workbench,.native-dialog,.desktop-toolbar")',
+    ),
+    false,
+    "no second navigation shell",
   );
+  await click(".sidebar button", "会话进程");
+  await until(`!!document.querySelector('[data-native-agent="${actor.id}"]')`);
   await evaluate(
-    '[...document.querySelectorAll(".native-agent")].find(n=>n.textContent.includes("BROWSER_ACTOR")).querySelectorAll("button");[...[...document.querySelectorAll(".native-agent")].find(n=>n.textContent.includes("BROWSER_ACTOR")).querySelectorAll("button")].find(n=>n.textContent==="项目信任").click()',
+    `document.querySelector('[data-native-agent="${actor.id}"] button[aria-label="管理会话 BROWSER_ACTOR"]').click()`,
   );
+  await click(`[data-native-agent="${actor.id}"] button`, "项目信任");
+  await confirm("信任项目");
   await untilValue(
     () => f.call(`/agents/${actor.id}/api/state`),
     (state) => state.projectTrusted,
   );
-  await evaluate(
-    '[...[...document.querySelectorAll(".native-agent")].find(n=>n.textContent.includes("BROWSER_ACTOR")).querySelectorAll("button")].find(n=>n.textContent==="打开").click()',
+  await click(
+    `[data-native-agent="${actor.id}"] button`,
+    "BROWSER_ACTORrunning",
   );
   await until(
     `document.querySelector('[data-session-page]')?.dataset.sessionId===${JSON.stringify(actor.id)}`,
   );
-  await until('!document.querySelector(".native-dialog")');
   await send("BROWSER_CHAT");
   await until(
     'document.querySelector("[data-session-page]").innerText.includes("answer: BROWSER_CHAT")',
@@ -171,7 +210,6 @@ try {
   await until(
     'document.querySelector("[data-session-page]").innerText.includes("PARITY_SECOND_MODEL")',
   );
-  console.log("PASS external model change updates the current UI metadata");
   await send("/parity-card");
   await until(
     'document.querySelector("[contenteditable=true]").innerText.trim()===""',
@@ -184,185 +222,324 @@ try {
     'document.querySelector("[data-session-page]").innerText.includes("BROWSER_WIDGET")',
   );
   await until(
-    `!![...document.querySelectorAll('.desktop-card p')].find(n=>n.innerText.includes('BROWSER_WIDGET\\nSECOND_WIDGET_LINE'))`,
+    `!![...document.querySelectorAll('.desktop-card p')].find(n=>n.innerText.includes(${JSON.stringify("BROWSER_WIDGET\nSECOND_WIDGET_LINE")}))`,
   );
   assert(
     (
-      await evaluate('document.querySelector(".desktop-toolbar").innerText')
+      await evaluate(
+        `document.querySelector('[aria-label="Pi 扩展状态"]')?.innerText`,
+      )
     ).includes("BROWSER_STATUS"),
   );
-  console.log("PASS chat, editor, extension card/status/title");
-  await open("扩展与任务");
+  console.log(
+    "PASS left sidebar session/process/trust, chat, native model and extension status/card/widget",
+  );
+  await openRight("任务");
   await until(
-    'document.querySelector(".native-extensions").innerText.includes("BROWSER_CARD")',
+    '!![...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="新建子代理" && !n.disabled)',
+  );
+  await click(".workspace-dock button", "新建子代理");
+  await fill("[data-task-compose] input[name=name]", "BROWSER_CHILD_NAME");
+  await fill("[data-task-compose] textarea[name=prompt]", "BROWSER_CHILD");
+  await closeRight();
+  await openRight("任务");
+  await until(
+    '!![...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="新建子代理" && !n.disabled)',
+  );
+  await click(".workspace-dock button", "新建子代理");
+  await until(
+    'document.querySelector("[data-task-compose] textarea[name=prompt]")?.value==="BROWSER_CHILD"',
   );
   await evaluate(
-    '[...document.querySelectorAll(".extension-page-choice strong")].find(n=>n.textContent==="任务与子代理").closest("button").click()',
-  );
-  await until(
-    'document.querySelector("[data-task-compose-toggle]")?.disabled===false',
-  );
-  await evaluate(
-    'document.querySelector("[data-task-compose-toggle]").click()',
-  );
-  await until(
-    '!!document.querySelector(".task-panel-compose-slot textarea[name=prompt]")',
-  );
-  await fill(".task-panel-compose-slot input[name=name]", "BROWSER_CHILD_NAME");
-  await fill(".task-panel-compose-slot textarea[name=prompt]", "BROWSER_CHILD");
-  await close();
-  await open("扩展与任务");
-  await until('!!document.querySelector(".extension-page-choice strong")');
-  await evaluate(
-    '[...document.querySelectorAll(".extension-page-choice strong")].find(n=>n.textContent==="任务与子代理").closest("button").click()',
-  );
-  await until(
-    'document.querySelector("[data-task-compose-toggle]")?.disabled===false',
-  );
-  await evaluate(
-    'document.querySelector("[data-task-compose-toggle]").click()',
-  );
-  await until(
-    'document.querySelector(".task-panel-compose-slot textarea[name=prompt]")?.value==="BROWSER_CHILD"',
-  );
-  await evaluate(
-    'document.querySelector(".task-panel-compose-slot form").requestSubmit()',
+    'document.querySelector("[data-task-compose]").requestSubmit()',
   );
   await untilValue(
     () => f.call(`/agents/${actor.id}/api/tasks`),
     (value) =>
       value.conversations?.some((row) => row.name === "BROWSER_CHILD_NAME"),
   );
-  await close();
+  await closeRight();
   assert(
     (await f.call(`/agents/${actor.id}/api/tasks`)).tasks.some(
       (task) => task.kind === "desk.subagent-run" && task.status === "running",
     ),
-    "closing workbench keeps the actual task alive",
+    "closing observer leaves actual task alive",
   );
   childGate.resolve();
   await untilValue(
     () => f.call(`/agents/${actor.id}/api/state`),
     (state) => state.idle,
   );
-  console.log("PASS task UI spawn and observation cleanup");
-  await open("文件与浏览器");
+  await openRight("任务");
+  await click('.workspace-dock [aria-label="任务分类"] button', "扩展面板");
   await until(
-    'document.querySelector(".native-files").innerText.includes("parity.txt")',
+    'document.querySelector(".workspace-dock").innerText.includes("BROWSER_CARD")',
   );
-  await evaluate(
-    '[...document.querySelectorAll(".native-files button")].find(n=>n.textContent.includes("parity.txt")).click()',
+  console.log(
+    "PASS right task panel: retained draft, actual spawn, close isolation, extension panels",
   );
+  await openRight("文件");
   await until(
-    'document.querySelector(".native-files").innerText.includes("BROWSER_FILE_CONTENT")',
+    'document.querySelector("[aria-label=项目文件]")?.innerText.includes("parity.txt")',
   );
-  console.log("PASS file tree and preview");
+  await click("[aria-label=项目文件] button", "parity.txt");
+  await until(
+    'document.querySelector("[aria-label=文件预览]")?.innerText.includes("BROWSER_FILE_CONTENT")',
+  );
+  console.log("PASS right sidebar file tree and preview");
+  const observer = await f.command("conversation.create", {
+    projectId: project.id,
+    name: "BROWSER_OBSERVER",
+  });
+  await untilValue(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.agents.find((row) => row.id === observer.id)?.status === "running",
+  );
+  await f.call(`/agents/${observer.id}/api/prompt`, { message: "BROWSER_OBSERVER_HISTORY" });
+  await untilValue(() => f.call(`/agents/${observer.id}/api/state`), state => state.idle && state.messages.some(row => row.role === "assistant"));
+  await until(
+    `!!document.querySelector('select[aria-label=侧栏会话] option[value="${observer.id}"]')`,
+  );
+  await fill("select[aria-label=侧栏会话]", observer.id);
+  await until(
+    `window.__requestPaths.some(path=>path.startsWith('/agents/${observer.id}/api/files'))`,
+  );
+  assert.equal(
+    await evaluate(
+      'document.querySelector("[data-session-page]").dataset.sessionId',
+    ),
+    actor.id,
+    "inspecting B does not change chat A",
+  );
+  await fill("select[aria-label=侧栏会话]", "");
+  console.log(
+    "PASS right sidebar inspection scope stays separate from the active conversation",
+  );
+  await openRight("网页");
+  await until('!!document.querySelector(".native-browser-viewport canvas")');
+  await fill(
+    "input[aria-label=搜索或输入网址]",
+    `${f.app.url.replace(/\/$/, "")}/api/health`,
+  );
+  await click(".workspace-dock button", "打开");
+  await until(
+    `window.__frameUrls.some(url=>url.startsWith('/agents/${actor.id}/_browser/frame'))`,
+    { timeoutMs: 30000 },
+  );
+  console.log(
+    "PASS right web browser: actual Chromium frame stays bound to the selected worker",
+  );
   await writeFile(join(f.cwd, "parity.txt"), "BROWSER_FILE_CONTENT\nchanged\n");
-  await open("Git");
+  await openRight("Git");
   await until(
-    'document.querySelector("#git-files").innerText.includes("parity.txt")',
+    `document.querySelector('[aria-label="Git 仓库管理"]')?.innerText.includes('parity.txt')`,
   );
-  await evaluate(
-    'document.querySelector("[data-git-action=stage-all]").click()',
+  await until(
+    '!![...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="全部暂存" && !n.disabled)',
   );
+  await click(".workspace-dock button", "全部暂存");
+  await confirm("确认 Git 暂存");
   await untilValue(
     () => git(["diff", "--cached", "--name-only"]),
     (value) => value.stdout.includes("parity.txt"),
   );
-  await evaluate('document.querySelector("[data-right-view=commit]").click()');
-  await fill("#git-message", "browser parity commit");
+  await click('.workspace-dock [aria-label="Git 分类"] button', "提交");
+  await fill("textarea[aria-label=提交说明]", "browser parity commit");
   await until(
-    'document.querySelector("#git-commit-pane").hidden===false && document.querySelector("[data-git-action=commit]").disabled===false',
+    '!![...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="预览提交" && !n.disabled)',
   );
-  await evaluate('document.querySelector("[data-git-action=commit]").click()');
+  await click(".workspace-dock button", "预览提交");
+  await confirm("确认 Git 提交");
   await untilValue(
     () => git(["log", "-1", "--format=%s"]),
     (value) => value.stdout.trim() === "browser parity commit",
   );
-  console.log("PASS Git stage/preview/confirmed commit");
-  await open("Pi 设置与资源");
   await until(
-    'document.querySelectorAll("#settings-groups input,#settings-groups select").length>0',
+    `!![...document.querySelectorAll('.workspace-dock [aria-label="Git 分类"] button')].find(n=>n.textContent==='历史' && !n.disabled)`,
   );
-  await clickText(".native-settings > .native-tabs button", "提供商");
-  await until('!!document.querySelector("[data-action=add-provider]")');
-  await evaluate(
-    'document.querySelector("[data-action=add-provider]").click()',
+  await click('.workspace-dock [aria-label="Git 分类"] button', "历史");
+  await until(
+    `!![...document.querySelectorAll('.workspace-dock [aria-label="Git 分类"] button')].find(n=>n.textContent==='历史' && n.getAttribute('aria-selected')==='true')`,
   );
-  await until('document.querySelector("#dialog").open');
-  await evaluate(
-    'document.querySelector("#dialog [data-action=custom-provider]").click()',
+  await until(
+    'document.querySelector(".workspace-dock").innerText.includes("browser parity commit")',
   );
-  await until('!!document.querySelector("#dialog [name=id]")');
-  for (const [name, value] of Object.entries({
-    id: "browser-provider",
-    baseUrl: "http://127.0.0.1:9/v1",
-    modelId: "browser-model",
-  }))
-    await fill(`#dialog [name=${name}]`, value);
-  await evaluate('document.querySelector("#dialog-form").requestSubmit()');
-  await until('!document.querySelector("#dialog").open');
-  assert(
-    (await f.call(`/agents/${actor.id}/api/providers`)).rows.some(
-      (row) =>
-        row.id === "browser-provider" &&
-        row.models.some((model) => model.id === "browser-model"),
+  console.log(
+    "PASS right Git: staged changes, native confirmation, commit and history",
+  );
+  await writeFile(
+    "/tmp/percho-integrated-wide.png",
+    Buffer.from(
+      (await call("Page.captureScreenshot", { format: "png" })).data,
+      "base64",
     ),
   );
-  console.log("PASS native settings descriptor and provider save");
-  await open("侧聊");
-  await until('!!document.querySelector(".native-body textarea")');
-  await fill(".native-body textarea", "BROWSER_SIDE_QUESTION");
-  await evaluate('document.querySelector(".native-body form").requestSubmit()');
-  await until(
-    'document.querySelector(".native-answer")?.innerText.includes("BROWSER_SIDE_QUESTION")',
+  await closeRight();
+  await openSettings("通用");
+  await until(`!!document.querySelector('input[aria-label="默认模型 ID"]')`);
+  await evaluate(
+    `(()=>{const label=[...document.querySelectorAll('[role=dialog] label')].find(n=>n.textContent.includes('隐藏思考内容'));label.querySelector('button[role=switch]').click()})()`,
   );
-  assert(
-    !(await f.call(`/agents/${actor.id}/api/state`)).messages.some((row) =>
-      row.text?.includes("BROWSER_SIDE_QUESTION"),
+  await click("[role=dialog] button", "保存修改");
+  await untilValue(
+    () => f.call(`/agents/${actor.id}/api/settings?scope=global`),
+    (doc) => doc.values.hideThinkingBlock === true,
+  );
+  await openSettings("网络与重试");
+  await until(`!!document.querySelector('input[aria-label="HTTP 代理"]')`);
+  await openSettings("资源与 Shell");
+  await until(`!!document.querySelector('section[aria-label="原生 Pi 配置"]')`);
+  await openSettings("人格与提示词");
+  await until(
+    `!!document.querySelector('textarea[aria-label="全局 AGENTS.md"]')`,
+  );
+  await fill('textarea[aria-label="全局 AGENTS.md"]', "BROWSER_PERSONALITY");
+  await click("[role=dialog] button", "保存并应用");
+  await untilValue(
+    () => f.call("/api/personality"),
+    (doc) => doc.content === "BROWSER_PERSONALITY",
+  );
+  await openSettings("会话配置");
+  await until('!!document.querySelector("input[aria-label=名称]")');
+  await writeFile(
+    "/tmp/percho-integrated-settings.png",
+    Buffer.from(
+      (await call("Page.captureScreenshot", { format: "png" })).data,
+      "base64",
     ),
   );
-  await clickText(".native-body button", "带回主对话输入框");
-  await until('!document.querySelector(".native-dialog")');
+  await openSettings("模型");
+  await until(
+    '!![...document.querySelectorAll("[role=dialog] button")].find(n=>n.textContent.includes("添加自定义 Provider"))',
+  );
+  await click("[role=dialog] button", "+ 添加自定义 Provider");
+  for (const [placeholder, value] of [
+    ["ID，如 ai-ops", "browser-provider"],
+    ["baseUrl，如 https://api.deepseek.com", "http://127.0.0.1:9/v1"],
+    ["模型 ID", "browser-model"],
+  ])
+    await fill(`input[placeholder="${placeholder}"]`, value);
+  await click("[role=dialog] button", "保存");
+  await untilValue(
+    () => f.call(`/agents/${actor.id}/api/providers`),
+    (value) =>
+      value.rows.some(
+        (row) =>
+          row.id === "browser-provider" &&
+          row.models?.some((model) => model.id === "browser-model"),
+      ),
+  );
+  await openSettings("扩展");
+  await click("[role=dialog] button", "已安装");
+  await until('!!document.querySelector("input[aria-label=安装来源]")');
+  await closeSettings();
+  console.log(
+    "PASS Percho settings: native revisions/save, network/Shell, personality, Agent and provider/package panels",
+  );
+  await click(".sidebar button", "会话进程");
+  await evaluate(
+    `document.querySelector('[data-native-agent="${observer.id}"] button[aria-label="管理会话 BROWSER_OBSERVER"]').click()`,
+  );
+  await click(`[data-native-agent="${observer.id}"] button`, "停止进程");
+  await confirm("停止进程");
+  await untilValue(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.agents.find((row) => row.id === observer.id)?.status === "stopped",
+  );
+  await click(`[data-native-agent="${observer.id}"] button`, "归档");
+  await click("[role=dialog][aria-label=归档会话] button", "归档");
+  await untilValue(
+    () => f.call("/api/workspace"),
+    (value) => value.agents.find((row) => row.id === observer.id)?.archived,
+  );
+  await click(".sidebar button", "归档会话");
+  await until(
+    `!!document.querySelector('[data-native-agent="${observer.id}"]')`,
+  );
+  await evaluate(
+    `document.querySelector('[data-native-agent="${observer.id}"] button[aria-label="管理会话 BROWSER_OBSERVER"]').click()`,
+  );
+  await click(`[data-native-agent="${observer.id}"] button`, "恢复归档");
+  await untilValue(
+    () => f.call("/api/workspace"),
+    (value) =>
+      value.agents.find((row) => row.id === observer.id)?.archived === false,
+  );
+  assert.equal(
+    await evaluate(
+      'document.querySelector("[data-session-page]").dataset.sessionId',
+    ),
+    actor.id,
+  );
+  await click(".sidebar button", "归档会话");
+  console.log(
+    "PASS left process/archive/restore controls preserve the active conversation",
+  );
+  await openRight("侧聊");
+  await until('!!document.querySelector("textarea[aria-label=侧聊问题]")');
+  await fill("textarea[aria-label=侧聊问题]", "BROWSER_SIDE_QUESTION");
+  await until(
+    '!![...document.querySelectorAll(".workspace-dock button")].find(n=>n.textContent==="提问" && !n.disabled)',
+  );
+  await click(".workspace-dock button", "提问");
+  await until(
+    '[...document.querySelectorAll(".workspace-dock pre")].some(n=>n.textContent.includes("BROWSER_SIDE_QUESTION") && n.textContent.includes("answer:"))',
+  );
+  assert(
+    !(
+      await evaluate('document.querySelector("[data-session-page]").innerText')
+    ).includes("BROWSER_SIDE_QUESTION"),
+    "side chat stays outside primary timeline",
+  );
+  await click(".workspace-dock button", "带回主对话输入框");
   await until(
     'document.querySelector("[contenteditable=true]").innerText.includes("BROWSER_SIDE_QUESTION")',
   );
-  console.log("PASS BTW isolation and bring-back");
-  assert.deepEqual(driver.errors, []);
-  assert.deepEqual(await evaluate("window.__httpErrors"), []);
-  const wide = await call("Page.captureScreenshot", { format: "png" });
-  await writeFile(
-    "/tmp/pi-ui-parity-wide.png",
-    Buffer.from(wide.data, "base64"),
-  );
+  console.log("PASS right sidebar BTW isolation and bring-back");
   await call("Emulation.setDeviceMetricsOverride", {
-    width: 390,
-    height: 844,
+    width: 480,
+    height: 850,
     deviceScaleFactor: 1,
-    mobile: true,
+    mobile: false,
   });
-  await open("Pi 设置与资源");
-  await until(
-    'document.querySelectorAll("#settings-groups input,#settings-groups select").length>0',
-  );
-  await evaluate('document.documentElement.dataset.theme="dark"');
-  assert.notEqual(
+  assert(
     await evaluate(
-      'getComputedStyle(document.querySelector(".native-dialog")).backgroundColor',
+      'document.querySelector(".workspace-dock").getBoundingClientRect().width<=innerWidth',
     ),
-    "rgb(255, 255, 255)",
+    "narrow right panel fits viewport",
   );
-  const bounds = await evaluate(
-    '({w:innerWidth,dialog:document.querySelector(".native-dialog").getBoundingClientRect().width})',
-  );
-  assert(bounds.dialog <= bounds.w + 1);
-  const narrow = await call("Page.captureScreenshot", { format: "png" });
+  await closeRight();
+  await openSettings("外观");
+  await click("[role=dialog] button", "深色");
+  await until('document.documentElement.dataset.theme==="dark"');
+  await openSettings("通用");
+  await until(`!!document.querySelector('input[aria-label="默认模型 ID"]')`);
   await writeFile(
-    "/tmp/pi-ui-parity-narrow.png",
-    Buffer.from(narrow.data, "base64"),
+    "/tmp/percho-integrated-narrow.png",
+    Buffer.from(
+      (await call("Page.captureScreenshot", { format: "png" })).data,
+      "base64",
+    ),
   );
+  assert(
+    await evaluate(
+      'document.querySelector("[role=dialog][aria-modal] > div").getBoundingClientRect().width<=innerWidth',
+    ),
+    "settings fits viewport",
+  );
+  assert.equal(
+    await evaluate(
+      '!!document.querySelector(".desktop-workbench,.native-dialog,.desktop-toolbar")',
+    ),
+    false,
+  );
+  assert.deepEqual(driver.errors, []);
+  assert.deepEqual(await evaluate("window.__uiErrors"), []);
+  assert.deepEqual(await evaluate("window.__httpErrors"), []);
   console.log(
-    "PASS narrow viewport; no runtime exceptions or failed HTTP requests",
+    "PASS integrated Percho layout, narrow/dark, no runtime exceptions or failed requests",
   );
 } finally {
   childGate.resolve();

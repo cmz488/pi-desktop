@@ -55,6 +55,7 @@ export function SidebarGroup({
 	return (
 		<div data-sidebar-group-key={group.key}>
 			<ProjectRow
+				cwd={group.cwd}
 				label={group.label ?? t("sidebar.daily")}
 				environment={environment}
 				kind={group.kind}

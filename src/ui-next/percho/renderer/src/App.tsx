@@ -1,5 +1,5 @@
 import { supportsHostChannel } from "./api";
-import { NativeDesktopBar } from "./components/native/NativeWorkbench";
+import { NativeSessionStatus } from "./components/native/NativeSessionStatus";
 import type { TrustRequest } from "@percho/shared";
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
@@ -8,7 +8,7 @@ import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { SubagentBackButton } from "./components/chat/SubagentBackButton";
 import { TodoPanel } from "./components/chat/TodoPanel";
-import { DiffSidebar } from "./components/diff/DiffSidebar";
+import { WorkspaceSidebar } from "./components/native/WorkspaceSidebar";
 import { RemoteAttentionBanner } from "./components/remote/RemoteAttentionBanner";
 import { RemoteConnectionDialog } from "./components/remote/RemoteConnectionDialog";
 import { DockSlot } from "./components/session/DockSlot";
@@ -157,7 +157,7 @@ export default function App() {
 				{/* 顶栏常驻（v9）：它承担窗口拖动 / 左栏开合 / 变更侧栏入口，不再整条隐藏；
 				   设置里的开关只控制「是否显示置顶会话胶囊」（见 SessionTabBar） */}
 				<SessionTabBar />
-				<NativeDesktopBar />
+				<NativeSessionStatus />
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
 					{/* 聊天页容器：会话推/出过渡的动画主体（lib/session-page-slide.ts 认 data-session-page 找它，
@@ -190,7 +190,7 @@ export default function App() {
 						</main>
 						<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
 					</div>
-					<DiffSidebar />
+					<WorkspaceSidebar />
 				</div>
 			</div>
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}

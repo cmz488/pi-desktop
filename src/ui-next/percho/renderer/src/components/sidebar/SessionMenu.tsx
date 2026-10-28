@@ -1,3 +1,6 @@
+import { pushExtensionToast } from "../../stores/toasts";
+import { useNativeSessionActions } from "../native/NativeSidebar";
+import { useDesktopWorkspace } from "../../stores/desktop-workspace";
 import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
@@ -35,32 +38,42 @@ export function useSessionMenu() {
 
 	const open = (session: SessionMeta, anchor: MenuAnchor) => {
 		// 只读子会话 / 找不到会话的判定在纯函数里（sidebarMenuKind，有单测）；none 就不弹菜单
-		if (sidebarMenuKind(session) === "none") return;
+		if (
+			sidebarMenuKind(session) === "none" &&
+			!useDesktopWorkspace.getState().workspace?.agents.some((row) => row.id === session.sessionId)
+		)
+			return;
 		setMenu({ session, anchor });
 	};
 
+	const workspace = useDesktopWorkspace((s) => s.workspace);
+	const native = useNativeSessionActions(menu?.session);
 	const element = (
 		<>
 			{menu && (
 				<ContextMenu
 					anchor={menu.anchor}
 					onClose={() => setMenu(null)}
-					items={sessionMenuItems(t, {
-						sessionId: menu.session.sessionId,
-						pinned: pinnedSessions.includes(menu.session.sessionId),
-						onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
-						onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
-						onDelete:
-							menu.session.archivable === false
-								? undefined
-								: () => setDeleting(menu.session),
-						deleteLabel:
-							menu.session.archivable === true
-								? t("sessionMenu.archive")
-								: undefined,
-					})}
+					items={[
+						...sessionMenuItems(t, {
+							sessionId: menu.session.sessionId,
+							pinned: pinnedSessions.includes(menu.session.sessionId),
+							onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
+							onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
+							onDelete:
+								menu.session.archivable === false ||
+								workspace?.agents.some(
+									(row) => row.id === menu.session.sessionId && row.status === "running",
+								)
+									? undefined
+									: () => setDeleting(menu.session),
+							deleteLabel: menu.session.archivable === true ? t("sessionMenu.archive") : undefined,
+						}),
+						...native.items,
+					]}
 				/>
 			)}
+			{native.element}
 			{renaming && (
 				<RenamePopover
 					anchor={renaming.anchor}
@@ -93,7 +106,9 @@ export function useSessionMenu() {
 					cancelLabel={t("common.cancel")}
 					danger
 					onConfirm={() => {
-						void deleteSession(deleting);
+						void deleteSession(deleting).catch((reason: Error) =>
+							pushExtensionToast("error", reason.message),
+						);
 						setDeleting(null);
 					}}
 					onCancel={() => setDeleting(null)}
