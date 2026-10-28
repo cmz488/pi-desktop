@@ -11,6 +11,7 @@ import {
   UI_SUPPORT,
   UI_SUBSCRIPTION_SUPPORT,
 } from "../src/ui-next/support.mjs";
+import { perchoConsumers } from "./percho-fixture.mjs";
 import { buildHostApi, HostApiUnsupported } from "../src/ui-next/host-api.mjs";
 
 /**
@@ -49,6 +50,54 @@ async function hostSurface() {
   return { routes, commands };
 }
 
+test("Host 方法名、操作与订阅逐条匹配实际 Percho 契约", async () => {
+  const { CHANNEL_TABLE, SUBSCRIPTION_TABLE } = await perchoConsumers();
+  const invoke = Object.fromEntries(
+    Object.entries(CHANNEL_TABLE).map(([key, def]) => [
+      def.channel,
+      { key, scope: def.scope, operation: def.operation },
+    ]),
+  );
+  assert.deepEqual(UI_CHANNELS, invoke);
+  const subscriptions = Object.fromEntries(
+    Object.entries(SUBSCRIPTION_TABLE).map(([key, def]) => [
+      key,
+      { scope: def.scope, channel: def.channel },
+    ]),
+  );
+  assert.deepEqual(UI_SUBSCRIPTIONS, subscriptions);
+  const calls = [];
+  const api = buildHostApi({
+    channels: UI_CHANNELS,
+    handlers: { "project:validateDirectory": async ({ path }) => path },
+    support: UI_SUPPORT,
+    subscriptionSupport: UI_SUBSCRIPTION_SUPPORT,
+    subscribe: (name, channel) => {
+      calls.push({ name, channel });
+      return () => {};
+    },
+  });
+  globalThis.window = { pi: api };
+  try {
+    const { getExecutionApi } = await perchoConsumers();
+    assert.equal(
+      await getExecutionApi({ kind: "local" }).validateProjectDirectory({
+        path: "/tmp",
+      }),
+      "/tmp",
+    );
+    getExecutionApi({ kind: "local" }).onProviderLoginEvent(() => {});
+    assert.deepEqual(calls, [
+      {
+        name: "onProviderLoginEvent",
+        channel: SUBSCRIPTION_TABLE.onProviderLoginEvent.channel,
+      },
+    ]);
+  } finally {
+    delete globalThis.window;
+  }
+});
+
 test("通道表与支持表一一对应", () => {
   const channels = [...UI_CHANNEL_NAMES].sort();
   const supported = Object.keys(UI_SUPPORT).sort();
@@ -66,8 +115,8 @@ test("通道表与支持表一一对应", () => {
   );
   assert.equal(
     UI_CHANNEL_NAMES.length,
-    123,
-    "Percho 契约有 123 条 invoke 通道",
+    122,
+    "Percho 契约有 122 条实际 invoke 通道",
   );
   assert.equal(UI_SUBSCRIPTION_NAMES.length, 17, "Percho 契约有 17 条订阅");
 });

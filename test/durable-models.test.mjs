@@ -8,6 +8,94 @@ import { join } from "node:path";
 import { openDurableModels } from "../src/agent/durable-models.mjs";
 import { createProvider, lazyApi } from "@earendil-works/pi-ai";
 
+test("SDK 环境凭据的模型在桌面目录中保持可用，不要求另存凭据", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-model-env-"));
+  const prior = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "fixture-env-only";
+  t.after(async () => {
+    if (prior === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = prior;
+    await rm(root, { recursive: true, force: true });
+  });
+  const agentDir = join(root, "agent"),
+    directory = join(root, "desk");
+  await mkdir(agentDir);
+  await mkdir(directory);
+  const app = await openDurableModels({ agentDir, directory });
+  const row = (await app.desktopInventory()).rows.find(
+    (provider) => provider.id === "openai",
+  );
+  assert.equal(row.keyConfigured, true);
+  assert.equal(row.authSource, "environment");
+  assert(row.models.some((model) => model.available));
+  assert(!JSON.stringify(row).includes("fixture-env-only"), "目录不包含凭据值");
+});
+
+test("内置端点覆写作用于 SDK 模型并保留原生认证，恢复默认值不覆盖未知配置", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-builtin-endpoint-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const agentDir = join(root, "agent"),
+    directory = join(root, "desk");
+  await mkdir(agentDir);
+  await mkdir(directory);
+  await writeFile(
+    join(directory, "auth.json"),
+    JSON.stringify({ openai: { type: "api_key", key: "fixture-only" } }),
+  );
+  await writeFile(
+    join(directory, "models.json"),
+    JSON.stringify({
+      metadata: "keep",
+      providers: { openai: { unknown: { keep: true } } },
+    }),
+  );
+  const app = await openDurableModels({ agentDir, directory });
+  const original = app.models.getProvider("openai"),
+    model = original.getModels()[0];
+  await app.save({
+    id: "openai",
+    baseUrl: "http://127.0.0.1:9/v1",
+    api: model.api,
+    revision: (await app.desktopInventory()).revision,
+  });
+  assert.equal(
+    app.models.getModel("openai", model.id).baseUrl,
+    "http://127.0.0.1:9/v1",
+  );
+  assert.equal(
+    (await app.models.getAuth("openai")).auth.apiKey,
+    "fixture-only",
+  );
+  await app.save({
+    id: "openai",
+    baseUrl: "",
+    api: model.api,
+    revision: (await app.desktopInventory()).revision,
+  });
+  assert.equal(app.models.getModel("openai", model.id).baseUrl, model.baseUrl);
+  const doc = JSON.parse(
+    await readFile(join(directory, "models.json"), "utf8"),
+  );
+  assert.equal(doc.metadata, "keep");
+  assert.deepEqual(doc.providers.openai.unknown, { keep: true });
+  assert(!Object.hasOwn(doc.providers.openai, "baseUrl"));
+  const oauth = app.models.getProvider("openai-codex");
+  await app.save({
+    id: oauth.id,
+    baseUrl: "https://example.invalid/v1",
+    api: oauth.getModels()[0].api,
+    revision: (await app.desktopInventory()).revision,
+  });
+  assert(
+    app.models.getProvider(oauth.id).auth.oauth,
+    "端点覆写不能把 SDK OAuth 降为自定义 API key 服务",
+  );
+  assert.equal(
+    app.models.getProvider(oauth.id).getModels()[0].baseUrl,
+    "https://example.invalid/v1",
+  );
+});
+
 test("catalog credential views expire before delayed descendant authentication", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-model-view-lifetime-"));
   const release = Promise.withResolvers();

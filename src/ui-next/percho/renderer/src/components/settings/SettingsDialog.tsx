@@ -170,7 +170,7 @@ function SettingsDialogBody({
 	const setOpen = useSettingsStore((s) => s.setOpen);
 	const requestedCategory = useSettingsStore((s) => s.category);
 	const category =
-		requestedCategory === "remote" && !supportsHostChannel("remote:getStatus")
+		requestedCategory === "remote" && !supportsHostChannel("remote:status")
 			? "general"
 			: requestedCategory;
 	const setCategory = useSettingsStore((s) => s.setCategory);
@@ -273,7 +273,7 @@ function SettingsDialogBody({
 						style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					>
 						{STATIC_CATEGORIES.filter(
-							(id) => id !== "remote" || supportsHostChannel("remote:getStatus"),
+							(id) => id !== "remote" || supportsHostChannel("remote:status"),
 						).map((id) => {
 							const Icon = CATEGORY_ICONS[id];
 							return (

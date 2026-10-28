@@ -1,4 +1,5 @@
-import type { PiApi } from "@percho/shared";
+import type { CHANNEL_TABLE, PiApi } from "@percho/shared";
+type InvokeChannel = (typeof CHANNEL_TABLE)[keyof typeof CHANNEL_TABLE]["channel"];
 
 declare global {
 	interface Window {
@@ -7,11 +8,9 @@ declare global {
 }
 
 /** Optional Percho services must not be probed against unrelated native endpoints. */
-export function supportsHostChannel(channel: string): boolean {
+export function supportsHostChannel(channel: InvokeChannel): boolean {
 	return (
-		(getPi() as PiApi & { supports?: (channel: string) => boolean }).supports?.(
-			channel,
-		) ?? true
+		(getPi() as PiApi & { supports?: (channel: string) => boolean }).supports?.(channel) ?? true
 	);
 }
 

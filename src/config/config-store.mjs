@@ -69,13 +69,15 @@ export async function mutateDocument(path, expectedRevision, mutate) {
 export function patchProvider(data, input, options = {}) {
   if (!/^[a-zA-Z0-9][\w.-]{0,79}$/.test(input.id ?? ""))
     throw new DeskError(422, "服务 ID 只能包含字母、数字、点、横线和下划线");
-  const endpoint = new URL(input.baseUrl);
+  const resetEndpoint = input.baseUrl === "" && options.allowDefaultEndpoint;
+  const endpoint = resetEndpoint ? undefined : new URL(input.baseUrl);
   if (
-    !["http:", "https:"].includes(endpoint.protocol) ||
-    endpoint.username ||
-    endpoint.password ||
-    endpoint.search ||
-    endpoint.hash
+    endpoint &&
+    (!["http:", "https:"].includes(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash)
   )
     throw new DeskError(422, "端点必须是无凭据和查询参数的 HTTP(S) 地址");
   const apis = [
@@ -85,17 +87,20 @@ export function patchProvider(data, input, options = {}) {
     "google-generative-ai",
   ];
   if (
-    typeof input.api !== "string" ||
-    (!apis.includes(input.api) && input.api !== options.additionalApi)
+    (input.api === undefined && !options.allowDefaultEndpoint) ||
+    (input.api !== undefined &&
+      (typeof input.api !== "string" ||
+        (!apis.includes(input.api) && input.api !== options.additionalApi)))
   )
     throw new DeskError(422, "不支持的 API 类型");
   data.providers ??= {};
   const prior = data.providers[input.id] ?? {};
   const next = {
     ...prior,
-    baseUrl: endpoint.href.replace(/\/$/, ""),
-    api: input.api,
+    ...(input.api === undefined ? {} : { api: input.api }),
   };
+  if (resetEndpoint) delete next.baseUrl;
+  else next.baseUrl = endpoint.href.replace(/\/$/, "");
   if (input.apiKey) {
     if (
       typeof input.apiKey !== "string" ||

@@ -114,7 +114,10 @@ test("provider 写入自带 revision 围栏", async (t) => {
   });
   assert.ok(created !== undefined);
 
-  await f.api.removeCustomProvider({ id: "u2-custom" });
+  await f.api.removeCustomProvider({ providerId: "u2-custom" });
+  assert(
+    !(await f.api.listProviders({})).some((row) => row.id === "u2-custom"),
+  );
 });
 
 test("MCP 与权限只读通道返回可用数据", async (t) => {

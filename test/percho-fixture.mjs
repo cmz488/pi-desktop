@@ -6,6 +6,7 @@ export function perchoConsumers() {
   return (compiled ??= build({
     stdin: {
       contents: `
+      export { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./src/ui-next/percho/shared/ipc-channels.ts";
       export { getExecutionApi } from "./src/ui-next/percho/renderer/src/environment-api.ts";
       export { environmentEntityKey } from "./src/ui-next/percho/shared/environment.ts";
       export { parseEnvironmentUiState } from "./src/ui-next/percho/shared/environment-ui-state.ts";

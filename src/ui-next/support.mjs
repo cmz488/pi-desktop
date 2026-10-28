@@ -57,7 +57,6 @@ export const UI_SUPPORT = Object.freeze({
   "session:getChannelSubscriptionSessionIds":
     unsupported("我们没有频道订阅模型"),
   "session:getChannelSubscriptions": unsupported("我们没有频道订阅模型"),
-  "domain:action": unsupported("Percho 的通用域动作分发；我们没有等价入口"),
 
   // ── 模型 ────────────────────────────────────────────────────────────────
   "models:list": implemented("/api/providers"),

@@ -101,6 +101,47 @@ try {
     0,
     "settings and discovery do not start a worker",
   );
+  await evaluate(
+    `document.querySelector('[role=dialog][aria-modal] button[aria-label="关闭"]').click()`,
+  );
+  await evaluate(
+    `document.querySelector('button[aria-label="添加项目"]').click()`,
+  );
+  await until(
+    `!!document.querySelector('[role=dialog][aria-label="添加项目"] input')`,
+  );
+  const enterProject = (path) =>
+    evaluate(
+      `(()=>{const node=document.querySelector('[role=dialog][aria-label="添加项目"] input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,${JSON.stringify(path)});node.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+    );
+  const submitProject = () =>
+    evaluate(
+      `document.querySelector('[role=dialog][aria-label="添加项目"] form').requestSubmit()`,
+    );
+  await enterProject(f.other + "/missing");
+  await submitProject();
+  await until(
+    `document.querySelector('[role=dialog][aria-label="添加项目"] [role=alert]')?.textContent.includes('项目目录不存在或不可访问')`,
+  );
+  await enterProject(f.other);
+  await submitProject();
+  await until(
+    `!document.querySelector('[role=dialog][aria-label="添加项目"]')`,
+  );
+  const afterAdd = await f.call("/api/workspace");
+  assert(
+    afterAdd.projects.some((project) => project.cwd === f.other),
+    "manual project creation reaches the real Host",
+  );
+  assert.equal(
+    afterAdd.agents.length,
+    0,
+    "adding a directory does not start a worker",
+  );
+  assert.deepEqual(await evaluate("window.__failures"), []);
+  console.log(
+    "PASS add project: real validation error, corrected method and persisted directory without starting workers",
+  );
   console.log(
     "PASS empty Host settings: no unsupported controls, uncaught exceptions, or accidental worker; theme remains usable",
   );

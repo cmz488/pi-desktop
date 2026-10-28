@@ -3,14 +3,13 @@
  *
  * 接口：`UI_CHANNELS`（invoke 通道，含 Percho 的 `window.pi` 方法名 `key`）与
  *   `UI_SUBSCRIPTIONS`（事件通道）；两者合起来是 Percho renderer 消费的全部接口。
- * 不变量：本表必须与上游 `@percho/shared/ipc-channels.ts` 逐条一致（123 条 invoke、
- *   17 条订阅）。方法名用上游表键，不用通道的 action 部分——多个域共享 action 名时
+ * 不变量：本表必须与当前 `@percho/shared/ipc-channels.ts` 的实际方法与订阅逐条一致。
+ * 方法名用上游表键，不用通道的 action 部分——多个域共享 action 名时
  *   后者会互相覆盖。
  * 为什么单独成文件：GUI 移植的适配层需要一份可机读的契约；把通道名写死在 handler 里
  *   会让“哪些还没实现”无法验证。
  */
 export const UI_CHANNELS = Object.freeze({
-  "domain:action": { key: null, scope: "environment", operation: "mutation" },
   "session:create": { key: "createSession", scope: "environment", operation: "mutation" },
   "session:list": { key: "listSessions", scope: "environment", operation: "read" },
   "session:getQuota": { key: "getQuota", scope: "environment", operation: "read" },
@@ -137,22 +136,22 @@ export const UI_CHANNELS = Object.freeze({
 
 export const UI_SUBSCRIPTIONS = Object.freeze({
   "onStorageStartup": { scope: "desktop", channel: "storageStartup:changed" },
-  "onRemoteConnectionStatus": { scope: "desktop", channel: "remote:connection-status" },
-  "onProviderLoginEvent": { scope: "desktop", channel: "provider:login" },
-  "onMcpServersChanged": { scope: "desktop", channel: "mcp:servers-changed" },
-  "onChannelSubscriptionsChanged": { scope: "desktop", channel: "channel-subscriptions:changed" },
-  "onUiPluginsEvent": { scope: "desktop", channel: "ui-plugins:event" },
-  "onQuitRequested": { scope: "desktop", channel: "quit:requested" },
+  "onRemoteConnectionStatus": { scope: "desktop", channel: "remote:statusChanged" },
+  "onProviderLoginEvent": { scope: "environment", channel: "settings:loginEvent" },
+  "onMcpServersChanged": { scope: "environment", channel: "mcp:serversChanged" },
+  "onChannelSubscriptionsChanged": { scope: "environment", channel: "channel:subscriptionsChanged" },
+  "onUiPluginsEvent": { scope: "desktop", channel: "uiPlugins:event" },
+  "onQuitRequested": { scope: "desktop", channel: "app:quit-requested" },
   "onUpdateEvent": { scope: "desktop", channel: "update:event" },
-  "onEvent": { scope: "environment", channel: "session:event" },
-  "onPermissionRequest": { scope: "environment", channel: "permission:request" },
-  "onPermissionResolved": { scope: "environment", channel: "permission:resolved" },
-  "onTrustRequest": { scope: "environment", channel: "trust:request" },
-  "onTrustResolved": { scope: "environment", channel: "trust:resolved" },
-  "onExtensionDialogRequest": { scope: "environment", channel: "extension-dialog:request" },
-  "onExtensionDialogResolved": { scope: "environment", channel: "extension-dialog:resolved" },
-  "onExtensionNotify": { scope: "environment", channel: "extension-notify" },
-  "onExtensionEditorText": { scope: "environment", channel: "extension-editor-text" },
+  "onEvent": { scope: "environment", channel: "pi:event" },
+  "onPermissionRequest": { scope: "environment", channel: "pi:permission-request" },
+  "onPermissionResolved": { scope: "environment", channel: "pi:permission-resolved" },
+  "onTrustRequest": { scope: "environment", channel: "pi:trust-request" },
+  "onTrustResolved": { scope: "environment", channel: "pi:trustResolved" },
+  "onExtensionDialogRequest": { scope: "environment", channel: "pi:extension-dialog-request" },
+  "onExtensionDialogResolved": { scope: "environment", channel: "pi:extension-dialog-resolved" },
+  "onExtensionNotify": { scope: "environment", channel: "pi:extension-notify" },
+  "onExtensionEditorText": { scope: "environment", channel: "pi:extension-editor-text" },
 });
 
 export const UI_CHANNEL_NAMES = Object.freeze(Object.keys(UI_CHANNELS));

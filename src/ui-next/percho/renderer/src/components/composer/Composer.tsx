@@ -574,7 +574,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							{ paths },
 							activeSessionId ?? undefined,
 						).then((value) =>
-							appendAttachments(value.files.map((file) => file.path)),
+							appendAttachments(value.files.map((file: { path: string }) => file.path)),
 						),
 					);
 				else handleFiles(event.dataTransfer.files);

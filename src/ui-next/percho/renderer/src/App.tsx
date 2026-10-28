@@ -100,7 +100,7 @@ export default function App() {
 	useSessionGc();
 	useEffect(
 		() =>
-			supportsHostChannel("remote:getStatus")
+			supportsHostChannel("remote:status")
 				? initRemoteConnectionBridge()
 				: undefined,
 		[],

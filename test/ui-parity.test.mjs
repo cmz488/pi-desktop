@@ -70,6 +70,7 @@ test("Percho 提供商表单、原生凭据与 MCP CRUD 遵守真实 Host 协议
   await h["settings:setProviderBaseUrl"]({
     providerId: "parity-provider",
     baseUrl: "http://127.0.0.1:10/v1",
+    apiKey: "base-url-fixture-key",
   });
   providers = await h["settings:listProviders"]();
   assert.equal(
@@ -132,6 +133,76 @@ test("Percho 提供商表单、原生凭据与 MCP CRUD 遵守真实 Host 协议
     name: "parity-mcp",
   });
   assert(!removed.config.global.some((row) => row.name === "parity-mcp"));
+});
+
+test("内置 Provider 可直接覆写端点与凭据、恢复默认端点，目录元数据保留原生模型", async (t) => {
+  const f = await desktopFixture();
+  t.after(() => f.close());
+  const { h } = adapter(f.call);
+  await h["session:create"]({ options: { cwd: f.cwd } });
+  const initial = (await h["settings:listProviders"]()).find(
+    (row) => row.id === "openai",
+  );
+  assert(initial.models.length > 0, "无凭据的内置目录仍列出 SDK 已知模型");
+  await h["settings:setProviderBaseUrl"]({
+    providerId: "openai",
+    baseUrl: "http://127.0.0.1:9/v1",
+    apiKey: "fixture-builtin-only",
+  });
+  let row = (await h["settings:listProviders"]()).find(
+    (row) => row.id === "openai",
+  );
+  assert.equal(row.baseUrl, "http://127.0.0.1:9/v1");
+  assert.equal(row.overridesBuiltin, true);
+  assert.equal(row.configured, true);
+  await h["settings:setProviderBaseUrl"]({ providerId: "openai", baseUrl: "" });
+  row = (await h["settings:listProviders"]()).find(
+    (row) => row.id === "openai",
+  );
+  assert.equal(
+    row.baseUrl.replace(/\/$/, ""),
+    initial.baseUrl.replace(/\/$/, ""),
+  );
+  assert.equal(row.configured, true, "恢复端点不清除凭据");
+  assert(row.models.length > 0);
+  assert.equal(f.requests.length, 0);
+});
+
+test("Provider 参数使用 Percho 的 providerId，端点修改保留随表单提交的凭据", async () => {
+  const writes = [];
+  const h = createHttpHandlers({
+    get: async () => ({}),
+    post: async () => ({}),
+    sessions: {
+      get: async () => ({
+        revision: "native-revision",
+        rows: [{ id: "fixture", api: "openai-completions" }],
+      }),
+      post: async (path, body) => {
+        writes.push({ path, body });
+      },
+    },
+  });
+  await h["settings:removeCustomProvider"]({ providerId: "fixture" });
+  assert.deepEqual(writes.pop(), {
+    path: "/api/provider-remove",
+    body: { id: "fixture", revision: "native-revision" },
+  });
+  await h["settings:setProviderBaseUrl"]({
+    providerId: "fixture",
+    baseUrl: "https://example.invalid/v1",
+    apiKey: "fixture-only",
+  });
+  assert.deepEqual(writes.pop(), {
+    path: "/api/provider",
+    body: {
+      id: "fixture",
+      api: "openai-completions",
+      baseUrl: "https://example.invalid/v1",
+      apiKey: "fixture-only",
+      revision: "native-revision",
+    },
+  });
 });
 
 test("文件补全、输入绑定和文本附件到达同一真实会话，原文显示保持", async (t) => {

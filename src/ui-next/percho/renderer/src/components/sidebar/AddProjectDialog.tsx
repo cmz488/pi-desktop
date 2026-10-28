@@ -25,7 +25,7 @@ export function AddProjectDialog({
 		setBusy(true);
 		setError("");
 		try {
-			const cwd = await getExecutionApi(LOCAL_ENVIRONMENT).validateDirectory({ path });
+			const cwd = await getExecutionApi(LOCAL_ENVIRONMENT).validateProjectDirectory({ path });
 			if (useDesktopWorkspace.getState().supported)
 				await useDesktopWorkspace.getState().command("project.save", undefined, { cwd });
 			useProjectsStore.getState().addKnownProject(cwd);
@@ -87,7 +87,7 @@ export function AddProjectDialog({
 					>
 						选择目录
 					</Button>
-					{supportsHostChannel("remote:getStatus") && (
+					{supportsHostChannel("remote:status") && (
 						<Button
 							onClick={() => {
 								onClose();

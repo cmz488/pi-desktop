@@ -14,6 +14,8 @@
  * 错误：未实现的通道 → `HostApiUnsupported`；Host 非 2xx → `HostApiError`（带 status）。
  */
 
+import { UI_SUBSCRIPTIONS } from "./channels.mjs";
+
 /** 通道未实现；调用方可以据此隐藏界面而不是假装成功。 */
 export class HostApiUnsupported extends Error {
   constructor(channel, reason) {
@@ -133,7 +135,7 @@ export function buildHostApi({
       }
       if (typeof listener !== "function") return () => {};
       if (!subscribe) return () => {};
-      return subscribe(name, row.channel ?? name, listener);
+      return subscribe(name, UI_SUBSCRIPTIONS[name].channel, listener);
     };
   }
 

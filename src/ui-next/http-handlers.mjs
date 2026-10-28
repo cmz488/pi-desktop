@@ -25,26 +25,34 @@ export { toSessionMeta };
  * 为什么单独成文件：浏览器里的 `window.pi` 与测试用同一份实现，避免两份漂移。
  */
 
-/**
- * @param {object} io
- * @param {(path: string) => Promise<any>} io.get
- * @param {(path: string, body: unknown) => Promise<any>} io.post
- */
 /** `/api/providers` 返回的 revision 是配置文档版本，写 provider 时必须回传。 */
 async function providerRevision(get) {
   const body = await get("/api/providers");
   return body?.revision;
 }
 
+/**
+ * @param {object} io
+ * @param {(path: string) => Promise<any>} io.get
+ * @param {(path: string, body: unknown) => Promise<any>} io.post
+ * @param {ReturnType<typeof createSessionTransport>} [io.sessions]
+ * @param {(name: string, payload: any) => void} [io.emit]
+ * @param {ReturnType<typeof createProviderLogins>} [io.logins]
+ * @param {(plan: {request: unknown, warning?: string}) => Promise<boolean>} [io.confirmGit]
+ * @param {(cwd: string) => Promise<boolean>} [io.confirmTrust]
+ * @param {(value: string) => any | Promise<any>} [io.parseCatalog]
+ * @param {any} [io.desktop]
+ * @param {(url: string) => void} [io.openExternal]
+ */
 export function createHttpHandlers({
   get: rawGet,
   post: rawPost,
   sessions = createSessionTransport({ get: rawGet, post: rawPost }),
   emit,
   logins = createProviderLogins({ sessions, emit }),
-  confirmGit = async () => false,
-  confirmTrust = async () => false,
-  parseCatalog = () => {
+  confirmGit = async (_plan) => false,
+  confirmTrust = async (_cwd) => false,
+  parseCatalog = (_value) => {
     throw new Error("包目录 HTML 需要浏览器解析器");
   },
   desktop = globalThis.window?.piDesk,
@@ -498,18 +506,36 @@ export function createHttpHandlers({
     },
     "settings:removeCustomProvider": async (args) => {
       const revision = await providerRevision(get);
-      return await post("/api/provider-remove", { id: args?.id, revision });
+      return await post("/api/provider-remove", {
+        id: args.providerId,
+        revision,
+      });
     },
     "settings:setProviderBaseUrl": async (args) => {
       const inventory = await get("/api/providers");
-      const row = inventory.rows.find((row) => row.id === args.providerId);
-      if (!row) throw new Error("请先配置提供商");
-      return post("/api/provider", {
+      const row = [...inventory.rows, ...(inventory.catalog ?? [])].find(
+        (row) => row.id === args.providerId,
+      );
+      if (!row) throw new Error("提供商不存在，请刷新目录");
+      const builtin =
+        inventory.catalog?.find((provider) => provider.id === args.providerId)
+          ?.builtin === true;
+      await post("/api/provider", {
         id: row.id,
         api: row.api,
         baseUrl: args.baseUrl,
+        ...(args.apiKey === undefined || builtin
+          ? {}
+          : { apiKey: args.apiKey }),
         revision: inventory.revision,
       });
+      if (builtin && args.apiKey) {
+        const result = await logins.start(
+          { providerId: args.providerId, loginId: `key-${args.providerId}` },
+          args.apiKey,
+        );
+        if (!result.ok) throw new Error(result.error ?? "凭据未保存");
+      }
     },
     // 刷新模型目录（可能联网），由宿主决定时机。
     "settings:loginStart": (args) => logins.start(args),

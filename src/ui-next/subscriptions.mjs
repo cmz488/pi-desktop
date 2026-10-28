@@ -6,7 +6,7 @@ export function createSubscriptions({
   sessions,
   EventSource: Source = globalThis.EventSource,
   onError = console.error,
-  ownsInteraction = () => false,
+  ownsInteraction = (_sessionId, _jobId) => false,
 }) {
   const listeners = new Map(),
     streams = new Map();

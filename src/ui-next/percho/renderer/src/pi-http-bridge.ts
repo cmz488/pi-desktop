@@ -9,6 +9,7 @@
  * 为什么在渲染层内构建：我们以 HTTP 提供页面，没有 Electron IPC；保留 `window.pi` 这个名字，
  *   Percho 的 store 与组件无需改动。
  */
+import type { PiApi } from "@percho/shared";
 import { UI_CHANNELS } from "../../../channels.mjs";
 import { UI_SUPPORT, UI_SUBSCRIPTION_SUPPORT } from "../../../support.mjs";
 import { buildHostApi } from "../../../host-api.mjs";
@@ -18,7 +19,7 @@ import { createProviderLogins } from "../../../native-contracts.mjs";
 import { createHttpHandlers } from "../../../http-handlers.mjs";
 
 /** 与 Host 通信；非 2xx 转成带 status 的错误。 */
-async function request(path, input?, options?: { signal?: AbortSignal }) {
+async function request(path: string, input?: unknown, options?: { signal?: AbortSignal }) {
 	const response = await fetch(path, {
 		method: input === undefined ? "GET" : "POST",
 		headers:
@@ -38,34 +39,26 @@ async function request(path, input?, options?: { signal?: AbortSignal }) {
 	}
 	if (!response.ok)
 		throw Object.assign(
-			new Error(
-				String(
-					body?.error?.message ?? body?.error ?? `HTTP ${response.status}`,
-				),
-			),
+			new Error(String(body?.error?.message ?? body?.error ?? `HTTP ${response.status}`)),
 			{ status: response.status, body },
 		);
 	return body;
 }
 
-const get = (path) => request(path);
-const post = (path, input) => request(path, input ?? {});
+const get = (path: string) => request(path);
+const post = (path: string, input: unknown) => request(path, input ?? {});
 
 const localListeners = new Map<string, Set<(event: unknown) => void>>();
 const emit = (name: string, event: unknown) => {
 	for (const listener of localListeners.get(name) ?? []) listener(event);
 };
-let installed;
+let installed: PiApi | undefined;
 export const desktopSessions = createSessionTransport({ get, post });
 const sessions = desktopSessions;
 const logins = createProviderLogins({ sessions, emit });
 export { request as desktopRequest };
 
-export async function nativeRequest(
-	path: string,
-	input?: unknown,
-	sessionId?: string,
-) {
+export async function nativeRequest(path: string, input?: unknown, sessionId?: string) {
 	return input === undefined
 		? sessions.get(path, sessionId)
 		: sessions.post(path, input, sessionId);
@@ -75,7 +68,7 @@ export async function removeDesktopProject(cwd: string): Promise<void> {
 	if (!(await sessions.detect()))
 		throw new Error("兼容模式的工作目录由 Pi TUI／SDK 拥有，请在原宿主管理");
 	const workspace = await get("/api/workspace");
-	const project = workspace.projects.find((row) => row.cwd === cwd);
+	const project = workspace.projects.find((row: { id: string; cwd: string }) => row.cwd === cwd);
 	if (project)
 		await post("/api/workspace/command", {
 			command: "project.remove",
@@ -84,16 +77,13 @@ export async function removeDesktopProject(cwd: string): Promise<void> {
 		});
 }
 
-export function mirrorComposerText(
-	sessionId: string,
-	text: string,
-): Promise<unknown> {
+export function mirrorComposerText(sessionId: string, text: string): Promise<unknown> {
 	return sessions.mirrorComposer(sessionId, text);
 }
 
 export function installHostApi() {
 	if (installed) return installed;
-	installed = buildHostApi({
+	const api: PiApi = buildHostApi({
 		channels: UI_CHANNELS,
 		handlers: createHttpHandlers({
 			get,
@@ -101,15 +91,13 @@ export function installHostApi() {
 			sessions,
 			emit,
 			logins,
-			parseCatalog: async (value) => {
+			parseCatalog: async (value: string) => {
 				const path = "/package-settings.js";
 				return (await import(/* @vite-ignore */ path)).parseCatalogPage(value);
 			},
-			confirmTrust: async (cwd) =>
-				window.confirm(
-					`信任项目 ${cwd}？\n该项目的扩展和工具可能在本机执行程序。`,
-				),
-			confirmGit: async (plan) =>
+			confirmTrust: async (cwd: string) =>
+				window.confirm(`信任项目 ${cwd}？\n该项目的扩展和工具可能在本机执行程序。`),
+			confirmGit: async (plan: { request: unknown; warning?: string }) =>
 				window.confirm(
 					`确认切换 Git 分支？\n${JSON.stringify(plan.request)}\n${plan.warning ?? ""}`,
 				),
@@ -119,11 +107,10 @@ export function installHostApi() {
 		subscribe: (() => {
 			const subscribe = createSubscriptions({
 				sessions,
-				ownsInteraction: (id, jobId) => logins.owns(id, jobId),
+				ownsInteraction: (id: string, jobId: string) => logins.owns(id, jobId),
 			});
 			return (name, channel, listener) => {
-				if (name !== "onProviderLoginEvent")
-					return subscribe(name, channel, listener);
+				if (name !== "onProviderLoginEvent") return subscribe(name, channel, listener);
 				if (!localListeners.has(name)) localListeners.set(name, new Set());
 				localListeners.get(name)!.add(listener);
 				return () => localListeners.get(name)?.delete(listener);
@@ -131,8 +118,9 @@ export function installHostApi() {
 		})(),
 		platform: "linux",
 	});
-	window.pi = installed;
-	return installed;
+	installed = api;
+	window.pi = api;
+	return api;
 }
 
 installHostApi();

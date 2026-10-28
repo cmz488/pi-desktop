@@ -127,7 +127,10 @@ export async function projectFiles(get, path = "") {
 }
 
 /** Native auth is a job, not a synchronous successful HTTP submission. */
-export function createProviderLogins({ sessions, emit = () => {} }) {
+export function createProviderLogins({
+  sessions,
+  emit = (_name, _payload) => {},
+}) {
   const jobs = new Map();
   async function start(args, key) {
     if (jobs.has(args.loginId)) throw new Error("登录已开始");

@@ -27,6 +27,16 @@ const implementations = {
   "google-generative-ai": () =>
     import("@earendil-works/pi-ai/api/google-generative-ai"),
 };
+function publicEndpoint(value) {
+  try {
+    const url = new URL(value);
+    return !url.username && !url.password && !url.search && !url.hash
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
 function resolveKey(value) {
   if (typeof value !== "string" || value.startsWith("!")) return undefined;
   const reference =
@@ -134,6 +144,9 @@ export async function openDurableModels({ agentDir, directory }) {
       }),
   };
   const models = builtinModels({ credentials, modelsStore });
+  const builtinIds = new Set(
+    models.getProviders().map((provider) => provider.id),
+  );
   let customIds = new Set();
   async function reload({ network = false } = {}) {
     const inherited =
@@ -150,6 +163,35 @@ export async function openDurableModels({ agentDir, directory }) {
     for (const [id, config] of Object.entries({ ...inherited, ...own })) {
       if (config?.disabled) {
         models.deleteProvider(id);
+        continue;
+      }
+      // An endpoint-only override retains the SDK provider's OAuth, APIs and dynamic catalog.
+      if (builtinIds.has(id) && !Array.isArray(config.models)) {
+        const provider = models.getProvider(id);
+        if (!config.baseUrl) continue;
+        const endpoint = new URL(config.baseUrl);
+        if (
+          !["http:", "https:"].includes(endpoint.protocol) ||
+          endpoint.username ||
+          endpoint.password ||
+          endpoint.search ||
+          endpoint.hash
+        )
+          continue;
+        const override = (model) => ({
+          ...model,
+          baseUrl: config.baseUrl,
+          headers: { ...model.headers, ...config.headers },
+        });
+        models.setProvider({
+          ...provider,
+          baseUrl: config.baseUrl,
+          getModels: () => provider.getModels().map(override),
+          ...(provider.getAllModels
+            ? { getAllModels: () => provider.getAllModels().map(override) }
+            : {}),
+        });
+        customIds.add(id);
         continue;
       }
       if (
@@ -221,6 +263,7 @@ export async function openDurableModels({ agentDir, directory }) {
         data.providers[input.id] = structuredClone(inherited[input.id]);
       return patchProvider(data, input, {
         allowEmptyModels: !!models.getProvider(input.id),
+        allowDefaultEndpoint: builtinIds.has(input.id),
         additionalApi: models.getProvider(input.id)?.getModels()[0]?.api,
       });
     });
@@ -254,9 +297,27 @@ export async function openDurableModels({ agentDir, directory }) {
       (await readDocument(join(agentDir, "models.json"))).data.providers ?? {};
     const configs = { ...inherited, ...document.data.providers };
     const available = await models.getAvailable();
+    const availableKeys = new Set(
+      available.map((row) => `${row.provider}\0${row.id}`),
+    );
+    const availableProviders = new Set(available.map((row) => row.provider));
     const catalog = models.getProviders().map((provider) => ({
       id: provider.id,
       name: provider.name,
+      builtin: builtinIds.has(provider.id),
+      api: provider.getModels()[0]?.api,
+      baseUrl: publicEndpoint(provider.baseUrl),
+      models: provider
+        .getModels()
+        .map((model) => ({
+          id: model.id,
+          name: model.name,
+          input: model.input,
+          reasoning: model.reasoning,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
+          available: availableKeys.has(`${provider.id}\0${model.id}`),
+        })),
       auth: {
         apiKey: !!provider.auth?.apiKey?.login,
         oauth: !!provider.auth?.oauth,
@@ -266,7 +327,12 @@ export async function openDurableModels({ agentDir, directory }) {
     for (const provider of models.getProviders()) {
       const config = configs[provider.id] ?? {},
         saved = await credential(provider.id);
-      if (!saved && !Object.hasOwn(configs, provider.id)) continue;
+      if (
+        !saved &&
+        !Object.hasOwn(configs, provider.id) &&
+        !availableProviders.has(provider.id)
+      )
+        continue;
       let baseUrl = "";
       try {
         const url = new URL(config.baseUrl ?? provider.baseUrl);
@@ -278,12 +344,15 @@ export async function openDurableModels({ agentDir, directory }) {
         name: provider.name,
         baseUrl,
         api: config.api ?? provider.getModels()[0]?.api ?? "openai-completions",
-        keyConfigured: !!saved || !!config.apiKey,
+        keyConfigured:
+          !!saved || !!config.apiKey || availableProviders.has(provider.id),
         authSource: saved
           ? "stored"
           : config.apiKey
             ? "models_json_key"
-            : undefined,
+            : availableProviders.has(provider.id)
+              ? "environment"
+              : undefined,
         customModels: config.models?.map((row) => ({
           id: row.id,
           name: row.name,
@@ -294,6 +363,8 @@ export async function openDurableModels({ agentDir, directory }) {
         })),
         editable: true,
         custom: Object.hasOwn(configs, provider.id),
+        overridesBuiltin:
+          Object.hasOwn(configs, provider.id) && builtinIds.has(provider.id),
         inherited: !Object.hasOwn(document.data.providers ?? {}, provider.id),
         auth: catalog.find((row) => row.id === provider.id).auth,
         models: provider.getModels().map((model) => ({
@@ -303,9 +374,7 @@ export async function openDurableModels({ agentDir, directory }) {
           reasoning: model.reasoning,
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,
-          available: available.some(
-            (row) => row.provider === provider.id && row.id === model.id,
-          ),
+          available: availableKeys.has(`${provider.id}\0${model.id}`),
         })),
       });
     }

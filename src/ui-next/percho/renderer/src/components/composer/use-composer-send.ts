@@ -1,4 +1,5 @@
 import {
+	type SessionAssistantMessage,
 	type ComposerDocument,
 	composerDocumentFromText,
 	composerDocumentText,
@@ -171,7 +172,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			case "copy": {
 				const rows = await pi.getSessionMessages({ sessionId });
 				const text = rows.findLast(
-					(row) => row.role === "assistant" && row.text.trim(),
+					(row): row is SessionAssistantMessage => row.role === "assistant" && Boolean(row.text.trim()),
 				)?.text;
 				if (text) {
 					await navigator.clipboard.writeText(text);
