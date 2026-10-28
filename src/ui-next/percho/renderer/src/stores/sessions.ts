@@ -153,6 +153,34 @@ export type OpenFromHistoryResult =
 	| { ok: false }
 	| { ok: true; latest: boolean; meta: SessionMeta; token: number };
 
+export function applyBackendSessionConfiguration(
+	sessionId: string,
+	configuration: Required<Pick<SessionMeta, "model" | "thinkingLevel">> & {
+		permissionMode?: PermissionMode;
+	},
+): void {
+	const state = useSessionsStore.getState();
+	const previous = state.sessions.find((row) => row.sessionId === sessionId);
+	if (!previous) return;
+	if (
+		previous.model?.provider !== configuration.model?.provider ||
+		previous.model?.modelId !== configuration.model?.modelId ||
+		previous.thinkingLevel !== configuration.thinkingLevel
+	)
+		commitSessionState((current) => ({
+			sessions: current.sessions.map((row) =>
+				row.sessionId === sessionId
+					? { ...row, model: configuration.model, thinkingLevel: configuration.thinkingLevel }
+					: row,
+			),
+		}));
+	if (
+		configuration.permissionMode !== undefined &&
+		(state.permissionModes[sessionId] ?? "default") !== configuration.permissionMode
+	)
+		applyBackendPermissionMode(sessionId, configuration.permissionMode);
+}
+
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
 function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): void {
 	commitSessionState((state) => ({

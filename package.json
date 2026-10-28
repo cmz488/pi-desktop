@@ -94,8 +94,8 @@
         "web:durable": "node desk.mjs --single-process",
         "desktop:durable": "node launch-desktop.mjs --single-process",
         "build:ui": "node src/ui-next/build.mjs",
-        "test:ui-next": "node --test test/ui-next-*.test.mjs test/ui-parity.test.mjs",
-        "test:ui-next:browser": "node test/ui-parity-browser-check.mjs && node test/ui-compat-browser-check.mjs",
+        "test:ui-next": "node --test test/ui-next-*.test.mjs test/ui-parity.test.mjs test/ui-capabilities.test.mjs",
+        "test:ui-next:browser": "node test/ui-parity-browser-check.mjs && node test/ui-compat-browser-check.mjs && node test/ui-capabilities-browser-check.mjs",
         "test:mobile": "node --test test/mobile.test.mjs test/mobile-lan.test.mjs test/mobile-data.test.mjs test/mobile-projection.test.mjs"
     },
     "allowScripts": {

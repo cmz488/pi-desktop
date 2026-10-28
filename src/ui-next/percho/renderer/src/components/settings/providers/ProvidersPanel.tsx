@@ -1,4 +1,5 @@
 import type { ProviderInfo } from "@percho/shared";
+import { supportsHostChannel } from "../../../api";
 import { useEffect, useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
@@ -33,18 +34,25 @@ export function ProvidersPanel() {
 		<div>
 			<RemoteAuthHelp />
 			<div className="mb-3 flex gap-1 border-b border-border">
-				{(["providers", "subagents"] as const).map((id) => (
-					<button
-						key={id}
-						type="button"
-						className={`px-2.5 py-1.5 text-ui-12 transition-colors ${
-							tab === id ? "border-b-2 border-ink text-ink" : "text-ink-faint hover:text-ink"
-						}`}
-						onClick={() => setTab(id)}
-					>
-						{t(`settings.models.${id}`)}
-					</button>
-				))}
+				{(["providers", "subagents"] as const)
+					.filter(
+						(id) =>
+							id !== "subagents" ||
+							(supportsHostChannel("settings:listSubagents") &&
+								supportsHostChannel("settings:getModelPrefs")),
+					)
+					.map((id) => (
+						<button
+							key={id}
+							type="button"
+							className={`px-2.5 py-1.5 text-ui-12 transition-colors ${
+								tab === id ? "border-b-2 border-ink text-ink" : "text-ink-faint hover:text-ink"
+							}`}
+							onClick={() => setTab(id)}
+						>
+							{t(`settings.models.${id}`)}
+						</button>
+					))}
 			</div>
 			{tab === "subagents" ? (
 				<SubagentPanel />
@@ -65,7 +73,9 @@ export function ProvidersPanel() {
 							)}
 						</IconAction>
 					</div>
-					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-ui-12 text-red-600">{error}</p>}
+					{error && (
+						<p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-ui-12 text-red-600">{error}</p>
+					)}
 					{loading && providers.length === 0 ? (
 						<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.loading")}</p>
 					) : (
@@ -82,7 +92,9 @@ export function ProvidersPanel() {
 function ProviderList({ providers }: { providers: ProviderInfo[] }) {
 	const t = useT();
 	if (providers.length === 0) {
-		return <p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.providers.empty")}</p>;
+		return (
+			<p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.providers.empty")}</p>
+		);
 	}
 	return (
 		<ul className="divide-y divide-border">

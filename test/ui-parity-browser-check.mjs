@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopFixture, until as untilValue } from "./desktop-fixture.mjs";
 import { browserDriver } from "./durable-browser-driver.mjs";
@@ -29,6 +29,15 @@ const f = await desktopFixture({
 const git = (args) => promisify(execFile)("git", args, { cwd: f.cwd });
 let chrome, driver;
 try {
+  const modelsPath = join(f.agentDir, "models.json");
+  const models = JSON.parse(await readFile(modelsPath, "utf8"));
+  models.providers["desktop-fixture"].models.push({
+    id: "second",
+    name: "PARITY_SECOND_MODEL",
+    contextWindow: 8192,
+    maxTokens: 1024,
+  });
+  await writeFile(modelsPath, JSON.stringify(models));
   await mkdir(join(f.cwd, ".pi", "extensions"), { recursive: true });
   await writeFile(
     join(f.cwd, ".pi", "extensions", "parity.ts"),
@@ -155,6 +164,14 @@ try {
   await until(
     'document.querySelector("[data-session-page]").innerText.includes("answer: BROWSER_CHAT")',
   );
+  await f.call(`/agents/${actor.id}/api/model`, {
+    provider: "desktop-fixture",
+    id: "second",
+  });
+  await until(
+    'document.querySelector("[data-session-page]").innerText.includes("PARITY_SECOND_MODEL")',
+  );
+  console.log("PASS external model change updates the current UI metadata");
   await send("/parity-card");
   await until(
     'document.querySelector("[contenteditable=true]").innerText.trim()===""',
@@ -166,7 +183,9 @@ try {
   await until(
     'document.querySelector("[data-session-page]").innerText.includes("BROWSER_WIDGET")',
   );
-  await until(`!![...document.querySelectorAll('.desktop-card p')].find(n=>n.innerText.includes('BROWSER_WIDGET\\nSECOND_WIDGET_LINE'))`);
+  await until(
+    `!![...document.querySelectorAll('.desktop-card p')].find(n=>n.innerText.includes('BROWSER_WIDGET\\nSECOND_WIDGET_LINE'))`,
+  );
   assert(
     (
       await evaluate('document.querySelector(".desktop-toolbar").innerText')

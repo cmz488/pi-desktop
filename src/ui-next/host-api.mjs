@@ -90,9 +90,16 @@ export function buildHostApi({
   };
 
   const api = Object.create(null);
+  const unavailableEnvironment = Object.create(null);
   for (const [channel, entry] of Object.entries(channels)) {
     // `domain:action` 是 Percho 的通用分发占位，没有独立方法名。
     if (!entry.key) continue;
+    unavailableEnvironment[entry.key] = async () => {
+      throw new HostApiUnsupported(
+        channel,
+        "此 Host 只提供本地执行环境，不能将远程操作转交给本地",
+      );
+    };
     api[entry.key] = async (args) => {
       const row = support[channel];
       if (row?.status !== "implemented") throw unsupportedChannel(channel);
@@ -115,6 +122,7 @@ export function buildHostApi({
    */
   const unsupportedSubscriptions = new Map();
   for (const [name, row] of Object.entries(subscriptionSupport)) {
+    unavailableEnvironment[name] = () => () => {};
     api[name] = (listener) => {
       if (row.status !== "implemented") {
         unsupportedSubscriptions.set(
@@ -136,10 +144,11 @@ export function buildHostApi({
   /**
    * `forEnvironment(ref)`：Percho 多环境版的执行入口。
    *
-   * 我们只有一个环境（本 Host），所以返回同一个 api；渲染层的环境身份键仍然有效，
-   * 只是不会分流到另一个宿主。这不是降级——单环境宿主就是完整实现。
+   * 只有本地环境可执行；其他环境的方法明确拒绝，订阅不接入本地事件。
+   * 已保存的远程身份不能借用本地 API，否则同号会话会被误读或误写。
    */
-  api.forEnvironment = () => api;
+  api.forEnvironment = (ref) =>
+    ref === undefined || ref?.kind === "local" ? api : unavailableEnvironment;
   /** 本次会话触达过的未实现订阅：让“少了什么”可查，而不是静默。 */
   api.subscriptionReport = () =>
     Object.fromEntries(

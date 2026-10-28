@@ -223,9 +223,11 @@ export function createHttpHandlers({
       );
     },
     "models:list": async () => {
+      const id = await sessions.forCwd(undefined, { required: false });
+      if (!id) return [];
       const [state, providers] = await Promise.all([
-        get("/api/state"),
-        get("/api/providers"),
+        sessions.get("/api/state", id),
+        sessions.get("/api/providers", id),
       ]);
       const rows = (state.models ?? []).map((row) => {
         const provider = providers.rows.find(
@@ -250,8 +252,11 @@ export function createHttpHandlers({
     },
     // `/api/providers` 实测返回 { revision, rows: [] }。
     "settings:listProviders": async (args) => {
-      if (args?.options?.forceNetwork) await post("/api/refresh-models", {});
-      return providerViews(await get("/api/providers"));
+      const id = await sessions.forCwd(undefined, { required: false });
+      if (!id) return [];
+      if (args?.options?.forceNetwork)
+        await sessions.post("/api/refresh-models", {}, id);
+      return providerViews(await sessions.get("/api/providers", id));
     },
     "project:listFiles": async (args) => {
       const id = await sessions.forCwd(args.cwd);

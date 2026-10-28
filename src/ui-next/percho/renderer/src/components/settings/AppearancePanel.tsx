@@ -1,4 +1,10 @@
-import { CODE_FONT_SIZE_PRESETS, formatFontSize, type ThemeMode, UI_FONT_SIZE_PRESETS } from "@percho/shared";
+import {
+	CODE_FONT_SIZE_PRESETS,
+	formatFontSize,
+	type ThemeMode,
+	UI_FONT_SIZE_PRESETS,
+} from "@percho/shared";
+import { supportsHostChannel } from "../../api";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
@@ -121,58 +127,62 @@ function AppearanceBasics() {
 					<span className="font-mono text-ui-115 text-ink-dim">{formatFontSize(codeFontSize)}</span>
 				</div>
 			</div>
-			<div>
-				<h3 className="text-ui-13 font-medium text-ink">{t("settings.background")}</h3>
-				<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.backgroundHint")}</p>
-				<div className="mt-2 flex items-center gap-3">
-					{background.image ? (
-						<img
-							src={backgroundImageUrl(background.image)}
-							alt=""
-							className="h-16 w-28 rounded-lg border border-border object-cover"
-						/>
-					) : (
-						<div className="flex h-16 w-28 items-center justify-center rounded-lg border border-dashed border-border text-ui-11 text-ink-faint">
-							—
-						</div>
-					)}
-					<div className="flex gap-2">
-						<button
-							type="button"
-							className="rounded-lg border border-border px-3 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover"
-							onClick={() => void pickBackground()}
-						>
-							{t(background.image ? "settings.backgroundChange" : "settings.backgroundPick")}
-						</button>
-						{background.image && (
+			{supportsHostChannel("background:pick") && (
+				<div>
+					<h3 className="text-ui-13 font-medium text-ink">{t("settings.background")}</h3>
+					<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.backgroundHint")}</p>
+					<div className="mt-2 flex items-center gap-3">
+						{background.image ? (
+							<img
+								src={backgroundImageUrl(background.image)}
+								alt=""
+								className="h-16 w-28 rounded-lg border border-border object-cover"
+							/>
+						) : (
+							<div className="flex h-16 w-28 items-center justify-center rounded-lg border border-dashed border-border text-ui-11 text-ink-faint">
+								—
+							</div>
+						)}
+						<div className="flex gap-2">
 							<button
 								type="button"
-								className="rounded-lg px-3 py-1.5 text-ui-13 text-red-500 transition-colors hover:bg-red-50"
-								onClick={clearBackground}
+								className="rounded-lg border border-border px-3 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover"
+								onClick={() => void pickBackground()}
 							>
-								{t("settings.backgroundClear")}
+								{t(background.image ? "settings.backgroundChange" : "settings.backgroundPick")}
 							</button>
-						)}
+							{background.image && (
+								<button
+									type="button"
+									className="rounded-lg px-3 py-1.5 text-ui-13 text-red-500 transition-colors hover:bg-red-50"
+									onClick={clearBackground}
+								>
+									{t("settings.backgroundClear")}
+								</button>
+							)}
+						</div>
 					</div>
+					{background.image && (
+						<div className="mt-3 flex items-center gap-3">
+							<span className="w-20 shrink-0 text-ui-12 text-ink-dim">
+								{t("settings.backgroundDim")}
+							</span>
+							<input
+								type="range"
+								min={20}
+								max={100}
+								value={Math.round(background.dim * 100)}
+								onChange={(e) => setBackgroundDim(Number(e.target.value) / 100)}
+								className="h-1 flex-1 accent-[#7c3aed]"
+								aria-label={t("settings.backgroundDim")}
+							/>
+							<span className="w-10 shrink-0 text-right text-ui-12 tabular-nums text-ink-dim">
+								{Math.round(background.dim * 100)}%
+							</span>
+						</div>
+					)}
 				</div>
-				{background.image && (
-					<div className="mt-3 flex items-center gap-3">
-						<span className="w-20 shrink-0 text-ui-12 text-ink-dim">{t("settings.backgroundDim")}</span>
-						<input
-							type="range"
-							min={20}
-							max={100}
-							value={Math.round(background.dim * 100)}
-							onChange={(e) => setBackgroundDim(Number(e.target.value) / 100)}
-							className="h-1 flex-1 accent-[#7c3aed]"
-							aria-label={t("settings.backgroundDim")}
-						/>
-						<span className="w-10 shrink-0 text-right text-ui-12 tabular-nums text-ink-dim">
-							{Math.round(background.dim * 100)}%
-						</span>
-					</div>
-				)}
-			</div>
+			)}
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-ui-13 font-medium text-ink">{t("settings.topBar")}</h3>
@@ -210,7 +220,9 @@ export function AppearancePanel() {
 	return (
 		<div>
 			<div className="flex gap-5 border-b border-border px-0.5 pt-0.5">
-				{APPEARANCE_TABS.map((tabDef) => (
+				{APPEARANCE_TABS.filter(
+					(item) => item.id !== "uiPlugins" || supportsHostChannel("uiPlugins:getConfig"),
+				).map((tabDef) => (
 					<button
 						key={tabDef.id}
 						type="button"

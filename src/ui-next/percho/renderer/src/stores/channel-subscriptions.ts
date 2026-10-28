@@ -1,4 +1,5 @@
 import type { ChannelSubscriptionsSnapshot } from "@percho/shared";
+import { supportsHostChannel } from "../api";
 import { create } from "zustand";
 import { getExecutionApi, subscribeExecutionEnvironments } from "../environment-api";
 
@@ -159,6 +160,7 @@ export function useChannelTopics(sessionId: string | null): readonly string[] {
  * 返回取消订阅函数（React effect cleanup 直接 return 它）。
  */
 export function initChannelSubscriptions(): () => void {
+	if (!supportsHostChannel("session:getChannelSubscriptions")) return () => {};
 	return subscribeExecutionEnvironments((api) =>
 		api.onChannelSubscriptionsChanged((snapshot) => {
 			useChannelSubscriptionsStore.getState().apply(snapshot);
@@ -183,7 +185,7 @@ export function invalidateChannelSubscriptionQueries(): void {
  */
 export async function syncActiveSession(sessionId: string | null): Promise<void> {
 	const token = ++loadSeq;
-	if (!sessionId) return;
+	if (!sessionId || !supportsHostChannel("session:getChannelSubscriptions")) return;
 	const forgetToken = useChannelSubscriptionsStore.getState().forgetTokens[sessionId] ?? 0;
 	let snapshot: ChannelSubscriptionsSnapshot;
 	try {

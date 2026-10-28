@@ -7,7 +7,7 @@ import { acceptInteractionEvent, useInteractionStore } from "../stores/interacti
 import { useProjectsStore } from "../stores/projects";
 import { acceptSessionEvent, onSessionBoundaryReset } from "../stores/session-event-boundary";
 import { retrySessionHistory } from "../stores/session-history";
-import { useSessionsStore } from "../stores/sessions";
+import { applyBackendSessionConfiguration, useSessionsStore } from "../stores/sessions";
 import { pushExtensionToast } from "../stores/toasts";
 import { useTranscriptStore } from "../stores/transcript";
 
@@ -38,6 +38,8 @@ export function useSessionEventBridge({
 			const offEvent = pi.onEvent(
 				({ sessionId, event, sequence }: { sessionId: string; event: SessionEvent; sequence?: number }) => {
 					acceptSessionEvent(sessionId, sequence, event, () => {
+						if (event.type === "desktop_snapshot" && event.configuration)
+							applyBackendSessionConfiguration(sessionId, event.configuration);
             if (event.type === "desktop_snapshot" && event.name !== undefined &&
               useSessionsStore.getState().sessions.find((row) => row.sessionId === sessionId)?.name !== event.name) {
               useSessionsStore.getState().updateSessionName(sessionId, event.name);

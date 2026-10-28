@@ -109,7 +109,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (cached) useSessionsStore.setState({ models: cached });
 		else useSessionsStore.setState({ models: [] });
 		if (online) void store.loadModels(environment);
-	}, [modelEnvironmentKey, online]);
+	}, [modelEnvironmentKey, online, activeSessionId, draftConfig?.cwd]);
 
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);

@@ -1,4 +1,10 @@
-import { type EnvironmentRef, environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT } from "@percho/shared";
+import {
+	type EnvironmentRef,
+	environmentEntityRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
+} from "@percho/shared";
+import { supportsHostChannel } from "../../api";
 import type { ComponentType, CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EnvironmentContext } from "../../environment-context";
@@ -139,7 +145,11 @@ function SettingsDialogBody({
 		? registeredEnvironments
 		: [...registeredEnvironments, environment];
 	const setOpen = useSettingsStore((s) => s.setOpen);
-	const category = useSettingsStore((s) => s.category);
+	const requestedCategory = useSettingsStore((s) => s.category);
+	const category =
+		requestedCategory === "remote" && !supportsHostChannel("remote:getStatus")
+			? "general"
+			: requestedCategory;
 	const setCategory = useSettingsStore((s) => s.setCategory);
 
 	// settings.panel 贡献：动态分类（插件停用/卸载即消失）；稳定引用（空用模块级 EMPTY）
@@ -235,7 +245,9 @@ function SettingsDialogBody({
 						className="fade-rule-v edge-fade w-44 shrink-0 overflow-y-auto p-2"
 						style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					>
-						{STATIC_CATEGORIES.map((id) => {
+						{STATIC_CATEGORIES.filter(
+							(id) => id !== "remote" || supportsHostChannel("remote:getStatus"),
+						).map((id) => {
 							const Icon = CATEGORY_ICONS[id];
 							return (
 								<button

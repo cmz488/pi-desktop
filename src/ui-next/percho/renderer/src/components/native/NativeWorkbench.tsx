@@ -1173,6 +1173,8 @@ function SettingsPanel({
 				provider.applyInventory("modelChoices", providers);
 				packages.applyInventory(plugins);
 				update();
+				if (useSessionsStore.getState().activeSessionId === sessionId)
+					await useSessionsStore.getState().loadModels();
 			};
 			const common = {
 				root: scope,

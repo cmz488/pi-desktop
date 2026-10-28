@@ -6,6 +6,8 @@ export function perchoConsumers() {
   return (compiled ??= build({
     stdin: {
       contents: `
+      export { getExecutionApi } from "./src/ui-next/percho/renderer/src/environment-api.ts";
+      export { environmentEntityKey } from "./src/ui-next/percho/shared/environment.ts";
       export { parseEnvironmentUiState } from "./src/ui-next/percho/shared/environment-ui-state.ts";
       export { messagesToUIMessages } from "./src/ui-next/percho/shared/transcript/mapping.ts";
       export { filterCommands } from "./src/ui-next/percho/renderer/src/components/composer/slash-filter.ts";

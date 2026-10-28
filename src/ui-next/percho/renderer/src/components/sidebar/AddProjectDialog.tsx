@@ -1,3 +1,4 @@
+import { supportsHostChannel } from "../../api";
 import { createPortal } from "react-dom";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
@@ -32,14 +33,16 @@ export function AddProjectDialog({
 					>
 						{t("remote.localProject")}
 					</Button>
-					<Button
-						onClick={() => {
-							onClose();
-							useRemoteConnectionStore.getState().setOpen(true);
-						}}
-					>
-						{t("remote.remoteProject")}
-					</Button>
+					{supportsHostChannel("remote:getStatus") && (
+						<Button
+							onClick={() => {
+								onClose();
+								useRemoteConnectionStore.getState().setOpen(true);
+							}}
+						>
+							{t("remote.remoteProject")}
+						</Button>
+					)}
 				</div>
 			</div>
 		</div>,

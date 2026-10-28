@@ -305,7 +305,13 @@ export function createSessionTransport({ get, post }) {
     list,
     async forCwd(cwd, { required = true } = {}) {
       const rows = await list();
-      const eligible = (row) => row.active && (!cwd || row.cwd === cwd);
+      const eligible = (row) =>
+        (row.active ||
+          catalog?.agents.some(
+            (agent) =>
+              agent.id === row.sessionId.split("/")[0] && agent.desired,
+          )) &&
+        (!cwd || row.cwd === cwd);
       const row =
         rows.find((row) => eligible(row) && row.sessionId === lastSession) ??
         rows.find(eligible);

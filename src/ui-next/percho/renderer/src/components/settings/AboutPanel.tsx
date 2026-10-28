@@ -1,6 +1,6 @@
 import type { AppInfo, UpdateDiagnosticsInfo } from "@percho/shared";
 import { useEffect, useState } from "react";
-import { getPi } from "../../api";
+import { getPi, supportsHostChannel } from "../../api";
 import { useT } from "../../i18n";
 import { useUpdateStore } from "../../stores/update";
 import { UpdateHelp } from "./UpdateHelp";
@@ -11,6 +11,17 @@ export function AboutPanel() {
 	const [info, setInfo] = useState<AppInfo | null>(null);
 	const [diagnostics, setDiagnostics] = useState<UpdateDiagnosticsInfo | null>(null);
 	const state = useUpdateStore((s) => s.state);
+	const [error, setError] = useState<string | null>(null);
+	const updates = supportsHostChannel("update:check");
+	const diagnosticsAvailable = supportsHostChannel("update:diagnostics");
+	const act = async (action: () => Promise<unknown>) => {
+		setError(null);
+		try {
+			await action();
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : String(reason));
+		}
+	};
 
 	useEffect(() => {
 		let cancelled = false;
@@ -22,18 +33,19 @@ export function AboutPanel() {
 			.catch(() => {
 				if (!cancelled) setInfo(null);
 			});
-		void getPi()
-			.getUpdateDiagnostics()
-			.then((value) => {
-				if (!cancelled) setDiagnostics(value);
-			})
-			.catch(() => {
-				if (!cancelled) setDiagnostics(null);
-			});
+		if (diagnosticsAvailable)
+			void getPi()
+				.getUpdateDiagnostics()
+				.then((value) => {
+					if (!cancelled) setDiagnostics(value);
+				})
+				.catch(() => {
+					if (!cancelled) setDiagnostics(null);
+				});
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [diagnosticsAvailable]);
 
 	// 状态行文案；downloaded 态按钮语义切换为「重启并安装」；manual 构建（mac 未正式签名）跳 release 页手动下载
 	const statusText =
@@ -55,7 +67,7 @@ export function AboutPanel() {
 
 	const openReleasePage = async (version: string) => {
 		const appInfo = info ?? (await getPi().getAppInfo());
-		void getPi().openExternal({ url: `${appInfo.repoUrl}/releases/tag/v${version}` });
+		await getPi().openExternal({ url: `${appInfo.repoUrl}/releases/tag/v${version}` });
 	};
 
 	const buttonLabel =
@@ -76,30 +88,42 @@ export function AboutPanel() {
 				{t("settings.about.version")} {info?.version ?? "…"}
 			</p>
 			<div className="mt-4 flex items-center gap-2">
-				<button
-					type="button"
-					className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
-					onClick={() => {
-						if (state?.phase === "downloaded") void getPi().installUpdate();
-						else if (state?.phase === "available" && state.manual) void openReleasePage(state.version);
-						else void getPi().checkForUpdates();
-					}}
-				>
-					{buttonLabel}
-				</button>
-				<button
-					type="button"
-					className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
-					onClick={() => {
-						if (info?.repoUrl) void getPi().openExternal({ url: info.repoUrl });
-					}}
-				>
-					{t("settings.about.sourceCode")}
-				</button>
+				{updates && (
+					<button
+						type="button"
+						className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+						onClick={() => {
+							if (state?.phase === "downloaded") act(() => getPi().installUpdate());
+							else if (state?.phase === "available" && state.manual)
+								act(() => openReleasePage(state.version));
+							else act(() => getPi().checkForUpdates());
+						}}
+					>
+						{buttonLabel}
+					</button>
+				)}
+				{info?.repoUrl && (
+					<button
+						type="button"
+						className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+						onClick={() => act(() => getPi().openExternal({ url: info.repoUrl }))}
+					>
+						{t("settings.about.sourceCode")}
+					</button>
+				)}
 			</div>
 			{statusText && <p className="mt-1 text-ui-11 text-ink-faint">{statusText}</p>}
-			{info && (
-				<UpdateHelp diagnostics={diagnostics} windows={info.platform === "win32"} repoUrl={info.repoUrl} />
+			{error && (
+				<p role="alert" className="mt-2 text-ui-12 text-err">
+					{error}
+				</p>
+			)}
+			{info && diagnosticsAvailable && supportsHostChannel("update:exportDiagnostics") && (
+				<UpdateHelp
+					diagnostics={diagnostics}
+					windows={info.platform === "win32"}
+					repoUrl={info.repoUrl}
+				/>
 			)}
 		</div>
 	);

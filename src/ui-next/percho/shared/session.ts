@@ -517,6 +517,9 @@ export type SessionEvent =
 			transcript: import("./transcript").SessionTranscriptState;
 			usage?: ContextUsageInfo | null;
 			name?: string;
+			configuration?: Required<Pick<SessionMeta, "model" | "thinkingLevel">> & {
+				permissionMode?: PermissionMode;
+			};
 			desktopUi?: Record<string, any>;
 	  }
 	| Exclude<PiAgentSessionEvent, { type: "turn_end" }>

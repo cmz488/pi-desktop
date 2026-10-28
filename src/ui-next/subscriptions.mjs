@@ -42,6 +42,25 @@ export function createSubscriptions({
             transcript,
             usage: value.usage ?? null,
             name: value.name,
+            configuration: {
+              model: value.model
+                ? {
+                    provider: value.model.provider,
+                    modelId: value.model.id ?? value.model.modelId,
+                  }
+                : null,
+              thinkingLevel: value.thinkingLevel ?? null,
+              ...(["yolo", "ask-risky", "ask-all"].includes(
+                value.active?.approvalMode,
+              )
+                ? {
+                    permissionMode:
+                      value.active.approvalMode === "yolo"
+                        ? "fullAccess"
+                        : "default",
+                  }
+                : {}),
+            },
             desktopUi: {
               ...value.ui,
               statuses: value.statuses,
