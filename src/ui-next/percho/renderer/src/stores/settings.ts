@@ -33,7 +33,6 @@ import { pushToast } from "./toasts";
 export type SettingsCategory =
 	| "general"
  | "personality"
- | "agent"
  | "network"
  | "resources"
 	| "appearance"

@@ -1,5 +1,5 @@
 import { pushExtensionToast } from "../../stores/toasts";
-import { useNativeSessionActions } from "../native/NativeSidebar";
+import { useNativeSessionActions } from "../session/native-session-actions";
 import { useDesktopWorkspace } from "../../stores/desktop-workspace";
 import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
@@ -48,6 +48,7 @@ export function useSessionMenu() {
 
 	const workspace = useDesktopWorkspace((s) => s.workspace);
 	const native = useNativeSessionActions(menu?.session);
+	const archived = menu?.session.archived === true;
 	const element = (
 		<>
 			{menu && (
@@ -55,20 +56,23 @@ export function useSessionMenu() {
 					anchor={menu.anchor}
 					onClose={() => setMenu(null)}
 					items={[
-						...sessionMenuItems(t, {
-							sessionId: menu.session.sessionId,
-							pinned: pinnedSessions.includes(menu.session.sessionId),
-							onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
-							onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
-							onDelete:
-								menu.session.archivable === false ||
-								workspace?.agents.some(
-									(row) => row.id === menu.session.sessionId && row.status === "running",
-								)
-									? undefined
-									: () => setDeleting(menu.session),
-							deleteLabel: menu.session.archivable === true ? t("sessionMenu.archive") : undefined,
-						}),
+						...(archived
+							? []
+							: sessionMenuItems(t, {
+									sessionId: menu.session.sessionId,
+									pinned: pinnedSessions.includes(menu.session.sessionId),
+									onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
+									onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
+									onDelete:
+										menu.session.archivable === false ||
+										workspace?.agents.some(
+											(row) => row.id === menu.session.sessionId && row.status === "running",
+										)
+											? undefined
+											: () => setDeleting(menu.session),
+									deleteLabel:
+										menu.session.archivable === true ? t("sessionMenu.archive") : undefined,
+								})),
 						...native.items,
 					]}
 				/>
@@ -89,19 +93,13 @@ export function useSessionMenu() {
 			{deleting && (
 				<ConfirmDialog
 					title={t(
-						deleting.archivable === true
-							? "sessionMenu.archiveTitle"
-							: "sessionMenu.deleteTitle",
+						deleting.archivable === true ? "sessionMenu.archiveTitle" : "sessionMenu.deleteTitle",
 					)}
 					description={t(
-						deleting.archivable === true
-							? "sessionMenu.archiveDesc"
-							: "sessionMenu.deleteDesc",
+						deleting.archivable === true ? "sessionMenu.archiveDesc" : "sessionMenu.deleteDesc",
 					)}
 					confirmLabel={t(
-						deleting.archivable === true
-							? "sessionMenu.archive"
-							: "sessionMenu.delete",
+						deleting.archivable === true ? "sessionMenu.archive" : "sessionMenu.delete",
 					)}
 					cancelLabel={t("common.cancel")}
 					danger

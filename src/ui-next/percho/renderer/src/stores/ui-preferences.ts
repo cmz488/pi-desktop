@@ -33,6 +33,12 @@ interface UiPreferencesStore {
 	 * 它不是渲染宽：渲染宽 = 它再被「容器宽 - 聊天列最小宽」夹紧（`lib/sidebar-width.ts`），不回写这里。
 	 */
 	sidebarWidth: number;
+	/** 左侧栏分组方式：按工作区分组或单列表（视图选项面板） */
+	sidebarGrouping: "workspace" | "list";
+	/** 左侧栏会话排序：最近更新或名称 */
+	sidebarSort: "recent" | "name";
+	/** 左侧栏归档筛选：隐藏已归档 / 全部 / 仅已归档 */
+	sidebarArchived: "active" | "all" | "archived";
 	/** 左侧栏已展开的分组 key；含义由 `expandedGroupsTouched` 决定（见 shared UiState，空数组不再兼任「未操作」） */
 	expandedGroups: string[];
 	/** 展开态是否已被用户手动开合过（false = 走 Sidebar 的默认推断，true = 空数组合法表示全部折叠） */
@@ -65,6 +71,9 @@ interface UiPreferencesStore {
 	previewSidebarWidth: (width: number) => void;
 	/** 把当前 `sidebarWidth` 落盘一次（拖拽收尾调；幂等，未拖动时调也没坏处） */
 	commitSidebarWidth: () => void;
+	setSidebarGrouping: (value: "workspace" | "list") => void;
+	setSidebarSort: (value: "recent" | "name") => void;
+	setSidebarArchived: (value: "active" | "all" | "archived") => void;
 	/** 左侧栏开合一个分组（由 useExpandedGroups 算好新的展开集）：**同时置 touched 位**，
 	 *  空数组合法表示「用户把最后一组也折了」（旧版空数组只能表示「没操作过」） */
 	setExpandedGroups: (groups: string[]) => void;
@@ -102,6 +111,9 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sessionRailEnabled: false,
 	sidebarCollapsed: false,
 	sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
+	sidebarGrouping: "workspace",
+	sidebarSort: "recent",
+	sidebarArchived: "active",
 	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
 	expandedGroupsTouched: false,
@@ -125,6 +137,12 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			sidebarWidth: clampSidebarWidth(saved?.sidebarWidth),
+			sidebarGrouping: saved?.sidebarGrouping === "list" ? "list" : "workspace",
+			sidebarSort: saved?.sidebarSort === "name" ? "name" : "recent",
+			sidebarArchived:
+				saved?.sidebarArchived === "all" || saved?.sidebarArchived === "archived"
+					? saved.sidebarArchived
+					: "active",
 			expandedGroups: saved?.expandedGroups ?? [],
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
 			pinnedProjects: saved?.pinnedProjects ?? [],
@@ -188,6 +206,21 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 
 	commitSidebarWidth: () => {
 		persistPatch({ sidebarWidth: get().sidebarWidth });
+	},
+
+	setSidebarGrouping: (sidebarGrouping) => {
+		set({ sidebarGrouping });
+		persistPatch({ sidebarGrouping });
+	},
+
+	setSidebarSort: (sidebarSort) => {
+		set({ sidebarSort });
+		persistPatch({ sidebarSort });
+	},
+
+	setSidebarArchived: (sidebarArchived) => {
+		set({ sidebarArchived });
+		persistPatch({ sidebarArchived });
 	},
 
 	setExpandedGroups: (groups) => {

@@ -72,6 +72,14 @@ export interface UiState {
 	 */
 	sidebarWidth: number;
 	/**
+	 * 左侧栏分组方式：按工作区分组（默认）或单列表
+	 */
+	sidebarGrouping: "workspace" | "list";
+	/** 左侧栏会话排序：最近更新（默认）或名称 */
+	sidebarSort: "recent" | "name";
+	/** 左侧栏归档筛选：隐藏已归档（默认）、全部、仅已归档 */
+	sidebarArchived: "active" | "all" | "archived";
+	/**
 	 * 界面字号（px）：基准 13（= 迁移前现状，乘数 1），四档 12 / 13 / 15 / 17（shared/typography.ts）。
 	 * 影响全部界面文字（含对话正文），图标与布局尺寸不受影响。
 	 */
@@ -134,6 +142,8 @@ export interface SessionMeta {
 	thinkingLevel?: string | null;
 	/** 是否仍在内存中活跃（否则是历史会话） */
 	active: boolean;
+	/** 是否已归档（Desktop Agent 归档后历史移至归档库，点击时先恢复） */
+	archived?: boolean;
 	/** 只读会话（subagent 产物检视，spec §8.1）：禁用输入/fork/撤回/模型切换 */
 	readOnly?: boolean;
 	branching?: boolean;

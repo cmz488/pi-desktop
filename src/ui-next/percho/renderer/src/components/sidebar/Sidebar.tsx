@@ -1,9 +1,8 @@
-import { NativeSidebarList } from "../native/NativeSidebar";
-import { useUiStore } from "../../stores/ui";
 import { type CSSProperties, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { deriveSidebarNavigation } from "../../lib/sidebar-groups";
+import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
@@ -13,6 +12,8 @@ import { SidebarFooter } from "./SidebarFooter";
 import { SidebarGroup } from "./SidebarGroup";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
+import { SidebarSessionList } from "./SidebarSessionList";
+import { useSessionMenu } from "./SessionMenu";
 import { useSidebarBatching } from "./useSidebarBatching";
 import { useSidebarRenderWidth } from "./useSidebarRenderWidth";
 
@@ -29,13 +30,15 @@ import { useSidebarRenderWidth } from "./useSidebarRenderWidth";
  */
 export function Sidebar() {
 	const t = useT();
-	const sidebarView = useUiStore((s) => s.sidebarView);
 	const collapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
 	const sidebarWidth = useUiPreferencesStore((s) => s.sidebarWidth);
 	const [resizing, setResizing] = useState(false);
 	const asideRef = useRef<HTMLElement>(null);
 	const renderWidth = useSidebarRenderWidth(sidebarWidth, asideRef);
 	const expandedGroups = useUiPreferencesStore((s) => s.expandedGroups);
+	const sidebarGrouping = useUiPreferencesStore((s) => s.sidebarGrouping);
+	const sidebarSort = useUiPreferencesStore((s) => s.sidebarSort);
+	const sidebarArchived = useUiPreferencesStore((s) => s.sidebarArchived);
 	const expandedGroupsTouched = useUiPreferencesStore((s) => s.expandedGroupsTouched);
 	const pinnedProjects = useUiPreferencesStore((s) => s.pinnedProjects);
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
@@ -63,6 +66,9 @@ export function Sidebar() {
 				pinnedProjects,
 				expandedGroups,
 				expandedGroupsTouched,
+				grouping: sidebarGrouping,
+				sort: sidebarSort,
+				archived: sidebarArchived,
 			}),
 		[
 			allSessions,
@@ -74,13 +80,22 @@ export function Sidebar() {
 			pinnedProjects,
 			expandedGroups,
 			expandedGroupsTouched,
+			sidebarGrouping,
+			sidebarSort,
+			sidebarArchived,
 		],
 	);
 
 	// 分批显示（每组 6 条 + 显示更多）与搜索临时展开：纯内存态，只在渲染时叠加到派生结果上。
 	// 首次开合的起点由派生层给（当前会话所在组），组件不自己再算一遍。
 	const batching = useSidebarBatching({ search, defaults: data.defaultExpandedKeys });
-	const empty = data.dailies.length === 0 && data.projects.length === 0;
+	const sessionMenu = useSessionMenu();
+	const openSession = useProjectsStore((s) => s.openSession);
+	const flatClicks = batching.moreClicks("__flat__");
+	const empty =
+		sidebarGrouping === "list"
+			? data.flat.length === 0
+			: data.dailies.length === 0 && data.projects.length === 0;
 
 	// 左栏唯一滚动容器的边界淡出（底部下沿淡出，原来这里是一条 1px 实线）
 	const sidebarScrollRef = useRef<HTMLDivElement>(null);
@@ -105,8 +120,27 @@ export function Sidebar() {
 					style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					className="edge-fade min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				>
-					{sidebarView !== "sessions" ? (
-						<NativeSidebarList archived={sidebarView === "archive"} />
+					{sidebarGrouping === "list" ? (
+						<>
+							<p className="px-2 pb-1 pt-2 text-ui-11 text-ink-faint">全部会话</p>
+							<SidebarSessionList
+								sessions={visibleSessions(data.flat, flatClicks)}
+								activeSessionId={activeSessionId}
+								emptyLabel={
+									search
+										? t("sidebar.searchEmpty")
+										: sidebarArchived === "archived"
+											? "没有已归档的会话。"
+											: t("sidebar.noSessions")
+								}
+								showMoreLabel={t("sidebar.showMore")}
+								hasMore={hasMoreSessions(data.flat.length, flatClicks)}
+								onShowMore={() => batching.showMore("__flat__")}
+								onSelect={(session) => void openSession(session)}
+								onContextMenu={(session, anchor) => sessionMenu.open(session, anchor)}
+							/>
+							{sessionMenu.element}
+						</>
 					) : (
 						<>
 							{data.dailies.map((group) => (

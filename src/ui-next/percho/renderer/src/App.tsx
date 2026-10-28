@@ -39,6 +39,7 @@ import {
 	startEnvironmentUiPersistence,
 } from "./stores/environment-ui-restore";
 import { useInteractionStore } from "./stores/interactions";
+import { useWorkspaceObservation } from "./stores/desktop-workspace";
 import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
@@ -56,6 +57,8 @@ import { initUpdateStore } from "./stores/update";
  */
 
 export default function App() {
+	// Desktop 工作区观察：刷新 Agent 成员与归档状态，让左栏目录保持与真实 Host 一致。
+	useWorkspaceObservation();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	// 子代理检视页才挂返回入口：无关系时连左上定位容器都不出现（不留占位）
 	const hasParentRelation = useHasParentRelation(activeSessionId);
@@ -78,9 +81,7 @@ export default function App() {
 	const trustRequests = useInteractionStore((state) => state.trustRequests);
 	const selectedTrustId = useInteractionStore((state) => state.selectedTrustId);
 	const activeCwd = useSessionsStore(selectActiveCwd);
-	const foregroundTrustCwd = useInteractionStore(
-		(state) => state.foregroundTrustCwd,
-	);
+	const foregroundTrustCwd = useInteractionStore((state) => state.foregroundTrustCwd);
 	const visibleTrustRequests = trustRequests.filter(
 		(request) =>
 			environmentEntityRef(request.id).environment.kind === "local" ||
@@ -99,10 +100,7 @@ export default function App() {
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
 	useEffect(
-		() =>
-			supportsHostChannel("remote:status")
-				? initRemoteConnectionBridge()
-				: undefined,
+		() => (supportsHostChannel("remote:status") ? initRemoteConnectionBridge() : undefined),
 		[],
 	);
 
@@ -116,9 +114,9 @@ export default function App() {
 		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载
-		void Promise.allSettled([
-			useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT),
-		]).then(() => finishSplash());
+		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
+			finishSplash(),
+		);
 		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
 		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
 		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
@@ -147,7 +145,10 @@ export default function App() {
 		<div className="relative h-full">
 			{bgImage && (
 				<>
-					<div className="app-bg" style={{ backgroundImage: `url("${backgroundImageUrl(bgImage)}")` }} />
+					<div
+						className="app-bg"
+						style={{ backgroundImage: `url("${backgroundImageUrl(bgImage)}")` }}
+					/>
 					<div className="app-bg-scrim" style={{ opacity: bgDim }} />
 				</>
 			)}

@@ -13,19 +13,20 @@ export function openDesktopPanel(
 	if (destination === "settings") {
 		const category =
 			(
-				{ providers: "models", plugins: "extensions", marketplace: "extensions" } as Record<
-					string,
-					SettingsCategory
-				>
+				{
+					providers: "models",
+					plugins: "extensions",
+					marketplace: "extensions",
+					agent: "general",
+				} as Record<string, SettingsCategory>
 			)[view ?? ""] ??
 			view ??
 			"general";
-		if (category === "agent") useUiStore.getState().setSettingsAgentId(sessionId ?? null);
 		useSettingsStore.getState().openWith(category as SettingsCategory);
 	} else if (destination === "agents") {
 		if (useUiPreferencesStore.getState().sidebarCollapsed)
 			useUiPreferencesStore.getState().toggleSidebarCollapsed();
-		useUiStore.getState().setSidebarView("processes");
+		useUiStore.getState().setSidebarViewOptionsOpen(true);
 	} else {
 		useUiStore
 			.getState()

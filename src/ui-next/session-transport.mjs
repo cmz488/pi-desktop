@@ -21,6 +21,7 @@ export function toSessionMeta(row) {
     name: row.name,
     active: row.active ?? row.status === "running",
     readOnly: row.readOnly === true,
+    ...(row.archived ? { archived: true } : {}),
     ...(row.branching === undefined && row.sessionCommands === undefined
       ? {}
       : { branching: row.branching ?? row.sessionCommands }),
@@ -57,34 +58,37 @@ export function createSessionTransport({ get, post }) {
   async function list() {
     if (await detect()) {
       catalog = await get("/api/workspace");
-      return catalog.agents
-        .filter((row) => !row.archived)
-        .flatMap((row) => {
-          const cwd =
-            catalog.projects.find((p) => p.id === row.projectId)?.cwd ??
-            row.cwd ??
-            "";
-          const root = toSessionMeta({
-            ...row,
-            cwd,
-            readOnly: row.source === "pi",
-            archivable: row.source !== "pi",
-            sessionId: row.id,
-          });
-          return [
-            root,
-            ...(row.branches ?? []).map((branch) =>
-              toSessionMeta({
-                ...row,
-                ...branch,
-                cwd,
-                sessionId: `${row.id}/${branch.id}`,
-                archivable: false,
-                sessionFile: `pi-desktop:${row.id}/${branch.id}`,
-              }),
-            ),
-          ];
+      return catalog.agents.flatMap((row) => {
+        const cwd =
+          catalog.projects.find((p) => p.id === row.projectId)?.cwd ??
+          row.cwd ??
+          "";
+        const root = toSessionMeta({
+          ...row,
+          cwd,
+          readOnly: row.source === "pi",
+          archivable: row.source !== "pi" && !row.archived,
+          archived: row.archived === true,
+          active:
+            row.source !== "pi" && row.status === "running" && !row.archived,
+          sessionId: row.id,
         });
+        return [
+          root,
+          ...(row.branches ?? []).map((branch) =>
+            toSessionMeta({
+              ...row,
+              ...branch,
+              cwd,
+              sessionId: `${row.id}/${branch.id}`,
+              archivable: false,
+              archived: row.archived === true,
+              active: false,
+              sessionFile: `pi-desktop:${row.id}/${branch.id}`,
+            }),
+          ),
+        ];
+      });
     }
     legacyState = await get("/api/state");
     if (legacyState.host === "durable") {
@@ -127,7 +131,7 @@ export function createSessionTransport({ get, post }) {
       id =
         lastSession ??
         (await list()).find((row) => row.active)?.sessionId ??
-        (await list())[0]?.sessionId;
+        (await list()).find((row) => !row.archived)?.sessionId;
       if (!id) throw new Error("请先创建或打开会话");
     }
     if (await detect()) {

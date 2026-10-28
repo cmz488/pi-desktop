@@ -19,6 +19,10 @@ export type SidebarSession = {
 	pinned: boolean;
 };
 
+export type SidebarArchivedFilter = "active" | "all" | "archived";
+export type SidebarGrouping = "workspace" | "list";
+export type SidebarSort = "recent" | "name";
+
 /** 一个可折叠分组（日常空间与每个项目同构，渲染侧共用一套行组件） */
 export type SidebarGroup = {
 	/** 组 key = cwd（expandedGroups 里存的就是它） */
@@ -43,6 +47,8 @@ export type SidebarGroupsResult = {
 	daily: SidebarGroup | null;
 	dailies: SidebarGroup[];
 	projects: SidebarProjectEntry[];
+	/** 单列表模式：不分组的会话（已过筛选与排序） */
+	flat: SidebarSession[];
 	/** 无用户记录时的默认展开集（= 默认推断结果），供 useExpandedGroups 在用户首次开合时当起点 */
 	defaultExpandedKeys: string[];
 };
@@ -109,6 +115,10 @@ export type SidebarGroupsInput = {
 	expandedGroups: readonly string[];
 	/** false = 用户还没手动开合过（走默认推断，`expandedGroups` 不参与）；true = 完全以 `expandedGroups` 为准（空数组 = 全部折叠） */
 	expandedGroupsTouched: boolean;
+	/** 视图选项：分组方式、排序与归档筛选（缺省 = 按工作区 / 最近更新 / 隐藏已归档） */
+	grouping?: SidebarGrouping;
+	sort?: SidebarSort;
+	archived?: SidebarArchivedFilter;
 };
 
 /** `deriveSidebarNavigation` 的输入：左栏需要的两个数据源（历史 + 内存）+ 项目表 + 偏好 */
@@ -125,6 +135,10 @@ export type SidebarNavigationInput = {
 	pinnedProjects: readonly string[];
 	expandedGroups: readonly string[];
 	expandedGroupsTouched: boolean;
+	/** 视图选项（同 `SidebarGroupsInput`） */
+	grouping?: SidebarGrouping;
+	sort?: SidebarSort;
+	archived?: SidebarArchivedFilter;
 };
 
 function matchesSearch(session: SessionMeta, query: string): boolean {
@@ -133,12 +147,26 @@ function matchesSearch(session: SessionMeta, query: string): boolean {
 }
 
 /** 组内会话：按最后活动倒序（置顶分区前置由 partitionSessionsByPin 负责，它要求输入已排序） */
-function groupSessions(list: readonly SessionMeta[], pinned: ReadonlySet<string>): SidebarSession[] {
-	const sorted = [...list].sort((a, b) => (b.modifiedAt ?? b.createdAt) - (a.modifiedAt ?? a.createdAt));
+function groupSessions(
+	list: readonly SessionMeta[],
+	pinned: ReadonlySet<string>,
+	sort: SidebarSort = "recent",
+): SidebarSession[] {
+	const sorted = [...list].sort((a, b) =>
+		sort === "name"
+			? (a.name ?? a.sessionId).localeCompare(b.name ?? b.sessionId, "zh-Hans-CN")
+			: (b.modifiedAt ?? b.createdAt) - (a.modifiedAt ?? a.createdAt),
+	);
 	return partitionSessionsByPin(sorted, [...pinned]).map((session) => ({
 		session,
 		pinned: pinned.has(session.sessionId),
 	}));
+}
+
+/** 归档筛选：`all` 两者都留；`active` 只留未归档；`archived` 只留已归档。 */
+function matchesArchived(session: SessionMeta, filter: SidebarArchivedFilter): boolean {
+	if (filter === "all") return true;
+	return (session.archived === true) === (filter === "archived");
 }
 
 /**
@@ -157,8 +185,21 @@ function groupSessions(list: readonly SessionMeta[], pinned: ReadonlySet<string>
  */
 export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsResult {
 	const query = input.search.trim().toLowerCase();
-	const visible = input.sessions.filter((session) => matchesSearch(session, query));
+	const sort = input.sort ?? "recent";
+	const archived = input.archived ?? "active";
+	const visible = input.sessions.filter(
+		(session) => matchesArchived(session, archived) && matchesSearch(session, query),
+	);
 	const searching = query.length > 0;
+	const pinnedSessions = new Set(input.pinnedSessions);
+	if ((input.grouping ?? "workspace") === "list")
+		return {
+			daily: null,
+			dailies: [],
+			projects: [],
+			flat: groupSessions(visible, pinnedSessions, sort),
+			defaultExpandedKeys: [],
+		};
 
 	const byCwd = new Map<string, SessionMeta[]>();
 	for (const session of visible) {
@@ -167,7 +208,6 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 		else byCwd.set(session.cwd, [session]);
 	}
 
-	const pinnedSessions = new Set(input.pinnedSessions);
 	// 默认展开组只能来自显式 activeCwd：从 sessions 里反查 active 会因只读子会话被过滤而丢信息
 	const defaultExpandedKeys = input.activeCwd ? [input.activeCwd] : [];
 	// 展开态的唯一判据是 touched 位，不是「数组空不空」：空数组合法表示「用户把最后一组也折了」
@@ -176,7 +216,7 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 
 	const dailies: SidebarGroup[] = getDailyDirsCached().flatMap((cwd) => {
 		const sessions = byCwd.get(cwd) ?? [];
-		return searching && sessions.length === 0
+		return (searching || archived !== "active") && sessions.length === 0
 			? []
 			: [
 					{
@@ -185,14 +225,18 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 						cwd,
 						label: null,
 						sessionCount: sessions.length,
-						sessions: groupSessions(sessions, pinnedSessions),
+						sessions: groupSessions(sessions, pinnedSessions, sort),
 						expanded: isExpanded(cwd),
 					},
 				];
 	});
 	const daily = dailies.find((group) => group.cwd === getDailyDirCached()) ?? null;
 
-	const matched = input.projects.filter((project) => !searching || (byCwd.get(project.cwd)?.length ?? 0) > 0);
+	const matched = input.projects.filter((project) =>
+		(searching || archived !== "active") && (byCwd.get(project.cwd)?.length ?? 0) === 0
+			? false
+			: true,
+	);
 	const byCwdProject = new Map(matched.map((project) => [project.cwd, project]));
 	const pinnedProjects = input.pinnedProjects
 		.map((cwd) => byCwdProject.get(cwd))
@@ -211,12 +255,13 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 				cwd: project.cwd,
 				label: project.name,
 				sessionCount: sessions.length,
-				sessions: groupSessions(sessions, pinnedSessions),
+				sessions: groupSessions(sessions, pinnedSessions, sort),
 				expanded: isExpanded(project.cwd),
 				pinned: pinnedSet.has(project.cwd),
 				totalSessions: project.sessionCount,
 			};
 		}),
+		flat: [],
 		defaultExpandedKeys,
 	};
 }
@@ -248,6 +293,9 @@ export function deriveSidebarNavigation(input: SidebarNavigationInput): SidebarG
 		pinnedProjects: input.pinnedProjects,
 		expandedGroups: input.expandedGroups,
 		expandedGroupsTouched: input.expandedGroupsTouched,
+		grouping: input.grouping,
+		sort: input.sort,
+		archived: input.archived,
 	});
 }
 

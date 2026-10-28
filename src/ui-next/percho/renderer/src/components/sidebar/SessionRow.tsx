@@ -61,6 +61,11 @@ export function SessionRow({
 				{pinned && <PinIcon size={12} />}
 			</span>
 			<span className="min-w-0 flex-1 truncate">{title}</span>
+			{session.archived && (
+				<span className="shrink-0 rounded bg-hover px-1 py-px text-ui-10 text-ink-faint">
+					已归档
+				</span>
+			)}
 			{status !== "idle" && (
 				<span
 					className={`mr-0.5 h-[7px] w-[7px] shrink-0 rounded-full ${DOT_CLASS[status]}`}

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EnvironmentContext } from "../../environment-context";
 import { getEnvironments } from "../../environment-registry";
 import { useT } from "../../i18n";
+import type { MessageKey } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
@@ -37,11 +38,7 @@ import {
 } from "../icons";
 import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
 import { SelectionMenu } from "../ui/SelectionMenu";
-import {
-	AgentSettingsPanel,
-	NativePreferences,
-	PersonalityPanel,
-} from "../native/NativePreferences";
+import { NativePreferences, PersonalityPanel } from "../native/NativePreferences";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
@@ -54,7 +51,6 @@ import { SkillsPanel } from "./SkillsPanel";
 const STATIC_CATEGORIES = [
 	"general",
 	"personality",
-	"agent",
 	"network",
 	"resources",
 	"appearance",
@@ -67,10 +63,19 @@ const STATIC_CATEGORIES = [
 	"about",
 ] as const satisfies readonly SettingsCategory[];
 
+const CATEGORY_GROUPS = [
+	{ id: "app", items: ["general", "appearance"] },
+	{ id: "model", items: ["models", "skills", "mcp", "extensions", "resources"] },
+	{ id: "persona", items: ["personality"] },
+	{ id: "system", items: ["network", "lan", "remote", "about"] },
+] as const satisfies readonly {
+	id: "app" | "model" | "persona" | "system";
+	items: readonly SettingsCategory[];
+}[];
+
 const CATEGORY_ICONS = {
 	general: GearIcon,
 	personality: FileTextIcon,
-	agent: SubagentIcon,
 	network: ServerIcon,
 	resources: PuzzleIcon,
 	appearance: SunIcon,
@@ -93,7 +98,6 @@ function ResourcePreferences() {
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
 	personality: PersonalityPanel,
-	agent: AgentSettingsPanel,
 	network: NetworkPreferences,
 	resources: ResourcePreferences,
 	appearance: AppearancePanel,
@@ -145,7 +149,11 @@ function SettingsEnvironment() {
 	}, [environment, category]);
 	return (
 		<EnvironmentContext.Provider value={environment}>
-			<SettingsDialogBody key={key} environment={environment} onEnvironmentChange={setEnvironment} />
+			<SettingsDialogBody
+				key={key}
+				environment={environment}
+				onEnvironmentChange={setEnvironment}
+			/>
 		</EnvironmentContext.Provider>
 	);
 }
@@ -179,7 +187,9 @@ function SettingsDialogBody({
 	// 全局总开关关闭时隐藏插件分类（与 RegionHost 同一开关语义；当前正在看的分类回落 comingSoon 空态）
 	const masterOn = useUiPluginsStore((s) => s.config.enabled);
 	const registryCategories = useUiPluginRegistry((s) => s.contributions[UI_REGIONS.SettingsPanel]);
-	const pluginCategories = masterOn ? (registryCategories ?? EMPTY_CONTRIBUTIONS) : EMPTY_CONTRIBUTIONS;
+	const pluginCategories = masterOn
+		? (registryCategories ?? EMPTY_CONTRIBUTIONS)
+		: EMPTY_CONTRIBUTIONS;
 	// 贡献边界 key 带 loadNonce（与 RegionHost 一致）：热重载换新边界实例，settings.panel 贡献崩溃后可恢复
 	const pluginNonces = useUiPluginRegistry((s) => s.loadNonces);
 
@@ -195,6 +205,11 @@ function SettingsDialogBody({
 	useEdgeFade(contentRef);
 
 	const Panel = PANELS[category];
+	const knownCategory = (STATIC_CATEGORIES as readonly string[]).includes(category);
+	const title = knownCategory
+		? t(`settings.category.${category}` as MessageKey)
+		: (activePluginContribution?.title ?? t("settings.title"));
+	const hint = knownCategory ? t(`settings.categoryHint.${category}` as MessageKey) : "";
 
 	return (
 		<div
@@ -202,11 +217,16 @@ function SettingsDialogBody({
 			role="dialog"
 			aria-modal
 		>
-			<div className="flex h-[80vh] max-h-[calc(100dvh-24px)] w-[800px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
+			<div className="flex h-[80vh] max-h-[calc(100dvh-24px)] w-[880px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
 				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
-				<div className="flex shrink-0 items-center justify-between px-4 py-3">
-					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
-						{t("settings.title")}
+				<div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-4">
+					<div className="min-w-0">
+						<h2 className="text-ui-16 font-semibold leading-snug text-ink">{title}</h2>
+						{hint && (
+							<p className="mt-1 max-w-[52ch] text-ui-11 leading-relaxed text-ink-faint">{hint}</p>
+						)}
+					</div>
+					<div className="flex shrink-0 items-start gap-1">
 						{category !== "remote" && (
 							<>
 								<button
@@ -215,7 +235,9 @@ function SettingsDialogBody({
 									aria-label={t("settings.environment")}
 									aria-haspopup="listbox"
 									aria-expanded={!!environmentAnchor}
-									onClick={(event) => setEnvironmentAnchor(environmentAnchor ? null : event.currentTarget)}
+									onClick={(event) =>
+										setEnvironmentAnchor(environmentAnchor ? null : event.currentTarget)
+									}
 									onKeyDown={(event) => {
 										if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 											event.preventDefault();
@@ -255,7 +277,7 @@ function SettingsDialogBody({
 								)}
 							</>
 						)}
-					</h2>
+					</div>
 					<button
 						type="button"
 						className="rounded-lg px-2 py-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
@@ -269,36 +291,48 @@ function SettingsDialogBody({
 					{/* 与内容的分界：中段实、两头淡出的发丝线（`.fade-rule-v`，同左栏） */}
 					<nav
 						ref={navRef}
-						className="fade-rule-v edge-fade w-44 shrink-0 overflow-y-auto p-2"
+						className="fade-rule-v edge-fade w-[180px] shrink-0 overflow-y-auto px-2 py-3"
 						style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					>
-						{STATIC_CATEGORIES.filter(
-							(id) => id !== "remote" || supportsHostChannel("remote:status"),
-						).map((id) => {
-							const Icon = CATEGORY_ICONS[id];
+						{CATEGORY_GROUPS.map((group) => {
+							const items = group.items.filter(
+								(id) => id !== "remote" || supportsHostChannel("remote:status"),
+							);
+							if (!items.length) return null;
 							return (
-								<button
-									key={id}
-									type="button"
-									className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
-										category === id
-											? "bg-hover font-medium text-ink"
-											: "text-ink-dim hover:bg-hover hover:text-ink"
-									}`}
-									onClick={() => setCategory(id)}
-								>
-									<span className="flex w-3.5 shrink-0 items-center justify-center">
-										<Icon size={14} />
-									</span>
-									<span className="min-w-0">
-										{t(`settings.category.${id}`)}
-										{id === "remote" && (
-											<span className="ml-1 inline-block text-ui-11 font-normal text-ink-faint">
-												{t("settings.experimental")}
-											</span>
-										)}
-									</span>
-								</button>
+								<div key={group.id} className="pb-2">
+									<p className="px-2.5 pb-1 pt-1.5 text-ui-11 text-ink-faint">
+										{t(`settings.group.${group.id}` as MessageKey)}
+									</p>
+									{items.map((id) => {
+										const Icon = CATEGORY_ICONS[id];
+										return (
+											<button
+												key={id}
+												type="button"
+												aria-current={category === id ? "page" : undefined}
+												className={`mb-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-ui-13 transition-colors ${
+													category === id
+														? "bg-hover font-medium text-ink"
+														: "text-ink-dim hover:bg-hover hover:text-ink"
+												}`}
+												onClick={() => setCategory(id)}
+											>
+												<span className="flex w-3.5 shrink-0 items-center justify-center">
+													<Icon size={14} />
+												</span>
+												<span className="min-w-0 truncate">
+													{t(`settings.category.${id}` as MessageKey)}
+													{id === "remote" && (
+														<span className="ml-1 inline-block text-ui-11 font-normal text-ink-faint">
+															{t("settings.experimental")}
+														</span>
+													)}
+												</span>
+											</button>
+										);
+									})}
+								</div>
 							);
 						})}
 						{/* 插件自带设置页分类：标题取 contribution.title（插件自定义字符串，不走宿主 i18n） */}
@@ -325,25 +359,29 @@ function SettingsDialogBody({
 					</nav>
 					<div
 						ref={contentRef}
-						className="edge-fade min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3"
+						className="edge-fade min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-4"
 						style={{ "--edge-fade-size": "20px" } as CSSProperties}
 					>
-						{Panel ? (
-							<Panel />
-						) : activePluginContribution ? (
-							// 插件设置页：包 PluginBoundary（崩溃 → null，与其他贡献同一套隔离语义）
-							<PluginBoundary
-								key={`${activePluginContribution.pluginName}:${activePluginContribution.id}:${
-									pluginNonces[activePluginContribution.pluginName] ?? 0
-								}`}
-								pluginName={activePluginContribution.pluginName}
-								label={category}
-							>
-								<activePluginContribution.component />
-							</PluginBoundary>
-						) : (
-							<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.comingSoon")}</p>
-						)}
+						<div className="mx-auto w-full max-w-[640px]">
+							{Panel ? (
+								<Panel />
+							) : activePluginContribution ? (
+								// 插件设置页：包 PluginBoundary（崩溃 → null，与其他贡献同一套隔离语义）
+								<PluginBoundary
+									key={`${activePluginContribution.pluginName}:${activePluginContribution.id}:${
+										pluginNonces[activePluginContribution.pluginName] ?? 0
+									}`}
+									pluginName={activePluginContribution.pluginName}
+									label={category}
+								>
+									<activePluginContribution.component />
+								</PluginBoundary>
+							) : (
+								<p className="py-8 text-center text-ui-13 text-ink-faint">
+									{t("settings.comingSoon")}
+								</p>
+							)}
+						</div>
 					</div>
 				</div>
 			</div>

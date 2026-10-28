@@ -14,10 +14,9 @@ interface UiStore {
 	rightSessionId: string | null;
 	rightQuestion: string;
 	openRightPanel: (view: RightPanelView, sessionId?: string, question?: string) => void;
-	sidebarView: "sessions" | "processes" | "archive";
-	setSidebarView: (view: "sessions" | "processes" | "archive") => void;
-	settingsAgentId: string | null;
-	setSettingsAgentId: (id: string | null) => void;
+	/** 左侧栏「视图选项」弹层（瞬时；slash 命令与会话菜单可以打开它） */
+	sidebarViewOptionsOpen: boolean;
+	setSidebarViewOptionsOpen: (open: boolean) => void;
 	/** todo 面板展开态（按会话，切换会话互不影响；不含持久化） */
 	todoExpanded: Record<string, boolean>;
 	toggleTodoExpanded: (sessionId: string) => void;
@@ -43,10 +42,8 @@ export const useUiStore = create<UiStore>((set) => ({
 			rightQuestion: question,
 			diffSidebarOpen: true,
 		}),
-	sidebarView: "sessions",
-	setSidebarView: (view) => set({ sidebarView: view }),
-	settingsAgentId: null,
-	setSettingsAgentId: (id) => set({ settingsAgentId: id }),
+	sidebarViewOptionsOpen: false,
+	setSidebarViewOptionsOpen: (open) => set({ sidebarViewOptionsOpen: open }),
 	todoExpanded: {},
 	toggleTodoExpanded: (sessionId) =>
 		set((state) => ({

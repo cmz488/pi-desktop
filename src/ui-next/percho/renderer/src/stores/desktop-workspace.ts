@@ -73,15 +73,28 @@ export const useDesktopWorkspace = create<WorkspaceStore>((set, get) => ({
 export function useWorkspaceObservation() {
 	useEffect(() => {
 		let live = true;
-		const update = () =>
-			void useDesktopWorkspace
-				.getState()
-				.refresh()
-				.catch((error: Error) => {
-					if (live) useDesktopWorkspace.setState({ error: error.message });
-				});
-		update();
-		const timer = setInterval(update, 3000);
+		let membership = "";
+		const update = async () => {
+			try {
+				await useDesktopWorkspace.getState().refresh();
+				if (!live) return;
+				// 目录是左栏行存在性的来源：Agent 增减或归档状态变化时重拉，
+				// 否则外部创建/归档的会话要等用户手动打开才出现。
+				const agents = useDesktopWorkspace.getState().workspace?.agents ?? [];
+				const next = agents
+					.map((agent) => `${agent.id}:${agent.archived ? 1 : 0}`)
+					.sort()
+					.join("|");
+				if (next !== membership) {
+					membership = next;
+					await useProjectsStore.getState().load();
+				}
+			} catch (error) {
+				if (live) useDesktopWorkspace.setState({ error: (error as Error).message });
+			}
+		};
+		void update();
+		const timer = setInterval(() => void update(), 3000);
 		return () => {
 			live = false;
 			clearInterval(timer);

@@ -1,16 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { desktopRequest, desktopSessions, nativeRequest } from "../../pi-http-bridge";
-import {
-	useDesktopWorkspace,
-	useNativeSession,
-	type PromptProfile,
-} from "../../stores/desktop-workspace";
+import { useEffect, useState } from "react";
+import { desktopRequest, nativeRequest } from "../../pi-http-bridge";
+import { useDesktopWorkspace, useNativeSession } from "../../stores/desktop-workspace";
 import { useSessionsStore } from "../../stores/sessions";
-import { useUiStore } from "../../stores/ui";
 import { Button } from "../ui/Button";
 import { Switch } from "../ui/Switch";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { EmptySession, Feedback, Field, inputClass, useSettingsSessionId } from "./NativeControls";
+import { Segmented } from "../settings/Segmented";
 
 type Spec = {
 	key: string;
@@ -71,7 +67,10 @@ function PreferencesForm({ id, group }: { id: string; group?: string }) {
 	const change = (key: string, value: unknown) =>
 		setDraft((previous) => {
 			const next = { ...previous, [key]: value };
-			settingsDrafts.set(`${id}:${scope}`, { values: next, revision: settingsDrafts.get(`${id}:${scope}`)?.revision ?? doc!.revision });
+			settingsDrafts.set(`${id}:${scope}`, {
+				values: next,
+				revision: settingsDrafts.get(`${id}:${scope}`)?.revision ?? doc!.revision,
+			});
 			return next;
 		});
 	const save = async () => {
@@ -101,7 +100,12 @@ function PreferencesForm({ id, group }: { id: string; group?: string }) {
 				}
 			await nativeRequest(
 				"/api/settings",
-				{ scope, revision: settingsDrafts.get(`${id}:${scope}`)?.revision ?? doc.revision, patch, sessionId: String(snapshot.sessionId) },
+				{
+					scope,
+					revision: settingsDrafts.get(`${id}:${scope}`)?.revision ?? doc.revision,
+					patch,
+					sessionId: String(snapshot.sessionId),
+				},
 				id,
 			);
 			settingsDrafts.delete(`${id}:${scope}`);
@@ -130,134 +134,151 @@ function PreferencesForm({ id, group }: { id: string; group?: string }) {
 	};
 	const count = Object.keys(draft).length;
 	return (
-		<section className="space-y-4" aria-label="原生 Pi 配置">
-			<div className="flex items-center justify-between gap-2">
-				<h3 className="text-ui-13 font-medium text-ink">
-					{group ? "Pi 原生设置" : "模型、工具与上下文"}
-				</h3>
-				<select
-					aria-label="配置范围"
-					className={`${inputClass} !w-auto`}
-					value={scope}
-					onChange={(event) =>
-						count ? setNextScope(event.target.value) : setScope(event.target.value)
-					}
-				>
-					<option value="global">用户配置</option>
-					<option value="project">当前项目</option>
-				</select>
+		<section className="space-y-6" aria-label="原生 Pi 配置">
+			<div className="flex flex-wrap items-end justify-between gap-3">
+				<div className="min-w-0">
+					<Segmented
+						label="配置范围"
+						value={scope}
+						options={[
+							{ value: "global", label: "用户配置" },
+							{ value: "project", label: "当前项目" },
+						]}
+						onChange={(value) => (count ? setNextScope(value) : setScope(value))}
+					/>
+					<p className="mt-2 break-all font-mono text-ui-10 text-ink-faint">
+						{doc?.file ?? snapshot?.cwd}
+					</p>
+				</div>
+				<input
+					className={`${inputClass} sm:w-52`}
+					aria-label="搜索 Pi 配置"
+					placeholder="搜索设置"
+					value={search}
+					onChange={(event) => setSearch(event.target.value)}
+				/>
 			</div>
-			<p className="break-all font-mono text-ui-10 text-ink-faint">{doc?.file ?? snapshot?.cwd}</p>
-			<input
-				className={inputClass}
-				aria-label="搜索 Pi 配置"
-				placeholder="搜索设置"
-				value={search}
-				onChange={(event) => setSearch(event.target.value)}
-			/>
 			<Feedback error={error} message={message} />
 			{!doc && !error && (
 				<p role="status" className="text-ui-12 text-ink-faint">
 					读取配置…
 				</p>
 			)}
-			{doc?.groups
-				.filter((row) =>
-					!group ? !["network", "resources", "display"].includes(row.id) : row.id === group,
-				)
-				.map((row) => {
-					const fields = row.fields.filter((spec) =>
-						`${spec.label} ${spec.key}`.toLowerCase().includes(search.toLowerCase()),
-					);
-					return fields.length ? (
-						<fieldset
-							key={row.id}
-							className="space-y-4 border-t border-border pt-4"
-							disabled={busy || (scope === "project" && doc.trusted === false)}
-						>
-							<legend className="pr-2 text-ui-12 font-medium text-ink">{row.title}</legend>
-							{fields.map((spec) => {
-								const raw = Object.hasOwn(draft, spec.key) ? draft[spec.key] : undefined;
-								const stored = doc.values[spec.key] ?? doc.inherited?.[spec.key] ?? spec.default;
-								const value =
-									raw === undefined
-										? spec.secret
-											? ""
-											: spec.type === "object"
-												? JSON.stringify(stored ?? {}, null, 2)
-												: spec.type === "array"
-													? (Array.isArray(stored) ? stored : []).join("\n")
-													: (stored ?? "")
-										: raw === null
-											? spec.type === "boolean"
-												? false
-												: ""
-											: raw;
-								const disabled = scope === "project" && spec.globalOnly;
-								return (
-									<div key={spec.key} className="space-y-1">
-										<Field label={spec.label} hint={disabled ? "仅用户配置可修改" : spec.help}>
-											{spec.type === "boolean" ? (
-												<Switch
-													checked={Boolean(value)}
-													disabled={disabled}
-													onCheckedChange={(checked) => change(spec.key, checked)}
-												/>
-											) : spec.type === "enum" ? (
-												<select
-													aria-label={spec.label}
-													className={inputClass}
-													disabled={disabled}
-													value={JSON.stringify(value)}
-													onChange={(event) => change(spec.key, JSON.parse(event.target.value))}
-												>
-													{spec.options?.map((option) => (
-														<option key={JSON.stringify(option)} value={JSON.stringify(option)}>
-															{String(option)}
-														</option>
-													))}
-												</select>
-											) : ["array", "object"].includes(spec.type) ? (
-												<textarea
-													aria-label={spec.label}
-													rows={3}
-													className={`${inputClass} font-mono`}
-													disabled={disabled}
-													value={String(value)}
-													onChange={(event) => change(spec.key, event.target.value)}
-												/>
-											) : (
-												<input
-													aria-label={spec.label}
-													className={inputClass}
-													type={
-														spec.secret ? "password" : spec.type === "number" ? "number" : "text"
-													}
-													disabled={disabled}
-													value={String(value)}
-													onChange={(event) => change(spec.key, event.target.value)}
-												/>
-											)}
-										</Field>
-										<Button
-											size="sm"
-											disabled={disabled || busy}
-											onClick={() => change(spec.key, null)}
-										>
-											恢复继承值
-										</Button>
-									</div>
-								);
-							})}
-						</fieldset>
-					) : null;
-				})}
+			<div className="space-y-5">
+				{doc?.groups
+					.filter((row) =>
+						!group ? !["network", "resources", "display"].includes(row.id) : row.id === group,
+					)
+					.map((row) => {
+						const fields = row.fields.filter((spec) =>
+							`${spec.label} ${spec.key}`.toLowerCase().includes(search.toLowerCase()),
+						);
+						return fields.length ? (
+							<fieldset
+								key={row.id}
+								className="space-y-3 border-t border-border pt-5 first:border-t-0 first:pt-0"
+								disabled={busy || (scope === "project" && doc.trusted === false)}
+							>
+								<legend className="text-ui-12 font-medium text-ink">{row.title}</legend>
+								<div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+									{fields.map((spec) => {
+										const raw = Object.hasOwn(draft, spec.key) ? draft[spec.key] : undefined;
+										const stored =
+											doc.values[spec.key] ?? doc.inherited?.[spec.key] ?? spec.default;
+										const value =
+											raw === undefined
+												? spec.secret
+													? ""
+													: spec.type === "object"
+														? JSON.stringify(stored ?? {}, null, 2)
+														: spec.type === "array"
+															? (Array.isArray(stored) ? stored : []).join("\n")
+															: (stored ?? "")
+												: raw === null
+													? spec.type === "boolean"
+														? false
+														: ""
+													: raw;
+										const disabled = scope === "project" && spec.globalOnly;
+										const inherited =
+											doc.values[spec.key] !== undefined || doc.inherited?.[spec.key] !== undefined;
+										const wide = ["array", "object"].includes(spec.type);
+										return (
+											<div
+												key={spec.key}
+												className={wide ? "space-y-1 sm:col-span-2" : "space-y-1"}
+											>
+												<Field label={spec.label} hint={disabled ? "仅用户配置可修改" : spec.help}>
+													{spec.type === "boolean" ? (
+														<Switch
+															checked={Boolean(value)}
+															disabled={disabled}
+															onCheckedChange={(checked) => change(spec.key, checked)}
+														/>
+													) : spec.type === "enum" ? (
+														<select
+															aria-label={spec.label}
+															className={inputClass}
+															disabled={disabled}
+															value={JSON.stringify(value)}
+															onChange={(event) => change(spec.key, JSON.parse(event.target.value))}
+														>
+															{spec.options?.map((option) => (
+																<option key={JSON.stringify(option)} value={JSON.stringify(option)}>
+																	{String(option)}
+																</option>
+															))}
+														</select>
+													) : wide ? (
+														<textarea
+															aria-label={spec.label}
+															rows={3}
+															className={`${inputClass} font-mono`}
+															disabled={disabled}
+															value={String(value)}
+															onChange={(event) => change(spec.key, event.target.value)}
+														/>
+													) : (
+														<input
+															aria-label={spec.label}
+															className={inputClass}
+															type={
+																spec.secret
+																	? "password"
+																	: spec.type === "number"
+																		? "number"
+																		: "text"
+															}
+															disabled={disabled}
+															value={String(value)}
+															onChange={(event) => change(spec.key, event.target.value)}
+														/>
+													)}
+												</Field>
+												{inherited && (
+													<button
+														type="button"
+														className="text-ui-10 text-ink-faint transition-colors hover:text-ink disabled:opacity-40"
+														disabled={disabled || busy}
+														onClick={() => change(spec.key, null)}
+													>
+														恢复默认
+													</button>
+												)}
+											</div>
+										);
+									})}
+								</div>
+							</fieldset>
+						) : null;
+					})}
+			</div>
 			{scope === "project" && doc?.trusted === false && (
 				<p role="status" className="text-ui-12 text-ink-faint">
 					请先在左侧会话菜单中信任项目，再修改项目配置。
 				</p>
 			)}
-			<div className="sticky bottom-0 flex flex-wrap items-center gap-2 bg-surface py-2">
+			<div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t border-border bg-surface px-1 py-3">
 				<span className="mr-auto text-ui-11 text-ink-faint">
 					{count ? `${count} 项未保存` : "没有未保存的修改"}
 				</span>
@@ -300,15 +321,12 @@ function PreferencesForm({ id, group }: { id: string; group?: string }) {
 }
 
 export function PersonalityPanel() {
-	const workspace = useDesktopWorkspace((s) => s.workspace);
 	const supported = useDesktopWorkspace((s) => s.supported);
 	const [doc, setDoc] = useState<any>(null);
 	const [content, setContent] = useState("");
-	const [profile, setProfile] = useState<PromptProfile | null>(null);
 	const [error, setError] = useState("");
 	const [message, setMessage] = useState("");
 	const [busy, setBusy] = useState(false);
-	const [profileRevision, setProfileRevision] = useState<string>();
 	useEffect(() => {
 		let live = true;
 		if (supported)
@@ -326,410 +344,52 @@ export function PersonalityPanel() {
 			live = false;
 		};
 	}, [supported]);
-	const run = async (action: () => Promise<void>) => {
-		setBusy(true);
-		setError("");
-		try {
-			await action();
-		} catch (reason) {
-			setError((reason as Error).message);
-		} finally {
-			setBusy(false);
-		}
-	};
-	const edit = (row?: PromptProfile) =>
-		void run(async () => {
-			const revision = workspace?.revision;
-			const detail = row
-				? await desktopRequest(`/api/workspace/detail?kind=prompt&id=${encodeURIComponent(row.id)}`)
-				: { id: "", name: "", instructions: "" };
-			setProfile(detail);
-			setProfileRevision(revision);
-		});
 	if (supported === false)
 		return <p className="text-ui-12 text-ink-faint">人格配置由当前 Pi 宿主管理。</p>;
 	return (
-		<section className="space-y-4">
-			<h3 className="text-ui-13 font-medium text-ink">人格与提示词</h3>
-			<p className="text-ui-11 text-ink-faint">
-				全局 AGENTS.md 应用到所有项目；会话可在左侧菜单中选择追加的人格。
+		<section className="space-y-5">
+			<p className="max-w-[62ch] text-ui-11 leading-relaxed text-ink-faint">
+				全局 AGENTS.md 应用到所有项目与会话。会话默认继承 Pi 全局设置，不再单独配置。
 			</p>
 			<Feedback error={error} message={message} />
 			{doc && (
 				<form
-					className="space-y-3"
+					className="space-y-4"
 					onSubmit={(event) => {
 						event.preventDefault();
+						setBusy(true);
+						setError("");
 						const revision = doc.revision;
-						void run(async () => {
-							const result = await desktopRequest("/api/personality", { content, revision });
-							setDoc(result);
-							setMessage(
-								result.reloadRequired?.length
-									? "已保存，部分会话需重载后应用。"
-									: "人格已保存并应用。",
-							);
-						});
+						void desktopRequest("/api/personality", { content, revision })
+							.then((result) => {
+								setDoc(result);
+								setMessage(
+									result.reloadRequired?.length
+										? "已保存，部分会话需重载后应用。"
+										: "人格已保存并应用。",
+								);
+							})
+							.catch((reason: Error) => setError(reason.message))
+							.finally(() => setBusy(false));
 					}}
 				>
 					<p className="break-all font-mono text-ui-10 text-ink-faint">{doc.file}</p>
-					<Field label="全局 AGENTS.md">
+					<Field label="全局 AGENTS.md" hint="保存后应用到所有会话">
 						<textarea
 							aria-label="全局 AGENTS.md"
-							rows={10}
-							className={inputClass}
+							rows={16}
+							className={`${inputClass} font-mono`}
 							value={content}
 							onChange={(event) => setContent(event.target.value)}
 						/>
 					</Field>
-					<Button type="submit" variant="primary" disabled={busy}>
-						保存并应用
-					</Button>
-				</form>
-			)}
-			<div className="flex items-center justify-between border-t border-border pt-4">
-				<h4 className="text-ui-12 font-medium text-ink">可选人格</h4>
-				<Button onClick={() => edit()} disabled={busy}>
-					新建人格
-				</Button>
-			</div>
-			{workspace?.promptProfiles.map((row) => (
-				<div key={row.id} className="flex items-center justify-between py-1 text-ui-12 text-ink">
-					<span>{row.name}</span>
-					<Button onClick={() => edit(row)} disabled={busy}>
-						编辑
-					</Button>
-				</div>
-			))}
-			{profile && (
-				<form
-					className="space-y-3 rounded-lg border border-border p-3"
-					onSubmit={(event) => {
-						event.preventDefault();
-						void run(async () => {
-							await useDesktopWorkspace
-								.getState()
-								.command(
-									"prompt.save",
-									profile.id || undefined,
-									{ name: profile.name, instructions: profile.instructions },
-									profileRevision,
-								);
-							setProfile(null);
-							setMessage("人格已保存。");
-						});
-					}}
-				>
-					<Field label="人格名称">
-						<input
-							aria-label="人格名称"
-							required
-							className={inputClass}
-							value={profile.name}
-							onChange={(event) => setProfile({ ...profile, name: event.target.value })}
-						/>
-					</Field>
-					<Field label="系统提示词">
-						<textarea
-							aria-label="系统提示词"
-							rows={8}
-							className={inputClass}
-							value={profile.instructions ?? ""}
-							onChange={(event) => setProfile({ ...profile, instructions: event.target.value })}
-						/>
-					</Field>
-					<Button type="submit" variant="primary" disabled={busy}>
-						保存人格
-					</Button>
-					<Button onClick={() => setProfile(null)}>取消</Button>
-				</form>
-			)}
-		</section>
-	);
-}
-
-export function AgentSettingsPanel() {
-	const workspace = useDesktopWorkspace((s) => s.workspace);
-	const current = useSettingsSessionId();
-	const requested = useUiStore((s) => s.settingsAgentId);
-	const [id, setId] = useState(requested ?? current);
-	const selected = id ?? current;
-	return (
-		<section className="space-y-4">
-			<h3 className="text-ui-13 font-medium text-ink">会话配置</h3>
-			<Field label="配置会话">
-				<select
-					className={inputClass}
-					aria-label="配置会话"
-					value={selected ?? ""}
-					onChange={(event) => setId(event.target.value)}
-				>
-					<option value="" disabled>
-						选择会话
-					</option>
-					{workspace?.agents
-						.filter((row) => row.status === "running" && !row.archived)
-						.map((row) => (
-							<option key={row.id} value={row.id}>
-								{row.name}
-							</option>
-						))}
-				</select>
-			</Field>
-			{selected ? <AgentForm key={selected} id={selected} /> : <EmptySession />}
-		</section>
-	);
-}
-function AgentPolicy({
-	id,
-	busy,
-	onChange,
-}: {
-	id: string;
-	busy: boolean;
-	onChange: (command: string, extra: Record<string, unknown>) => Promise<void>;
-}) {
-	const workspace = useDesktopWorkspace((s) => s.workspace);
-	const row = workspace?.agents.find((agent) => agent.id === id);
-	return row ? (
-		<div className="space-y-3 border-b border-border pb-4">
-			<Field label="追加人格">
-				<select
-					aria-label="追加人格"
-					className={inputClass}
-					disabled={busy}
-					value={row.promptProfileId ?? "standard"}
-					onChange={(event) =>
-						void onChange("agent.prompt", { promptProfileId: event.target.value })
-					}
-				>
-					<option value="standard">Pi 默认</option>
-					{workspace?.promptProfiles.map((profile) => (
-						<option key={profile.id} value={profile.id}>
-							{profile.name}
-						</option>
-					))}
-				</select>
-			</Field>
-			<Field label="审批模式">
-				<select
-					aria-label="审批模式"
-					className={inputClass}
-					disabled={busy}
-					value={row.approvalMode ?? "ask-risky"}
-					onChange={(event) => void onChange("agent.policy", { mode: event.target.value })}
-				>
-					<option value="ask-risky">风险操作确认</option>
-					<option value="ask-all">全部确认</option>
-					<option value="yolo">完全访问</option>
-				</select>
-			</Field>
-		</div>
-	) : null;
-}
-function AgentForm({ id }: { id: string }) {
-	const [descriptor, setDescriptor] = useState<any>(null);
-	const [form, setForm] = useState<any>(null);
-	const [environment, setEnvironment] = useState("");
-	const [error, setError] = useState("");
-	const [message, setMessage] = useState("");
-	const [busy, setBusy] = useState(false);
-	const baseline = useRef<any>(null);
-	const apply = (data: any, preserveDraft = false) => {
-		const previous = baseline.current;
-		setDescriptor(data);
-		setForm((draft: any) => {
-			if (!data.active) return null;
-			const next = { ...data.active };
-			// Only edits made against this form's old baseline survive our own policy refresh.
-			if (preserveDraft && draft && previous)
-				for (const key of [
-					"name",
-					"cwd",
-					"shellPath",
-					"model",
-					"instructions",
-					"tools",
-					"extensions",
-				])
-					if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) next[key] = draft[key];
-			return next;
-		});
-		baseline.current = data.active;
-		if (!preserveDraft) setEnvironment("");
-	};
-	const load = async (preserveDraft = false) => {
-		apply(await nativeRequest("/api/agent", undefined, id), preserveDraft);
-	};
-	useEffect(() => {
-		let live = true;
-		void nativeRequest("/api/agent", undefined, id)
-			.then((data) => {
-				if (live) apply(data);
-			})
-			.catch((reason: Error) => {
-				if (live) setError(reason.message);
-			});
-		return () => {
-			live = false;
-		};
-	}, [id]);
-	const changePolicy = async (command: string, extra: Record<string, unknown>) => {
-		if (busy) return;
-		const workspace = useDesktopWorkspace.getState().workspace;
-		if (!workspace) return;
-		setBusy(true);
-		setError("");
-		try {
-			await useDesktopWorkspace.getState().command(command, id, extra, workspace.revision);
-			await load(true);
-		} catch (reason) {
-			setError((reason as Error).message);
-		} finally {
-			setBusy(false);
-		}
-	};
-	const save = async () => {
-		if (!form || busy) return;
-		setBusy(true);
-		setError("");
-		try {
-			const state = await desktopSessions.state(id);
-			await nativeRequest(
-				"/api/command",
-				{
-					command: "configure",
-					id: form.id,
-					sessionId: String(state.sessionId),
-					revision: form.revision,
-					name: form.name,
-					cwd: form.cwd,
-					instructions: form.instructions,
-					shellPath: form.shellPath,
-					tools: form.tools,
-					extensions: form.extensions,
-					...(form.model ? { model: form.model } : {}),
-					...(environment.trim() ? { shellEnv: JSON.parse(environment) } : {}),
-				},
-				id,
-			);
-			await load();
-			await useDesktopWorkspace.getState().refresh();
-			if (useSessionsStore.getState().activeSessionId === id)
-				await useSessionsStore.getState().loadModels();
-			setMessage("会话配置已保存。");
-		} catch (reason) {
-			setError((reason as Error).message);
-		} finally {
-			setBusy(false);
-		}
-	};
-	return (
-		<>
-			<Feedback error={error} message={message} />
-			<AgentPolicy id={id} busy={busy || !form} onChange={changePolicy} />
-			{form ? (
-				<form
-					className="space-y-4"
-					onSubmit={(event) => {
-						event.preventDefault();
-						void save();
-					}}
-				>
-					<fieldset disabled={busy} className="space-y-4">
-						{[
-							["name", "名称"],
-							["cwd", "项目目录"],
-							["shellPath", "Shell 路径"],
-						].map(([key, label]) => (
-							<Field key={key} label={label}>
-								<input
-									aria-label={label}
-									required={key !== "shellPath"}
-									className={inputClass}
-									value={form[key] ?? ""}
-									onChange={(event) => setForm({ ...form, [key]: event.target.value })}
-								/>
-							</Field>
-						))}
-						<Field label="模型">
-							<select
-								aria-label="Agent 模型"
-								className={inputClass}
-								value={JSON.stringify(form.model ?? null)}
-								onChange={(event) => setForm({ ...form, model: JSON.parse(event.target.value) })}
-							>
-								<option value="null">保持当前模型</option>
-								{descriptor.models.map((row: any) => {
-									const model = { provider: row.provider, modelId: row.modelId ?? row.id };
-									return (
-										<option
-											key={`${model.provider}/${model.modelId}`}
-											value={JSON.stringify(model)}
-										>
-											{model.provider} / {row.name ?? model.modelId}
-										</option>
-									);
-								})}
-							</select>
-						</Field>
-						<Field label="额外指令">
-							<textarea
-								aria-label="额外指令"
-								className={inputClass}
-								rows={4}
-								value={form.instructions ?? ""}
-								onChange={(event) => setForm({ ...form, instructions: event.target.value })}
-							/>
-						</Field>
-						<Field
-							label="工具环境变量"
-							hint={`留空保留已有值；填写 JSON 替换。已配置：${form.environmentKeys?.join(", ") || "无"}`}
-						>
-							<textarea
-								aria-label="工具环境变量"
-								className={`${inputClass} font-mono`}
-								rows={3}
-								value={environment}
-								onChange={(event) => setEnvironment(event.target.value)}
-							/>
-						</Field>
-						{(["tools", "extensions"] as const).map((key) => (
-							<fieldset key={key} className="space-y-2">
-								<legend className="mb-2 text-ui-12 text-ink">
-									{key === "tools" ? "工具" : "Durable 扩展"}
-								</legend>
-								{descriptor[key].map((value: string) => (
-									<label key={value} className="flex items-center gap-2 text-ui-12 text-ink-dim">
-										<input
-											type="checkbox"
-											checked={form[key]?.includes(value) ?? false}
-											onChange={(event) =>
-												setForm({
-													...form,
-													[key]: event.target.checked
-														? [...(form[key] ?? []), value]
-														: form[key].filter((item: string) => item !== value),
-												})
-											}
-										/>
-										{value}
-									</label>
-								))}
-							</fieldset>
-						))}
+					<div className="flex justify-end">
 						<Button type="submit" variant="primary" disabled={busy}>
-							保存会话配置
+							保存并应用
 						</Button>
-					</fieldset>
+					</div>
 				</form>
-			) : (
-				!error && (
-					<p role="status" className="text-ui-12 text-ink-faint">
-						读取会话配置…
-					</p>
-				)
 			)}
-		</>
+		</section>
 	);
 }

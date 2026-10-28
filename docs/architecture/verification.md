@@ -1,6 +1,6 @@
 # 验证说明
 
-当前 Percho 界面验收运行 `npm run test:ui-next:browser`，从左右侧栏与设置真实操作：默认 Host、SDK Web、缺失接口、原生配置 revision、真实子代理与观察回收、文件预览、共享 Chromium 画面及 worker 绑定、Git 预览确认、人格／提供商／资源、侧聊和窄屏主题。`npm test` 负责底层契约；`npm run check` 同时执行 Node 与完整 React／手机端类型检查（`typecheck:ui`），包含 Vite worker 类型和实际 Percho API 定义；`npm run package:check` 重新构建并解包验证发布产物。方法、订阅与原生适配差异见[逐项对照记录](../history/percho-interface-contract-repair.md)。下面针对旧共享 controller 的专项仍用于兼容契约，不能代替当前 React 页面验收。界面入口映射见[整合记录](../history/percho-native-ui-integration.md)。
+当前 Percho 界面验收运行 `npm run test:ui-next:browser`，从左右侧栏与设置真实操作：默认 Host、SDK Web、缺失接口、原生配置 revision、真实子代理与观察回收、文件树与右侧预览分栏、共享 Chromium 画面及 worker 绑定、Git 预览确认、人格／提供商／资源、侧聊和窄屏主题。会话进程的启停／归档通过会话行右键菜单验证，归档列表通过「视图选项」的筛选与恢复验证；设置验收同时确认分组导航且不存在按会话配置分类。`npm test` 负责底层契约；`npm run check` 同时执行 Node 与完整 React／手机端类型检查（`typecheck:ui`），包含 Vite worker 类型和实际 Percho API 定义；`npm run package:check` 重新构建并解包验证发布产物。方法、订阅与原生适配差异见[逐项对照记录](../history/percho-interface-contract-repair.md)。下面针对旧共享 controller 的专项仍用于兼容契约，不能代替当前 React 页面验收。界面入口映射见[整合记录](../history/percho-native-ui-integration.md)。
 
 ```bash
 npm test

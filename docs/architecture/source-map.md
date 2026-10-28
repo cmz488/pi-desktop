@@ -24,7 +24,7 @@
 
 ## 当前 Percho 界面
 
-当前生产入口为 `src/ui-next/percho/renderer/src/App.tsx`。设置功能注册在 `components/settings/SettingsDialog.tsx`；原生配置、人格、会话配置与资源组件位于 `components/native/NativePreferences.tsx` 和 `NativeResources.tsx`。左侧菜单接入 `NativeSidebar.tsx`，右侧 `WorkspaceSidebar.tsx` 集成文件、共享网页浏览器、Git、任务、分支与侧聊。瞬时导航使用 Percho stores，原生执行与存储继续由所属 worker 拥有。顶部总工作台及旧页面样式已移除，见[整合记录](../history/percho-native-ui-integration.md)。
+当前生产入口为 `src/ui-next/percho/renderer/src/App.tsx`。设置功能注册在 `components/settings/SettingsDialog.tsx`（分组导航与 `settings/Segmented` 共用控件）；原生配置与人格位于 `components/native/NativePreferences.tsx`，资源面板位于 `NativeResources.tsx`。左侧 `components/sidebar/Sidebar.tsx` 接入 `SidebarViewMenu.tsx`（视图选项：分组／排序／归档筛选），会话进程操作在 `session/native-session-actions.tsx` 的会话右键菜单；右侧 `WorkspaceSidebar.tsx` 集成文件（树与预览左右分栏）、共享网页浏览器、Git、任务、分支与侧聊。瞬时导航使用 Percho stores，原生执行与存储继续由所属 worker 拥有。顶部总工作台及旧页面样式已移除，见[整合记录](../history/percho-native-ui-integration.md)。
 
 ## 发布资产 seam
 

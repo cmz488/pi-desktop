@@ -134,6 +134,44 @@ try {
       title.startsWith("确认 Git ") ? "确认执行" : "确认",
     );
   };
+  const pressEscape = async () => {
+    for (const type of ["keyDown", "keyUp"])
+      await call("Input.dispatchKeyEvent", {
+        type,
+        key: "Escape",
+        code: "Escape",
+        windowsVirtualKeyCode: 27,
+      });
+  };
+  const contextMenu = async (sessionId, label) => {
+    await until(
+      `!!document.querySelector('[data-session-id=${JSON.stringify(sessionId)}]')`,
+    );
+    await evaluate(
+      `(()=>{const row=document.querySelector('[data-session-id=${JSON.stringify(sessionId)}]');if(!row)throw new Error('Missing session row '+${JSON.stringify(sessionId)});row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:320}));})()`,
+    );
+    await until(
+      `!![...document.querySelectorAll('[role=menu] button')].find(n=>n.textContent.trim()===${JSON.stringify(label)})`,
+    );
+    await click("[role=menu] button", label);
+  };
+  const viewOption = async (label) => {
+    if (
+      !(await evaluate(
+        "!!document.querySelector('[role=dialog][aria-label=\"视图选项\"]')",
+      ))
+    )
+      await evaluate(
+        'document.querySelector("button[aria-label=视图选项]").click()',
+      );
+    await until(
+      "!!document.querySelector('[role=dialog][aria-label=\"视图选项\"]')",
+    );
+    await click('[role=dialog][aria-label="视图选项"] button', label);
+    await until(
+      `[...document.querySelectorAll('[role=dialog][aria-label="视图选项"] [role=radio]')].find(n=>n.textContent.trim()===${JSON.stringify(label)})?.getAttribute('aria-checked')==='true'`,
+    );
+  };
   const openRight = async (tab) => {
     if (
       !(await evaluate(
@@ -198,20 +236,14 @@ try {
     false,
     "no second navigation shell",
   );
-  await click(".sidebar button", "会话进程");
-  await until(`!!document.querySelector('[data-native-agent="${actor.id}"]')`);
-  await evaluate(
-    `document.querySelector('[data-native-agent="${actor.id}"] button[aria-label="管理会话 BROWSER_ACTOR"]').click()`,
-  );
-  await click(`[data-native-agent="${actor.id}"] button`, "项目信任");
+  await contextMenu(actor.id, "项目信任");
   await confirm("信任项目");
   await untilValue(
     () => f.call(`/agents/${actor.id}/api/state`),
     (state) => state.projectTrusted,
   );
-  await click(
-    `[data-native-agent="${actor.id}"] button`,
-    "BROWSER_ACTORrunning",
+  await evaluate(
+    `document.querySelector('[data-session-id="${actor.id}"]')?.click()`,
   );
   await until(
     `document.querySelector('[data-session-page]')?.dataset.sessionId===${JSON.stringify(actor.id)}`,
@@ -330,6 +362,12 @@ try {
       )
     ).includes("NEW_PREVIEW_CONTENT"),
     "late A response cannot replace last selected B",
+  );
+  assert(
+    await evaluate(
+      `(()=>{const tree=document.querySelector('[aria-label=文件树]').getBoundingClientRect();const preview=document.querySelector('[aria-label=文件预览]').getBoundingClientRect();return preview.left>=tree.right-1 && Math.abs(preview.top-tree.top)<2;})()`,
+    ),
+    "preview sits to the right of the file tree",
   );
   console.log(
     "PASS right sidebar file tree, preview and out-of-order selection",
@@ -498,6 +536,12 @@ try {
   await closeRight();
   await openSettings("通用");
   await until(`!!document.querySelector('input[aria-label="默认模型 ID"]')`);
+  assert(
+    await evaluate(
+      `!![...document.querySelectorAll("[role=dialog] nav p")].find(n=>n.textContent.trim()==="模型与资源")`,
+    ),
+    "settings navigation uses grouped sections",
+  );
   await evaluate(
     `(()=>{const label=[...document.querySelectorAll('[role=dialog] label')].find(n=>n.textContent.includes('隐藏思考内容'));label.querySelector('button[role=switch]').click()})()`,
   );
@@ -520,55 +564,15 @@ try {
     () => f.call("/api/personality"),
     (doc) => doc.content === "BROWSER_PERSONALITY",
   );
-  await click("[role=dialog] button", "新建人格");
-  await fill("input[aria-label=人格名称]", "BROWSER_PROFILE");
-  await fill("textarea[aria-label=系统提示词]", "PROFILE_INSTRUCTIONS");
-  await click("[role=dialog] button", "保存人格");
-  const catalog = await untilValue(
-    () => f.call("/api/workspace"),
-    (value) =>
-      value.promptProfiles.some((row) => row.name === "BROWSER_PROFILE"),
-  );
-  const personality = catalog.promptProfiles.find(
-    (row) => row.name === "BROWSER_PROFILE",
-  );
-  await openSettings("会话配置");
-  await until('!!document.querySelector("input[aria-label=名称]")');
-  await fill("textarea[aria-label=额外指令]", "LOCAL_AGENT_DRAFT");
-  await fill(
-    "textarea[aria-label=工具环境变量]",
-    '{"REGRESSION_KEEP":"fixture"}',
-  );
-  await fill("select[aria-label=追加人格]", personality.id);
-  await untilValue(
-    () => f.call(`/agents/${actor.id}/api/agent`),
-    (value) => value.active.instructions === "PROFILE_INSTRUCTIONS",
-  );
-  await until(
-    '!![...document.querySelectorAll("[role=dialog] button")].find(n=>n.textContent==="保存会话配置" && !n.disabled)',
-  );
   assert.equal(
     await evaluate(
-      'document.querySelector("textarea[aria-label=额外指令]").value',
+      `!![...document.querySelectorAll("[role=dialog] nav button")].find(n=>n.textContent.trim()==="会话配置")`,
     ),
-    "LOCAL_AGENT_DRAFT",
-  );
-  assert(
-    (
-      await evaluate(
-        'document.querySelector("textarea[aria-label=工具环境变量]").value',
-      )
-    ).includes("REGRESSION_KEEP"),
-  );
-  await click("[role=dialog] button", "保存会话配置");
-  await untilValue(
-    () => f.call(`/agents/${actor.id}/api/agent`),
-    (value) =>
-      value.active.instructions === "LOCAL_AGENT_DRAFT" &&
-      value.active.environmentKeys.includes("REGRESSION_KEEP"),
+    false,
+    "sessions inherit global settings; no per-session settings category",
   );
   console.log(
-    "PASS persona refresh preserves local edits and saves with the new native revision",
+    "PASS global personality save and no per-session settings category",
   );
   await writeFile(
     "/tmp/percho-integrated-settings.png",
@@ -603,33 +607,39 @@ try {
   await until('!!document.querySelector("input[aria-label=安装来源]")');
   await closeSettings();
   console.log(
-    "PASS Percho settings: native revisions/save, network/Shell, personality, Agent and provider/package panels",
+    "PASS Percho settings: native revisions/save, network/Shell, personality and provider/package panels",
   );
-  await click(".sidebar button", "会话进程");
-  await evaluate(
-    `document.querySelector('[data-native-agent="${observer.id}"] button[aria-label="管理会话 BROWSER_OBSERVER"]').click()`,
-  );
-  await click(`[data-native-agent="${observer.id}"] button`, "停止进程");
+  const observerStatus = (await f.call("/api/workspace")).agents.find(
+    (row) => row.id === observer.id,
+  )?.status;
+  if (observerStatus !== "running") {
+    await contextMenu(observer.id, "启动进程");
+    await untilValue(
+      () => f.call("/api/workspace"),
+      (value) =>
+        value.agents.find((row) => row.id === observer.id)?.status ===
+        "running",
+    );
+  }
+  await contextMenu(observer.id, "停止进程");
   await confirm("停止进程");
   await untilValue(
     () => f.call("/api/workspace"),
     (value) =>
       value.agents.find((row) => row.id === observer.id)?.status === "stopped",
   );
-  await click(`[data-native-agent="${observer.id}"] button`, "归档");
-  await click("[role=dialog][aria-label=归档会话] button", "归档");
+  await contextMenu(observer.id, "归档会话");
+  await until(
+    `!!document.querySelector('[role=dialog][aria-label="归档此会话？"]')`,
+  );
+  await click('[role=dialog][aria-label="归档此会话？"] button', "归档会话");
   await untilValue(
     () => f.call("/api/workspace"),
     (value) => value.agents.find((row) => row.id === observer.id)?.archived,
   );
-  await click(".sidebar button", "归档会话");
-  await until(
-    `!!document.querySelector('[data-native-agent="${observer.id}"]')`,
-  );
-  await evaluate(
-    `document.querySelector('[data-native-agent="${observer.id}"] button[aria-label="管理会话 BROWSER_OBSERVER"]').click()`,
-  );
-  await click(`[data-native-agent="${observer.id}"] button`, "恢复归档");
+  await viewOption("仅显示已归档");
+  await until(`!!document.querySelector('[data-session-id="${observer.id}"]')`);
+  await contextMenu(observer.id, "恢复归档");
   await untilValue(
     () => f.call("/api/workspace"),
     (value) =>
@@ -641,10 +651,33 @@ try {
     ),
     actor.id,
   );
-  await click(".sidebar button", "归档会话");
-  console.log(
-    "PASS left process/archive/restore controls preserve the active conversation",
+  await viewOption("隐藏已归档");
+  await pressEscape();
+  await until(`!!document.querySelector('[data-session-id="${observer.id}"]')`);
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-session-id="${observer.id}"]').innerText.includes("已归档")`,
+    ),
+    false,
+    "restored session returns to the normal list without the archived tag",
   );
+  await viewOption("单列表");
+  assert.equal(
+    await evaluate(
+      'document.querySelectorAll("[data-sidebar-group-key]").length',
+    ),
+    0,
+  );
+  assert(await evaluate('!!document.querySelector("[data-session-id]")'));
+  await viewOption("按名称");
+  await viewOption("按工作区");
+  await viewOption("最近更新");
+  await pressEscape();
+  await until('!!document.querySelector("[data-sidebar-group-key]")');
+  console.log(
+    "PASS session right-click process/archive controls and archived filter preserve the active conversation",
+  );
+
   await openRight("侧聊");
   await until('!!document.querySelector("textarea[aria-label=侧聊问题]")');
   await fill("textarea[aria-label=侧聊问题]", "BROWSER_SIDE_QUESTION");

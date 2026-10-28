@@ -5,7 +5,7 @@ import { useNativeSession } from "../../stores/desktop-workspace";
 import { getPi } from "../../api";
 import { Button } from "../ui/Button";
 import { Feedback, inputClass } from "./NativeControls";
-import { CloseIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon } from "../icons";
+import { CloseIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon, RefreshIcon } from "../icons";
 
 const loadShared = (path: string) => import(/* @vite-ignore */ path);
 type FileResult = {
@@ -93,64 +93,78 @@ export function FilesPanel({ sessionId }: { sessionId: string }) {
 				);
 			});
 	return (
-		<section aria-label="项目文件" className="flex h-full min-h-0 flex-col">
-			<div className="flex items-center gap-2 p-3">
-				<input
-					aria-label="筛选文件"
-					placeholder="筛选文件"
-					className={inputClass}
-					value={search}
-					onChange={(event) => setSearch(event.target.value)}
-				/>
-				<Button size="sm" onClick={() => void read("")}>
-					刷新
-				</Button>
-			</div>
-			<Feedback error={error} />
-			<div className="min-h-0 flex-1 overflow-auto px-2">
-				{render("")}
-				{cache[""]?.truncated && (
-					<p className="p-2 text-ui-11 text-ink-faint">目录过大，仅显示前 500 项。</p>
-				)}
-				{!cache[""] && !error && (
-					<p role="status" className="p-2 text-ui-12 text-ink-faint">
-						读取项目文件…
-					</p>
-				)}
-			</div>
-			{preview && (
-				<section
-					aria-label="文件预览"
-					className="flex max-h-[60%] min-h-40 flex-col border-t border-border"
-				>
-					<header className="flex items-center gap-2 p-3">
-						<span className="min-w-0 flex-1 truncate text-ui-12 text-ink" title={preview.path}>
-							{preview.path}
-						</span>
-						<Button
-							size="sm"
-							aria-label="关闭文件预览"
-							onClick={() => {
-								previewRequest.current++;
-								setPreview(null);
-							}}
-						>
-							<CloseIcon size={13} />
-						</Button>
-					</header>
-					<div className="min-h-0 overflow-auto px-3 pb-3">
-						{preview.kind === "image" ? (
-							<img alt={preview.name} src={preview.url} className="max-w-full" />
-						) : preview.kind === "text" ? (
-							<pre tabIndex={0} className="whitespace-pre text-ui-11 text-ink-dim">
-								{preview.text}
-							</pre>
-						) : (
-							<p className="text-ui-12 text-ink-faint">{preview.message}</p>
-						)}
+		<section aria-label="项目文件" className="flex h-full min-h-0">
+			<section
+				aria-label="文件树"
+				className="flex w-[44%] min-w-[180px] flex-col border-r border-border"
+			>
+				<div className="flex items-center gap-1 p-2">
+					<input
+						aria-label="筛选文件"
+						placeholder="筛选文件"
+						className={inputClass}
+						value={search}
+						onChange={(event) => setSearch(event.target.value)}
+					/>
+					<Button size="sm" aria-label="刷新文件树" onClick={() => void read("")}>
+						<RefreshIcon size={13} />
+					</Button>
+				</div>
+				<Feedback error={error} />
+				<div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
+					{render("")}
+					{cache[""]?.truncated && (
+						<p className="p-2 text-ui-11 text-ink-faint">目录过大，仅显示前 500 项。</p>
+					)}
+					{!cache[""] && !error && (
+						<p role="status" className="p-2 text-ui-12 text-ink-faint">
+							读取项目文件…
+						</p>
+					)}
+				</div>
+			</section>
+			<section aria-label="文件预览" className="flex min-w-0 flex-1 flex-col">
+				{preview ? (
+					<>
+						<header className="flex items-center gap-1 border-b border-border px-2.5 py-2">
+							<span
+								className="min-w-0 flex-1 truncate text-ui-11 text-ink-dim"
+								title={preview.path}
+							>
+								{preview.path}
+							</span>
+							<Button
+								size="sm"
+								aria-label="关闭文件预览"
+								onClick={() => {
+									previewRequest.current++;
+									setPreview(null);
+								}}
+							>
+								<CloseIcon size={13} />
+							</Button>
+						</header>
+						<div className="min-h-0 flex-1 overflow-auto p-3">
+							{preview.kind === "image" ? (
+								<img alt={preview.name} src={preview.url} className="max-w-full" />
+							) : preview.kind === "text" ? (
+								<pre
+									tabIndex={0}
+									className="whitespace-pre text-ui-11 leading-relaxed text-ink-dim"
+								>
+									{preview.text}
+								</pre>
+							) : (
+								<p className="text-ui-12 text-ink-faint">{preview.message}</p>
+							)}
+						</div>
+					</>
+				) : (
+					<div className="grid h-full min-h-32 place-items-center px-5 text-center">
+						<p className="text-ui-11 leading-relaxed text-ink-faint">选择左侧文件查看内容</p>
 					</div>
-				</section>
-			)}
+				)}
+			</section>
 		</section>
 	);
 }

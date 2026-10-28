@@ -6,7 +6,7 @@ import {
 	type SessionMeta,
 	sameEnvironment,
 } from "@percho/shared";
-import { removeDesktopProject } from "../pi-http-bridge";
+import { desktopSessions, removeDesktopProject } from "../pi-http-bridge";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
@@ -28,10 +28,7 @@ function loadAddedProjects(): string[] {
 		return Array.isArray(parsed)
 			? parsed.filter((p): p is string => {
 					try {
-						return (
-							typeof p === "string" &&
-							environmentEntityRef(p).environment.kind === "local"
-						);
+						return typeof p === "string" && environmentEntityRef(p).environment.kind === "local";
 					} catch {
 						return false;
 					}
@@ -103,9 +100,7 @@ function nextLoad(environment: EnvironmentRef): number {
 	return seq;
 }
 function localProjects(projects: string[]): string[] {
-	return projects.filter(
-		(cwd) => environmentEntityRef(cwd).environment.kind === "local",
-	);
+	return projects.filter((cwd) => environmentEntityRef(cwd).environment.kind === "local");
 }
 
 export const useProjectsStore = create<ProjectsStore>((set, get) => {
@@ -123,18 +118,12 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			...(environment.kind === "local" ? { loading: value.loading, loaded: value.loaded } : {}),
 		}));
 	};
-	const applyCatalog = (
-		sessions: SessionMeta[],
-		environment: EnvironmentRef,
-	): void => {
+	const applyCatalog = (sessions: SessionMeta[], environment: EnvironmentRef): void => {
 		set((state) => ({
 			allSessions: [
 				...state.allSessions.filter(
 					(session) =>
-						!sameEnvironment(
-							environmentEntityRef(session.sessionId).environment,
-							environment,
-						),
+						!sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
 				),
 				...sessions,
 			],
@@ -213,9 +202,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		/** 重命名成功后同步历史列表：左栏会话行标题取自 `allSessions`，不同步就会「胶囊新名 / 左栏旧名」并存 */
 		applySessionName: (sessionId, name) => {
 			set((state) => ({
-				allSessions: state.allSessions.map((s) =>
-					s.sessionId === sessionId ? { ...s, name } : s,
-				),
+				allSessions: state.allSessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 			}));
 		},
 
@@ -241,10 +228,10 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				await sessionsState.closeSession(session.sessionId);
 			}
 			set((state) => ({
-				allSessions: state.allSessions.filter(
-					(s) => s.sessionId !== session.sessionId,
-				),
+				allSessions: state.allSessions.filter((s) => s.sessionId !== session.sessionId),
 			}));
+			// 归档后目录里仍有这条记录（带 archived 标记），重新拉取才能让「全部/仅归档」筛选立即可用。
+			await get().load();
 		},
 
 		deleteProject: async (cwd) => {
@@ -271,6 +258,25 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		},
 
 		openSession: async (session) => {
+			// 归档会话点击即可用：先恢复原生历史，再按普通会话打开。
+			let target = session;
+			if (session.archived) {
+				const { useDesktopWorkspace } = await import("./desktop-workspace");
+				const workspace = useDesktopWorkspace.getState();
+				if (!workspace.supported || !workspace.workspace)
+					throw new Error("会话目录尚未就绪，请稍后重试");
+				await workspace.command(
+					"agent.restore",
+					session.sessionId,
+					{},
+					workspace.workspace.revision,
+				);
+				const restored = (await desktopSessions.list()).find(
+					(row: SessionMeta) => row.sessionId === session.sessionId,
+				);
+				if (!restored) throw new Error("已恢复，但会话暂未出现在目录中");
+				target = restored;
+			}
 			const sessionsState = useSessionsStore.getState();
 			// 导航前先取锚点：新成员要插在「上一刻在看的成员」右侧，而导航会把当前改成新成员。
 			// 锚点规则由 store 一处定义（`anchorFile()`：当前成员 → 最近看过的成员），避免这里漏掉
@@ -288,18 +294,14 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 					);
 			};
 
-			const opened = sessionsState.sessions.find(
-				(s) => s.sessionId === session.sessionId,
-			);
+			const opened = sessionsState.sessions.find((s) => s.sessionId === target.sessionId);
 			if (opened) {
 				// 已加载：同步切（这次点击就是最新意图），再入表并激活
 				sessionsState.switchSession(opened.sessionId);
 				record(opened, true);
 				return;
 			}
-			const result = await sessionsState.openFromHistory(
-				session.sessionFile ?? "",
-			);
+			const result = await sessionsState.openFromHistory(target.sessionFile ?? "");
 			// 没开起来 → 不入表（失败已由共享 open 链 toast 过）；迟到（latest:false）只入表、不抢 activeFile
 			if (result.ok) record(result.meta, result.latest);
 		},
